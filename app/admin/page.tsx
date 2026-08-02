@@ -28,6 +28,10 @@ export default function Admin() {
   const [editTitle, setEditTitle] = useState("");
   const [editDesc, setEditDesc] = useState("");
 
+  // 网络诊断
+  const [pinging, setPinging] = useState(false);
+  const [pingResult, setPingResult] = useState<any>(null);
+
   useEffect(() => { setToken(localStorage.getItem("adminToken") || ""); }, []);
 
   const load = useCallback(async () => {
@@ -49,10 +53,36 @@ export default function Admin() {
       });
       const j = await r.json();
       if (!r.ok) setMsg({ t: j.error || "操作失败", ok: false });
-      else setMsg({ t: "已执行：" + action, ok: true });
+      else setMsg({ t: j.message || "已执行：" + action, ok: true });
       await load();
     } finally {
       setBusy(false);
+    }
+  };
+
+  const ping = async () => {
+    setPinging(true); setPingResult(null);
+    try {
+      const r = await fetch("/api/diag", { cache: "no-store" });
+      setPingResult(await r.json());
+    } catch (e: any) {
+      setPingResult({ error: "请求失败：" + (e?.message || e) });
+    } finally { setPinging(false); }
+  };
+
+  const downloadExport = async (format: "json" | "csv") => {
+    try {
+      const r = await fetch(`/api/admin/export?format=${format}`, { headers: { "x-admin-token": token } });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); setMsg({ t: j.error || "导出失败", ok: false }); return; }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `saimoe-${comp?.id ?? "results"}.${format === "csv" ? "csv" : "json"}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setMsg({ t: "导出失败：" + (e?.message || e), ok: false });
     }
   };
 
@@ -90,6 +120,13 @@ export default function Admin() {
             {phase === "knockout" && comp.koRoundEndsAt && <p className="hint" style={{ marginBottom: 0 }}>本轮将于 <b>{fmtAbs(comp.koRoundEndsAt)}</b> 自动推进。</p>}
           </>
         ) : <p style={{ margin: 0, color: "var(--muted)" }}>暂无比赛。</p>}
+      </div>
+
+      <div className="card">
+        <h3>网络诊断（Ping）</h3>
+        <p className="hint">检查容器能否解析并连通 Bangumi API（DNS + HTTPS）。若在线搜索失败，先在这里看 <code>api.reachable</code> 和 <code>dns</code> 的结果。</p>
+        <button className="btn solid" disabled={busy || pinging} onClick={ping}>{pinging ? "检查中…" : "检查网络连接"}</button>
+        {pingResult && <pre className="ping-result">{JSON.stringify(pingResult, null, 2)}</pre>}
       </div>
 
       {comp && (
@@ -164,6 +201,42 @@ export default function Admin() {
           <h3>④ 推进淘汰赛一轮</h3>
           <p className="hint">按当前票数结算本轮，生成下一轮；打到只剩 1 人时产生冠军。{comp.koRoundEndsAt ? "（已定时，也可在此手动提前）" : ""}</p>
           <button className="btn solid" disabled={busy} onClick={() => act("advance")}>结算本轮 → 下一轮 / 决出冠军</button>
+        </div>
+      )}
+
+      {phase === "nomination" && state?.nomination && (
+        <div className="card">
+          <h3>管理提名池</h3>
+          <p className="hint">移除误加 / 重复的角色，会连同其提名票一起删除，无法撤销。</p>
+          {state.nomination.pool.length === 0 ? <p className="hint">暂无提名。</p> : (
+            <div className="pool-admin">
+              {state.nomination.pool.map((p: any) => (
+                <div className="prow" key={p.id}>
+                  <div className="meta"><div className="nm">{p.nameCn || p.name}</div>{p.nameCn && p.nameCn !== p.name && <div className="sub">{p.name}</div>}</div>
+                  <div className="votecell num"><div className="c">{p.votes}</div><div className="l">提名</div></div>
+                  <button className="btn" disabled={busy} onClick={() => { if (confirm(`确认移除「${p.nameCn || p.name}」？`)) act("remove_candidate", { candidateId: p.id }); }}>移除</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {(phase === "group" || phase === "knockout" || phase === "finished") && (
+        <div className="card">
+          <h3>撤销 / 重算</h3>
+          <p className="hint">撤回上一步阶段推进（回到上一阶段 / 上一轮），或按当前票数重算当前轮。谨慎使用。</p>
+          <button className="btn" disabled={busy} onClick={() => act("undo")}>撤回上一步</button>{" "}
+          <button className="btn" disabled={busy} onClick={() => act("resettle")}>按当前票数重算本轮</button>
+        </div>
+      )}
+
+      {comp && (
+        <div className="card">
+          <h3>导出结果</h3>
+          <p className="hint">导出当前比赛的赛况数据（JSON 为完整结构，CSV 为扁平表格）。</p>
+          <button className="btn" disabled={busy} onClick={() => downloadExport("json")}>导出 JSON</button>{" "}
+          <button className="btn" disabled={busy} onClick={() => downloadExport("csv")}>导出 CSV</button>
         </div>
       )}
 

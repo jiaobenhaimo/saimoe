@@ -77,7 +77,9 @@ function normalize(o: any): DB {
 
 /** Read the whole store from disk (or a blank store if the file is absent).
  *  Cached by file mtime so repeated reads in one process skip the disk read;
- *  always returns a deep clone, so callers can mutate freely before writeDb(). */
+ *  always returns a deep clone, so callers can mutate freely before writeDb().
+ *  A corrupt/partial file is quarantined (renamed aside) and logged, instead of
+ *  silently starting blank and then overwriting the damaged data. */
 let cache: { mtimeMs: number; db: DB } | null = null;
 export function readDb(): DB {
   try {
@@ -86,7 +88,15 @@ export function readDb(): DB {
     const db = normalize(JSON.parse(fs.readFileSync(FILE, "utf8")));
     cache = { mtimeMs: st.mtimeMs, db };
     return structuredClone(db);
-  } catch {
+  } catch (e) {
+    try {
+      if (fs.existsSync(FILE)) {
+        const ts = new Date().toISOString().replace(/[:.]/g, "-");
+        const quarantined = FILE + ".corrupt-" + ts;
+        fs.renameSync(FILE, quarantined);
+        console.error("saimoe: data file unreadable, moved to " + quarantined, e);
+      }
+    } catch {}
     return blank();
   }
 }
@@ -132,6 +142,20 @@ export function addCandidate(cid: number, bgmId: string, name: string, nameCn: s
   if (db.candidates.some((c) => c.competition_id === cid && c.bgm_id === bgmId)) return false;
   const id = ++db.seq.candidate;
   db.candidates.push({ id, competition_id: cid, bgm_id: bgmId, name, name_cn: nameCn || null, image: image || null, group_no: null, seed: null, eliminated: false });
+  writeDb(db);
+  return true;
+}
+
+/** Remove a candidate and all its votes (and any matchups referencing it).
+ *  Returns false if the candidate doesn't exist. Only call during nomination. */
+export function removeCandidate(cid: number, candidateId: number): boolean {
+  const db = readDb();
+  if (!db.candidates.some((c) => c.id === candidateId && c.competition_id === cid)) return false;
+  db.candidates = db.candidates.filter((c) => c.id !== candidateId);
+  db.nominationVotes = db.nominationVotes.filter((v) => v.candidate_id !== candidateId);
+  const ids = new Set(db.matchups.filter((m) => m.competition_id === cid && (m.a_id === candidateId || m.b_id === candidateId)).map((m) => m.id));
+  db.matchups = db.matchups.filter((m) => !(m.competition_id === cid && (m.a_id === candidateId || m.b_id === candidateId)));
+  db.matchVotes = db.matchVotes.filter((v) => !ids.has(v.matchup_id));
   writeDb(db);
   return true;
 }

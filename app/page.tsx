@@ -94,6 +94,7 @@ function fmtAbs(ms: number): string {
 export default function Page() {
   const [state, setState] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState(false);
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<any[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -114,10 +115,16 @@ export default function Page() {
   }, []);
 
   const load = useCallback(async () => {
-    const r = await api("/api/state");
-    if (r.status === 503) { setState({ disabled: true }); setLoading(false); return; }
-    setState(await r.json());
-    setLoading(false);
+    try {
+      const r = await api("/api/state");
+      if (r.status === 503) { setState({ disabled: true }); setLoading(false); setLoadErr(false); return; }
+      setState(await r.json());
+      setLoading(false);
+      setLoadErr(false);
+    } catch {
+      setLoading(false);
+      setLoadErr(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -135,9 +142,9 @@ export default function Page() {
     try {
       const r = await api(`/api/bangumi/search?q=${encodeURIComponent(kw)}`);
       const j = await r.json();
-      if (j.error) { setSearchErr(`在线搜索失败（${j.error}），可手动添加。`); setManual(true); setMName(kw); }
-      setHits(j.hits || []);
-    } catch { setSearchErr("网络错误，可手动添加。"); setManual(true); setMName(kw); }
+      if (j.error) { setSearchErr(`在线搜索失败（${j.error}），可手动添加。`); setManual(true); setMName(kw); setHits(null); }
+      else setHits(j.hits || []);
+    } catch { setSearchErr("网络错误，可手动添加。"); setManual(true); setMName(kw); setHits(null); }
     finally { setSearching(false); }
   };
 
@@ -200,7 +207,7 @@ export default function Page() {
       <h1 className="title">{comp?.title || "世萌大会"}</h1>
       <p className="subtitle">{comp?.description || "为你喜爱的角色提名助威，从提名池一路投到总决赛。提名阶段可支持任意多个角色（每个角色一票）；对战阶段每场一票，均可随时改投或撤回。"}</p>
       <div className="phasebar">
-        {phases.map(([p, name]) => <span key={p} className={"chip" + (p === phase ? " on" : "")}>{name}</span>)}
+        {phases.map(([p, name]) => <span key={p} className={"chip" + (comp && p === phase ? " on" : "")}>{name}</span>)}
       </div>
       <div className="hint" style={{ marginTop: 6 }}><a href="/rules">赛制介绍 →</a></div>
 
@@ -218,7 +225,14 @@ export default function Page() {
         </div>
       )}
 
-      {!loading && state?.disabled && (
+      {!loading && loadErr && (
+        <div className="empty"><div className="big">📡</div>
+          <p style={{ color: "var(--ink)", fontWeight: 700 }}>网络错误，无法加载赛况</p>
+          <p>请检查云托管服务的网络配置，或稍后重试。</p>
+          <button className="btn solid" onClick={load}>重试</button></div>
+      )}
+
+      {!loading && !loadErr && state?.disabled && (
         <div className="empty"><div className="big">🚧</div>
           <p style={{ color: "var(--ink)", fontWeight: 700 }}>服务暂未开放</p>
           <p>API 当前已禁用。请管理员设置环境变量 <code>API_ENABLED=true</code> 后重新部署。</p></div>
@@ -365,19 +379,19 @@ function MatchCard({ m, onVote, ko }: { m: Match; onVote: (mid: number, cid: num
   return (
     <div className={"match" + (ko ? " ko" : "")}>
       <div className="versus">
-        <div className={sideCls(m.a?.id)} onClick={() => clickable && m.a && onVote(m.id, m.a.id)}>
+        <button type="button" className={sideCls(m.a?.id)} onClick={() => clickable && m.a && onVote(m.id, m.a.id)} disabled={!m.a}>
           <Avatar c={m.a} lg />
-          <div className="nm">{label(m.a)}</div>{sub(m.a) && <div className="cn">{sub(m.a)}</div>}
-          <div className="v num">{m.votesA}</div>
-          {m.decided && m.winnerId === m.a?.id && <div className="adv-tag">晋级</div>}
-        </div>
+          <span className="nm">{label(m.a)}</span>{sub(m.a) && <span className="cn">{sub(m.a)}</span>}
+          <span className="v num">{m.votesA}</span>
+          {m.decided && m.winnerId === m.a?.id && <span className="adv-tag">晋级</span>}
+        </button>
         <div className="vs">VS</div>
-        <div className={sideCls(m.b?.id)} onClick={() => clickable && m.b && onVote(m.id, m.b.id)}>
+        <button type="button" className={sideCls(m.b?.id)} onClick={() => clickable && m.b && onVote(m.id, m.b.id)} disabled={!m.b}>
           <Avatar c={m.b} lg />
-          <div className="nm">{label(m.b)}</div>{sub(m.b) && <div className="cn">{sub(m.b)}</div>}
-          <div className="v num">{m.votesB}</div>
-          {m.decided && m.winnerId === m.b?.id && <div className="adv-tag">晋级</div>}
-        </div>
+          <span className="nm">{label(m.b)}</span>{sub(m.b) && <span className="cn">{sub(m.b)}</span>}
+          <span className="v num">{m.votesB}</span>
+          {m.decided && m.winnerId === m.b?.id && <span className="adv-tag">晋级</span>}
+        </button>
       </div>
       <div className="share"><div className="a" style={{ width: pa + "%" }} /><div className="b" style={{ width: 100 - pa + "%" }} /></div>
       {m.decided && <div className="decided-tag">本场已结算</div>}

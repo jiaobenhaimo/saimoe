@@ -3,6 +3,11 @@ import { ensureSchema, addCandidate } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition } from "@/lib/engine";
 import { getCharacter, getSubjectCharacters, parseSubjectId, type BgmHit } from "@/lib/bangumi";
+import { rateLimited } from "@/lib/ratelimit";
+
+function clientIp(req: NextRequest): string {
+  return (req.headers.get("x-forwarded-for") || "").split(",")[0]?.trim() || "unknown";
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,6 +15,8 @@ export const dynamic = "force-dynamic";
 export async function POST(req: NextRequest) {
   try {
     if (!apiEnabled()) return NextResponse.json({ error: "服务 API 已禁用。请设置环境变量 API_ENABLED=true 后重新部署。", disabled: true }, { status: 503 });
+    if (rateLimited("nominate:" + clientIp(req), 30, 60_000))
+      return NextResponse.json({ error: "操作太频繁，请稍后再试。" }, { status: 429 });
     ensureSchema();
     const comp = getActiveCompetition();
     if (!comp) return NextResponse.json({ error: "还没有进行中的比赛。" }, { status: 400 });

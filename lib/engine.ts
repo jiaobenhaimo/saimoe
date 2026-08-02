@@ -58,8 +58,8 @@ export function getState(voterId: string) {
   const liveWinner = (m: Matchup): number | null => {
     if (m.decided) return m.winner_id;
     const a = votesA(m), b = votesB(m);
-    if (a === b) return null;
-    return a > b ? m.a_id : m.b_id;
+    // 与结算规则 decide() 一致:平票判 A 方,避免「实时排名」与「结算排名」不一致
+    return a === b ? m.a_id : a > b ? m.a_id : m.b_id;
   };
   const shapeMatch = (m: Matchup) => ({
     id: m.id, stage: m.stage, round: m.round_no, group: m.group_no, slot: m.slot,
@@ -154,6 +154,8 @@ export function startGroups(cid: number, size: number, groupsCount: number, adva
   const qualifiers = groupsCount * advancePerGroup;
   if (!isPow2(qualifiers)) throw new Error(`晋级总数 ${qualifiers}（小组数×每组晋级）必须是 2 的幂，淘汰赛才不会有轮空。当前不是。`);
   if (size < groupsCount * 2) throw new Error("参赛人数太少，无法组成每组至少 2 人的小组。");
+  const minGroupSize = Math.floor(size / groupsCount);
+  if (advancePerGroup > minGroupSize) throw new Error(`每组约 ${minGroupSize} 人，每组晋级 ${advancePerGroup} 人会导致人数不足、赛程卡死。请把「每组晋级」改为 ≤ ${minGroupSize}。`);
 
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
@@ -294,6 +296,8 @@ export function scheduleCompetition(cid: number, o: ScheduleOpts) {
   const qualifiers = o.autoGroups * o.autoAdvance;
   if (!isPow2(qualifiers)) throw new Error(`晋级总数 ${qualifiers}（小组数×每组晋级）必须是 2 的幂。`);
   if (o.autoSize < o.autoGroups * 2) throw new Error("参赛人数太少，无法组成每组至少 2 人的小组。");
+  const minGroupSize = Math.floor(o.autoSize / o.autoGroups);
+  if (o.autoAdvance > minGroupSize) throw new Error(`每组约 ${minGroupSize} 人，每组晋级 ${o.autoAdvance} 人会导致人数不足。请把每组晋级改为 ≤ ${minGroupSize}。`);
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
   if (!comp) return;
@@ -325,4 +329,95 @@ export function postponeNomination(cid: number) {
 /** How many candidates are currently in the pool (used to decide postpone). */
 export function poolSize(cid: number): number {
   return readDb().candidates.filter((c) => c.competition_id === cid).length;
+}
+
+// ── undo / resettle ───────────────────────────────────────────
+
+function dropMatchups(db: DB, cid: number, pred: (m: Matchup) => boolean): void {
+  const removed = new Set(db.matchups.filter((m) => m.competition_id === cid && pred(m)).map((m) => m.id));
+  db.matchups = db.matchups.filter((m) => !(m.competition_id === cid && pred(m)));
+  db.matchVotes = db.matchVotes.filter((v) => !removed.has(v.matchup_id));
+}
+
+/** 撤回上一步阶段推进(仅一步):finished→knockout、knockout→上一轮/小组赛、小组赛→提名。 */
+export function undoLastTransition(cid: number): string {
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp) throw new Error("比赛不存在。");
+  if (comp.phase === "nomination") throw new Error("提名阶段没有可撤销的步骤。");
+
+  if (comp.phase === "group") {
+    dropMatchups(db, cid, (m) => m.stage === "group");
+    for (const c of db.candidates) if (c.competition_id === cid) { c.group_no = null; c.seed = null; c.eliminated = false; }
+    comp.phase = "nomination";
+    comp.target_size = null; comp.groups_count = null; comp.advance_per_group = null;
+    comp.group_ends_at = null;
+    writeDb(db);
+    return "已撤回：小组赛 → 回到提名阶段。";
+  }
+
+  if (comp.phase === "knockout") {
+    const cur = comp.ko_round as number;
+    if (cur > 1) {
+      const prev = cur - 1;
+      const prevMs = db.matchups.filter((m) => m.competition_id === cid && m.stage === "knockout" && m.round_no === prev);
+      const losers = new Set<number>();
+      for (const m of prevMs) if (m.decided && m.winner_id != null) losers.add(m.winner_id === m.a_id ? m.b_id : m.a_id);
+      dropMatchups(db, cid, (m) => m.stage === "knockout" && m.round_no === cur);
+      for (const m of prevMs) { m.decided = false; m.winner_id = null; }
+      for (const c of db.candidates) if (c.competition_id === cid && losers.has(c.id)) c.eliminated = false;
+      comp.ko_round = prev; comp.ko_round_ends_at = null;
+      writeDb(db);
+      return `已撤回：第 ${cur} 轮 → 回到第 ${prev} 轮。`;
+    }
+    dropMatchups(db, cid, (m) => m.stage === "knockout");
+    for (const m of db.matchups) if (m.competition_id === cid && m.stage === "group") { m.decided = false; m.winner_id = null; }
+    for (const c of db.candidates) if (c.competition_id === cid && c.group_no !== null) c.eliminated = false;
+    comp.phase = "group"; comp.ko_round = null; comp.ko_round_ends_at = null;
+    writeDb(db);
+    return "已撤回：淘汰赛 → 回到小组赛。";
+  }
+
+  if (comp.phase === "finished") {
+    const last = (comp.ko_round as number) - 1;
+    const ms = db.matchups.filter((m) => m.competition_id === cid && m.stage === "knockout" && m.round_no === last);
+    const losers = new Set<number>();
+    for (const m of ms) if (m.decided && m.winner_id != null) losers.add(m.winner_id === m.a_id ? m.b_id : m.a_id);
+    for (const m of ms) { m.decided = false; m.winner_id = null; }
+    for (const c of db.candidates) if (c.competition_id === cid && losers.has(c.id)) c.eliminated = false;
+    comp.phase = "knockout"; comp.champion_id = null; comp.ko_round = last; comp.ko_round_ends_at = null;
+    writeDb(db);
+    return "已撤回：冠军 → 回到决赛轮。";
+  }
+  throw new Error("当前阶段没有可撤销的步骤。");
+}
+
+/** 按当前票数重算当前轮:group 锁定小组赛、knockout 结算当前轮、finished 重算决赛。 */
+export function resettleCurrentRound(cid: number): string {
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp) throw new Error("比赛不存在。");
+  const counts = matchCounts(db, cid);
+
+  if (comp.phase === "group") {
+    for (const m of db.matchups) if (m.competition_id === cid && m.stage === "group") decide(m, counts);
+    writeDb(db);
+    return "已重算：小组赛全部对战按当前票数结算。";
+  }
+  if (comp.phase === "knockout") {
+    const round = comp.ko_round as number;
+    for (const m of db.matchups) if (m.competition_id === cid && m.stage === "knockout" && m.round_no === round) decide(m, counts);
+    writeDb(db);
+    return `已重算：第 ${round} 轮按当前票数结算。`;
+  }
+  if (comp.phase === "finished") {
+    const last = (comp.ko_round as number) - 1;
+    const ms = db.matchups.filter((m) => m.competition_id === cid && m.stage === "knockout" && m.round_no === last);
+    for (const m of ms) decide(m, counts);
+    const winners = ms.map((m) => m.winner_id!).filter((x) => x != null);
+    comp.champion_id = winners[0] ?? null;
+    writeDb(db);
+    return "已重算：决赛按当前票数结算。";
+  }
+  throw new Error("当前阶段无需重算。");
 }

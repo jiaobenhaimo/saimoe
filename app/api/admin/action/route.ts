@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema, createCompetition, deleteCompetition } from "@/lib/db";
+import { ensureSchema, createCompetition, deleteCompetition, removeCandidate } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
-import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, updateCompetition, scheduleCompetition, clearSchedule } from "@/lib/engine";
+import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound } from "@/lib/engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,6 +44,20 @@ export async function POST(req: NextRequest) {
     if (action === "start_knockout") { startKnockout(comp.id); return NextResponse.json({ ok: true }); }
     if (action === "advance") { advanceKnockout(comp.id); return NextResponse.json({ ok: true }); }
     if (action === "reset") { deleteCompetition(comp.id); return NextResponse.json({ ok: true }); }
+    if (action === "remove_candidate") {
+      if (comp.phase !== "nomination") return NextResponse.json({ error: "仅在提名阶段可移除角色。" }, { status: 400 });
+      const ok = removeCandidate(comp.id, Number(body.candidateId));
+      if (!ok) return NextResponse.json({ error: "角色不存在。" }, { status: 404 });
+      return NextResponse.json({ ok: true, message: "已移除该角色。" });
+    }
+    if (action === "undo") {
+      const message = undoLastTransition(comp.id);
+      return NextResponse.json({ ok: true, message });
+    }
+    if (action === "resettle") {
+      const message = resettleCurrentRound(comp.id);
+      return NextResponse.json({ ok: true, message });
+    }
 
     return NextResponse.json({ error: "未知操作。" }, { status: 400 });
   } catch (e: any) {
