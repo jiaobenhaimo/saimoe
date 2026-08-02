@@ -78,7 +78,9 @@ export default function Page() {
   const [manual, setManual] = useState(false);
   const [mName, setMName] = useState("");
   const [mImg, setMImg] = useState("");
-  const [subject, setSubject] = useState("");
+  const [subQ, setSubQ] = useState("");
+  const [subHits, setSubHits] = useState<any[] | null>(null);
+  const [subSearching, setSubSearching] = useState(false);
   const [importMsg, setImportMsg] = useState("");
   const busyRef = useRef(false);
 
@@ -99,10 +101,22 @@ export default function Page() {
     try {
       const r = await api(`/api/bangumi/search?q=${encodeURIComponent(kw)}`);
       const j = await r.json();
-      if (j.error) { setSearchErr("在线搜索不可用,可手动添加。"); setManual(true); setMName(kw); }
+      if (j.error) { setSearchErr(`在线搜索失败(${j.error}),可手动添加。`); setManual(true); setMName(kw); }
       setHits(j.hits || []);
     } catch { setSearchErr("网络错误,可手动添加。"); setManual(true); setMName(kw); }
     finally { setSearching(false); }
+  };
+
+  const searchSubjects = async () => {
+    const kw = subQ.trim(); if (!kw) return;
+    setSubSearching(true); setImportMsg(""); setSubHits(null);
+    try {
+      const r = await api(`/api/bangumi/subjects?q=${encodeURIComponent(kw)}`);
+      const j = await r.json();
+      if (j.error) setImportMsg(`作品搜索失败:${j.error}`);
+      setSubHits(j.hits || []);
+    } catch { setImportMsg("作品搜索网络错误。"); }
+    finally { setSubSearching(false); }
   };
 
   const post = async (body: any) => {
@@ -119,12 +133,11 @@ export default function Page() {
     await post({ manual: { name: mName.trim(), image: mImg.trim() } });
     setMName(""); setMImg(""); setManual(false); setHits(null); await load();
   };
-  const importSubject = async () => {
-    if (!subject.trim()) return;
-    setImportMsg("导入中…");
-    const j = await post({ subject: subject.trim() });
-    setImportMsg(j?.error ? j.error : `导入完成:新增 ${j?.added ?? 0} / 共 ${j?.imported ?? 0} 个角色`);
-    setSubject(""); await load();
+  const importSubject = async (subjectId: string, name: string) => {
+    setImportMsg(`正在导入《${name}》的角色…`);
+    const j = await post({ subject: subjectId });
+    setImportMsg(j?.error ? `导入失败:${j.error}` : `《${name}》导入完成:新增 ${j?.added ?? 0} / 共 ${j?.imported ?? 0} 个角色`);
+    await load();
   };
 
   const nomVote = async (candidateId: number) => {
@@ -171,20 +184,33 @@ export default function Page() {
       {!loading && comp && phase === "nomination" && (
         <>
           <div className="searchbox">
-            <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder="搜 Bangumi 角色名,提名进池子" />
-            <button onClick={search} disabled={searching || !q.trim()}>{searching ? "搜索中" : "搜索"}</button>
+            <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder="搜角色名,提名单个角色" />
+            <button onClick={search} disabled={searching || !q.trim()}>{searching ? "搜索中" : "搜角色"}</button>
           </div>
-          <div className="importbox">
-            <input value={subject} onChange={(e) => setSubject(e.target.value)} onKeyDown={(e) => e.key === "Enter" && importSubject()} placeholder="整部作品导入:粘贴 Bangumi 条目 ID 或链接" />
-            <button className="btn" onClick={importSubject} disabled={!subject.trim()}>导入全体角色</button>
+          <div className="searchbox">
+            <input value={subQ} onChange={(e) => setSubQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && searchSubjects()} placeholder="搜作品名,一次导入整部作品的全体角色" />
+            <button onClick={searchSubjects} disabled={subSearching || !subQ.trim()}>{subSearching ? "搜索中" : "搜作品"}</button>
           </div>
           {importMsg && <div className="hint">{importMsg}</div>}
           <div className="hint">找不到?<a onClick={() => { setManual(true); setHits(null); }}>手动添加角色</a></div>
           {searchErr && <div className="hint" style={{ color: "var(--rose-deep)" }}>{searchErr}</div>}
 
+          {subHits && (
+            <div className="results">
+              {subHits.length === 0 && <div className="rrow"><span className="hint">没搜到作品,换个关键词。</span></div>}
+              {subHits.map((s) => (
+                <div className="rrow" key={s.subjectId}>
+                  <Avatar c={{ id: 0, name: s.nameCn || s.name, nameCn: null, image: s.image }} />
+                  <div className="meta"><div className="nm">{s.nameCn || s.name}</div><div className="sub">{s.nameCn && s.nameCn !== s.name ? s.name + " · " : ""}作品 · #{s.subjectId}</div></div>
+                  <button className="btn" onClick={() => importSubject(s.subjectId, s.nameCn || s.name)}>导入全体角色</button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {hits && (
             <div className="results">
-              {hits.length === 0 && <div className="rrow"><span className="hint">没搜到,换个词或手动添加。</span></div>}
+              {hits.length === 0 && <div className="rrow"><span className="hint">没搜到角色,换个词或手动添加。</span></div>}
               {hits.map((h) => (
                 <div className="rrow" key={h.bgmId}>
                   <Avatar c={{ id: 0, name: h.name, nameCn: null, image: h.image }} />
