@@ -4,7 +4,7 @@ import { apiEnabled } from "@/lib/flags";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const UA = process.env.BGM_USER_AGENT || "jiaobenhaimo/bgm-saimoe (https://github.com/jiaobenhaimo)";
+const UA = process.env.BGM_USER_AGENT || "jiaobenhaimo/saimoe (https://github.com/jiaobenhaimo/saimoe)";
 // SSRF guard: only proxy Bangumi image hosts. Anything else is rejected.
 function allowed(host: string) {
   return host === "bgm.tv" || host === "lain.bgm.tv" || host.endsWith(".bgm.tv");

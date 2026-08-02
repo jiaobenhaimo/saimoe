@@ -1,7 +1,7 @@
 const BASE = "https://api.bgm.tv";
-// Bangumi rejects generic/empty User-Agents with 403. It wants a descriptive UA
-// like "developer/app (repo-url)". Override with BGM_USER_AGENT to use your own.
-const UA = process.env.BGM_USER_AGENT || "jiaobenhaimo/bgm-saimoe (https://github.com/jiaobenhaimo)";
+// Bangumi blocks generic UAs (e.g. "Bangumi/1.0", "name/1.0"). Use a descriptive
+// "developer/app (repo-url)" form. Override with BGM_USER_AGENT for your own.
+const UA = process.env.BGM_USER_AGENT || "jiaobenhaimo/saimoe (https://github.com/jiaobenhaimo/saimoe)";
 
 export type BgmHit = { bgmId: string; name: string; image: string };
 export type BgmSubject = { subjectId: string; name: string; nameCn: string; image: string; type: number };
@@ -12,25 +12,37 @@ function headers(json = false) {
   return h;
 }
 
+/** fetch + surface the upstream status AND a snippet of Bangumi's error body,
+ *  so a failure is diagnosable (403 UA-block vs 4xx bad-request vs network). */
+async function bgmFetch(url: string, init: RequestInit, what: string): Promise<any> {
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, cache: "no-store" });
+  } catch (e: any) {
+    throw new Error(`${what}：网络请求失败（容器可能无法访问 api.bgm.tv）。${e?.message || ""}`);
+  }
+  if (!res.ok) {
+    let body = "";
+    try { body = (await res.text()).slice(0, 160); } catch {}
+    throw new Error(`${what}：Bangumi 返回 ${res.status}${body ? " " + body : ""}`);
+  }
+  return res.json();
+}
+
 /** Search characters by keyword (server-side, no CORS). */
 export async function searchCharacters(keyword: string): Promise<BgmHit[]> {
-  const res = await fetch(`${BASE}/v0/search/characters?limit=15`, {
-    method: "POST", headers: headers(true), body: JSON.stringify({ keyword }), cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`Bangumi 角色搜索返回 ${res.status}`);
-  const json: any = await res.json();
+  const json: any = await bgmFetch(`${BASE}/v0/search/characters?limit=15`, {
+    method: "POST", headers: headers(true), body: JSON.stringify({ keyword }),
+  }, "角色搜索");
   const data: any[] = Array.isArray(json?.data) ? json.data : [];
   return data.map((d) => ({ bgmId: String(d.id), name: d.name ?? "未知角色", image: pickImage(d.images) }));
 }
 
 /** Search subjects (anime / game / …) by keyword. */
 export async function searchSubjects(keyword: string): Promise<BgmSubject[]> {
-  const res = await fetch(`${BASE}/v0/search/subjects?limit=15`, {
-    method: "POST", headers: headers(true),
-    body: JSON.stringify({ keyword, sort: "rank" }), cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`Bangumi 作品搜索返回 ${res.status}`);
-  const json: any = await res.json();
+  const json: any = await bgmFetch(`${BASE}/v0/search/subjects?limit=15`, {
+    method: "POST", headers: headers(true), body: JSON.stringify({ keyword }),
+  }, "作品搜索");
   const data: any[] = Array.isArray(json?.data) ? json.data : [];
   return data.map((d) => ({
     subjectId: String(d.id), name: d.name ?? "未知作品",
@@ -42,17 +54,13 @@ export type BgmDetail = { bgmId: string; name: string; nameCn: string; image: st
 
 /** Fetch one character's detail and extract the Simplified-Chinese name. */
 export async function getCharacter(id: string): Promise<BgmDetail> {
-  const res = await fetch(`${BASE}/v0/characters/${encodeURIComponent(id)}`, { headers: headers(), cache: "no-store" });
-  if (!res.ok) throw new Error(`Bangumi 角色 ${id} 返回 ${res.status}`);
-  const d: any = await res.json();
+  const d: any = await bgmFetch(`${BASE}/v0/characters/${encodeURIComponent(id)}`, { headers: headers() }, `角色 ${id}`);
   return { bgmId: String(d.id), name: d.name ?? "未知角色", nameCn: extractCnName(d.infobox) || "", image: pickImage(d.images) };
 }
 
 /** Fetch the whole cast of a subject. Uses the cast list's own name + image. */
 export async function getSubjectCharacters(subjectId: string): Promise<BgmHit[]> {
-  const res = await fetch(`${BASE}/v0/subjects/${encodeURIComponent(subjectId)}/characters`, { headers: headers(), cache: "no-store" });
-  if (!res.ok) throw new Error(`Bangumi 作品 ${subjectId} 角色列表返回 ${res.status}`);
-  const data: any = await res.json();
+  const data: any = await bgmFetch(`${BASE}/v0/subjects/${encodeURIComponent(subjectId)}/characters`, { headers: headers() }, `作品 ${subjectId} 角色列表`);
   const arr: any[] = Array.isArray(data) ? data : [];
   return arr.map((c) => ({ bgmId: String(c.id), name: c.name ?? "未知角色", image: pickImage(c.images) }));
 }

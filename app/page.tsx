@@ -30,10 +30,17 @@ async function computeFp(): Promise<string> {
     screen.width + "x" + screen.height, String(screen.colorDepth),
     Intl.DateTimeFormat().resolvedOptions().timeZone,
     String(navigator.hardwareConcurrency || 0), (navigator as any).platform || "",
+    String(window.devicePixelRatio || 0), String((navigator as any).deviceMemory || 0),
+    screen.availWidth + "x" + screen.availHeight, String(navigator.maxTouchPoints || 0),
   ];
   try {
     const cv = document.createElement("canvas"); const ctx = cv.getContext("2d");
     if (ctx) { ctx.textBaseline = "top"; ctx.font = "14px 'Arial'"; ctx.fillStyle = "#f60"; ctx.fillRect(0, 0, 60, 20); ctx.fillStyle = "#069"; ctx.fillText("saimoe🎌", 2, 2); parts.push(cv.toDataURL()); }
+  } catch {}
+  try {
+    const gl: any = document.createElement("canvas").getContext("webgl");
+    const dbg = gl && gl.getExtension("WEBGL_debug_renderer_info");
+    if (dbg) parts.push(String(gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL)), String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)));
   } catch {}
   const hash = await sha256Hex(parts.join("|"));
   try { localStorage.setItem("saimoe_fp", hash); } catch {}
@@ -220,7 +227,7 @@ export default function Page() {
       {!loading && !state?.disabled && !comp && (
         <div className="empty"><div className="big">🎬</div>
           <p style={{ color: "var(--ink)", fontWeight: 700 }}>比赛还没开始</p>
-          <p>比赛尚未开始,敬请期待。</p></div>
+          <p>比赛尚未开始，敬请期待。</p></div>
       )}
 
       {/* ── NOMINATION ── */}
@@ -341,7 +348,7 @@ export default function Page() {
       )}
 
       <div className="foot">
-        数据来自 Bangumi · 匿名投票（按设备去重）· 中文名取自角色资料的简体中文名<br />
+        数据来自 Bangumi<br />
         <a href="/rules">赛制介绍</a>
       </div>
     </main>
