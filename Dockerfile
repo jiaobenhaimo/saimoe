@@ -18,9 +18,11 @@ RUN npm run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-# CloudBase Run health probes hit port 80 and does NOT inject a PORT env, so the
-# container must listen on 80. `next start` honors PORT; a platform-injected PORT
-# at runtime still overrides this default.
+# Some PaaS containers only have IPv4; force IPv4-first DNS so outbound fetch
+# doesn't stall on an unreachable IPv6 address (harmless safety net).
+ENV NODE_OPTIONS=--dns-result-order=ipv4first
+# Default to port 80 so it works with a plain CMD/health probe. `next start`
+# honors PORT; a platform-injected PORT at runtime still overrides this default.
 ENV PORT=80
 COPY --from=builder /app/next.config.mjs ./
 COPY --from=builder /app/package.json ./

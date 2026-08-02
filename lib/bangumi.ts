@@ -17,9 +17,12 @@ function headers(json = false) {
 async function bgmFetch(url: string, init: RequestInit, what: string): Promise<any> {
   let res: Response;
   try {
-    res = await fetch(url, { ...init, cache: "no-store" });
+    // 15s 超时,避免网络异常时请求无限挂起
+    res = await fetch(url, { ...init, cache: "no-store", signal: AbortSignal.timeout(15_000) });
   } catch (e: any) {
-    throw new Error(`${what}：网络请求失败（容器可能无法访问 api.bgm.tv）。${e?.message || ""}`);
+    // surface the real cause (ENOTFOUND = DNS 解析失败, ECONNREFUSED/超时 = 出网被拦截)
+    const code = e?.cause?.code || e?.code || e?.name || "";
+    throw new Error(`${what}：网络请求失败（${code || "无法访问 api.bgm.tv"}）。请检查云托管服务是否开启「公网访问」，或容器 DNS/出网是否正常。`);
   }
   if (!res.ok) {
     let body = "";

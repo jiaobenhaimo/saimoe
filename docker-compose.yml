@@ -8,10 +8,15 @@ services:
       API_ENABLED: "true"
       ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me}
       BGM_USER_AGENT: bgm-saimoe/1.0
-      DATA_DIR: /data       # local JSON store lives here
-      BACKUP_KEEP: "48"     # keep last 48 snapshots (~24h at 30-min interval)
+      DATA_DIR: /data        # live JSON store lives here
+      BACKUP_DIR: /mnt/sml-data   # snapshots land here (NAS / persistent mount)
+      BACKUP_KEEP: "48"      # keep last 48 snapshots (~24h at 30-min interval)
     volumes:
-      - saimoe_data:/data   # persists across container restarts
+      - saimoe_data:/data          # persists across container restarts
+      # 生产环境建议换成 bind mount 指向真实的 NAS 挂载点,例如:
+      #   - /path/on/host:/mnt/sml-data
+      - sml_backup:/mnt/sml-data
 
 volumes:
   saimoe_data:
+  sml_backup:

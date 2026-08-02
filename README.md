@@ -30,6 +30,8 @@ npm run dev                  # http://localhost:3000
 | `API_ENABLED` | 服务 API 总开关,**默认关闭**;必须设为 `true` 才对外提供服务(`/api/health` 不受影响) |
 | `ADMIN_TOKEN` | 进入 `/admin` 和推进赛程的口令,设一段长随机串 |
 | `DATA_DIR` | 数据文件目录。默认容器内 `./.data`(**临时**,重新部署会清空);指到持久化挂载目录可长期保留 |
+| `BACKUP_DIR` | 数据快照目录。默认 `/mnt/sml-data`;每 30 分钟把数据快照写到这里,建议指到持久化挂载盘 |
+| `BACKUP_KEEP` | 保留的快照份数,默认 48(≈ 最近 24 小时) |
 | `BGM_USER_AGENT` | 调 Bangumi API 的 UA,可选 |
 
 ## 怎么玩
@@ -43,8 +45,7 @@ npm run dev                  # http://localhost:3000
 
 ## 部署
 
-- **腾讯云开发 CloudBase Run**:见 [`DEPLOY_TCB.md`](./DEPLOY_TCB.md)
-- **自托管到国内云服务器**(Docker):见 [`DEPLOY_CN.md`](./DEPLOY_CN.md)
+自托管到云服务器 / NAS(Docker):见 [`DEPLOY_CN.md`](./DEPLOY_CN.md)。
 
 镜像化直接用根目录 `Dockerfile`(多阶段构建,监听 80)。
 
@@ -56,13 +57,7 @@ npm run dev                  # http://localhost:3000
 - 容器文件系统通常**易失**:不挂持久化卷时,重新部署 / 重启会清空数据。要长期保留,把 `DATA_DIR` 指到持久化挂载目录(云硬盘 / NAS / compose volume)。
 - 适合中小规模人气投票;不适合超大规模高并发(整份数据每次读写全量 JSON)。
 
-**自动备份**:进程每 30 分钟把数据快照到 `$DATA_DIR/backups/saimoe-<时间戳>.json`,本地保留最近 `BACKUP_KEEP` 份(默认 48,约 24 小时)。若 `DATA_DIR` 挂了持久化卷,这些快照即可用于恢复(用某个快照覆盖 `saimoe.json` 再重启即可)。要做**异地备份**,设置 `BACKUP_HOOK`,例如把快照推到 CloudBase 云存储:
-
-```
-BACKUP_HOOK="tcb storage upload {FILE} saimoe-backups/{NAME}"
-```
-
-(需容器内装好并登录 `tcb` CLI;`{FILE}`/`{NAME}` 会被替换为快照路径/文件名。也可以在自己机器上用 `tcb storage upload $DATA_DIR/backups saimoe-backups` 定期上传。)
+**自动备份**:进程每 30 分钟把数据快照到 `$BACKUP_DIR/saimoe-<时间戳>.json`(默认 `/mnt/sml-data`),保留最近 `BACKUP_KEEP` 份(默认 48,约 24 小时)。`BACKUP_DIR` 应指向持久化挂载盘(NAS / 云硬盘 / compose volume),快照可用于恢复——用某个快照覆盖 `saimoe.json` 再重启即可。不再依赖任何云存储。
 
 ## 结构
 

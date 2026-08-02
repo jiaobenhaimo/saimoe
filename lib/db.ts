@@ -9,10 +9,10 @@ import path from "path";
  * with no `await` in the middle of a mutation — is atomic per instance: two
  * concurrent votes can't lose each other's write.
  *
- * Caveats (inherent to local storage): the container filesystem on most PaaS
- * (incl. CloudBase Run) is EPHEMERAL, so data resets on redeploy/restart unless
- * DATA_DIR points at a mounted persistent volume; and multiple instances each
- * keep their own file, so run a SINGLE instance.
+ * Caveats (inherent to local storage): the container filesystem is EPHEMERAL,
+ * so data resets on redeploy/restart unless DATA_DIR points at a mounted
+ * persistent volume; and multiple instances each keep their own file, so run a
+ * SINGLE instance.
  */
 
 export type Phase = "nomination" | "group" | "knockout" | "finished";

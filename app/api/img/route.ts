@@ -23,6 +23,7 @@ export async function GET(req: NextRequest) {
     const r = await fetch(url.toString(), {
       headers: { Referer: "https://bgm.tv/", "User-Agent": UA },
       cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
     });
     if (!r.ok) return new Response("upstream " + r.status, { status: 502 });
     const ct = r.headers.get("content-type") || "image/jpeg";
