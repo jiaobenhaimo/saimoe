@@ -184,7 +184,7 @@ export default function Admin() {
             onClick={() => act("schedule", { nomEndsAt: nomLocal ? new Date(nomLocal).getTime() : 0, size, groups, advance, groupHours: gHours, roundHours: rHours, postponeDays: pDays })}>
             启动定时赛程
           </button>
-          {comp.nomEndsAt && <p className="hint">已定时（截止 {fmtAbs(comp.nomEndsAt)})。<a onClick={() => act("unschedule")}>取消定时</a></p>}
+          {comp.nomEndsAt && <p className="hint">已定时（截止 {fmtAbs(comp.nomEndsAt)}）。<a onClick={() => act("unschedule")}>取消定时</a></p>}
         </div>
       )}
 

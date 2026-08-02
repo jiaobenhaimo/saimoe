@@ -7,7 +7,7 @@ services:
     environment:
       API_ENABLED: "true"
       ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me}
-      BGM_USER_AGENT: bgm-saimoe/1.0
+      BGM_USER_AGENT: "jiaobenhaimo/saimoe (https://github.com/jiaobenhaimo/saimoe)"
       DATA_DIR: /data        # live JSON store lives here
       BACKUP_DIR: /mnt/sml-data   # snapshots land here (NAS / persistent mount)
       BACKUP_KEEP: "48"      # keep last 48 snapshots (~24h at 30-min interval)

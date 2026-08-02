@@ -93,9 +93,9 @@ function getAgent(): Dispatcher {
           if (pinned) return cb(null, [{ address: pinned, family: 4 }]);
           dohResolve(hostname)
             .then((addrs) => {
-              // api.bgm.tv:已知可用 IP 优先,DoH 结果去重后追加
+              // api.bgm.tv:优先用 DoH 解析出的权威 IP,内置兜底 IP 去重后垫底
               let list: string[];
-              if (hostname === "api.bgm.tv") list = [...FALLBACK_API_IPS, ...addrs.filter((a) => !FALLBACK_API_IPS.includes(a))];
+              if (hostname === "api.bgm.tv") list = [...addrs, ...FALLBACK_API_IPS.filter((ip) => !addrs.includes(ip))];
               else list = addrs;
               if (list.length) cb(null, list.map((a) => ({ address: a, family: 4 })));
               else systemLookup(hostname, opts, cb);
@@ -119,7 +119,7 @@ export async function netResolve4(hostname: string): Promise<string[]> {
   if (pinned) return [`${pinned} (固定)`];
   const addrs = await dohResolve(hostname);
   if (hostname === "api.bgm.tv") {
-    const list = [...FALLBACK_API_IPS, ...addrs.filter((a) => !FALLBACK_API_IPS.includes(a))];
+    const list = [...addrs, ...FALLBACK_API_IPS.filter((ip) => !addrs.includes(ip))];
     return addrs.length ? list : [...FALLBACK_API_IPS, "(兜底)"];
   }
   return addrs.length ? addrs : ["DoH 解析失败(回退系统 DNS)"];

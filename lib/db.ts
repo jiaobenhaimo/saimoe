@@ -52,8 +52,6 @@ const FILE = path.join(DATA_DIR, "saimoe.json");
 
 /** Absolute path of the live data file (used by the backup job). */
 export function dataFilePath(): string { return FILE; }
-/** Absolute path of the data directory. */
-export function dataDirPath(): string { return DATA_DIR; }
 
 function blank(): DB {
   return { seq: { competition: 0, candidate: 0, matchup: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [] };
