@@ -1,3 +1,5 @@
+import { netFetch } from "./net";
+
 const BASE = "https://api.bgm.tv";
 // Bangumi blocks generic UAs (e.g. "Bangumi/1.0", "name/1.0"). Use a descriptive
 // "developer/app (repo-url)" form. Override with BGM_USER_AGENT for your own.
@@ -17,8 +19,8 @@ function headers(json = false) {
 async function bgmFetch(url: string, init: RequestInit, what: string): Promise<any> {
   let res: Response;
   try {
-    // 15s 超时,避免网络异常时请求无限挂起
-    res = await fetch(url, { ...init, cache: "no-store", signal: AbortSignal.timeout(15_000) });
+    // 15s 超时,避免网络异常时请求无限挂起;netFetch 走可信 DNS / 固定 IP,避开 DNS 污染
+    res = await netFetch(url, { ...init, cache: "no-store", signal: AbortSignal.timeout(15_000) });
   } catch (e: any) {
     // surface the real cause (ENOTFOUND = DNS 解析失败, ECONNREFUSED/超时 = 出网被拦截)
     const code = e?.cause?.code || e?.code || e?.name || "";
