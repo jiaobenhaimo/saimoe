@@ -123,3 +123,46 @@ a { color: var(--rose-deep); }
   .title { font-size: 30px; }
   .side img.av, .side .av-ph { width: 54px; height: 54px; }
 }
+
+/* ─────────── Wave 1 additions (avatars / import / skeleton / polish) ─────────── */
+
+/* import-a-whole-work box (mirrors searchbox) */
+.importbox { position: relative; display: flex; gap: 8px; margin: 10px 0 2px; }
+.importbox input { flex: 1; font-size: 15px; padding: 12px 14px; border-radius: 12px; border: 1.5px solid var(--line); background: #fff; color: var(--ink); outline: none; }
+.importbox input:focus { border-color: var(--rose); box-shadow: 0 0 0 4px var(--rose-soft); }
+
+/* pool rank number */
+.rankn { width: 26px; text-align: center; color: var(--muted); font-weight: 800; flex: none; }
+
+/* larger avatars (matchup sides) */
+.av.lg { width: 64px; height: 64px; }
+.av-ph.lg { width: 64px; height: 64px; font-size: 22px; }
+
+/* smooth the vote-share bar */
+.share .a, .share .b { transition: width .5s cubic-bezier(.22,.61,.36,1); }
+.side { transition: background .15s, box-shadow .15s; }
+
+/* champion celebration */
+.champ { position: relative; overflow: hidden; }
+.champ::after { content: ""; position: absolute; inset: -40%; background: radial-gradient(circle at 50% 0%, rgba(224,169,59,.28), transparent 60%); animation: champGlow 3.2s ease-in-out infinite; pointer-events: none; }
+@keyframes champGlow { 0%,100% { opacity:.5; transform: scale(1);} 50% { opacity:1; transform: scale(1.08);} }
+.champ .crown { animation: crownFloat 3s ease-in-out infinite; }
+@keyframes crownFloat { 0%,100% { transform: translateY(0);} 50% { transform: translateY(-6px);} }
+.champ-tag { margin-top: 6px; color: var(--gold); font-weight: 700; position: relative; }
+.adv-tag { color: var(--gold); font-weight: 800; }
+
+/* knockout bracket: subtle connector on the right of each match */
+.match.ko { position: relative; }
+
+/* loading skeleton */
+.skel-wrap { margin-top: 26px; display: flex; flex-direction: column; gap: 12px; }
+.skel-row { display: flex; align-items: center; gap: 12px; }
+.skel { position: relative; overflow: hidden; background: #efe7e1; border-radius: 10px; }
+.skel.av { width: 46px; height: 46px; border-radius: 11px; flex: none; }
+.skel.line { height: 18px; flex: 1; }
+.skel::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgba(255,255,255,.6), transparent); animation: shimmer 1.3s infinite; }
+@keyframes shimmer { 100% { transform: translateX(100%);} }
+
+@media (prefers-reduced-motion: reduce) {
+  .champ::after, .champ .crown, .skel::after { animation: none; }
+}

@@ -76,6 +76,15 @@ async function ensureColumn(table: string, column: string, definition: string): 
   }
 }
 
+/** CREATE INDEX that is safe to re-run: swallows MySQL error 1061 (duplicate key). */
+async function ensureIndex(table: string, name: string, cols: string): Promise<void> {
+  try {
+    await pool().query(`CREATE INDEX \`${name}\` ON \`${table}\` (${cols})`);
+  } catch (e: any) {
+    if (e?.errno !== 1061) throw e; // 1061 = duplicate key name
+  }
+}
+
 let initPromise: Promise<void> | null = null;
 
 /** Idempotently create tables. Safe to call on every request (guarded + IF NOT EXISTS). */
@@ -100,6 +109,7 @@ async function init(): Promise<void> {
   // Migration for databases created before `description` existed. MySQL has no
   // ADD COLUMN IF NOT EXISTS, so add it and ignore the "duplicate column" error (1060).
   await ensureColumn("competition", "description", "TEXT");
+  await ensureColumn("competition", "ko_round", "INT");
 
   await sql`CREATE TABLE IF NOT EXISTS candidate (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -148,4 +158,8 @@ async function init(): Promise<void> {
     UNIQUE KEY uq_match_vote (matchup_id, voter_id),
     CONSTRAINT fk_mv_matchup FOREIGN KEY (matchup_id) REFERENCES matchup(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
+
+  // Indexes that speed up the per-candidate / per-matchup tally GROUP BYs.
+  await ensureIndex("nomination_vote", "idx_nom_candidate", "candidate_id");
+  await ensureIndex("match_vote", "idx_mv_matchup_choice", "matchup_id, choice_id");
 }

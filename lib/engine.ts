@@ -1,4 +1,5 @@
 import { sql } from "./db";
+import { bangumiApiEnabled } from "./flags";
 
 // ── row shapes ────────────────────────────────────────────────
 export type Competition = {
@@ -10,6 +11,7 @@ export type Competition = {
   groups_count: number | null;
   advance_per_group: number | null;
   champion_id: number | null;
+  ko_round: number | null;
 };
 
 export type Candidate = {
@@ -53,64 +55,14 @@ async function matchups(cid: number): Promise<Matchup[]> {
 // ── full state for the UI, personalised to one voter ─────────
 export async function getState(voterId: string) {
   const comp = await getActiveCompetition();
-  if (!comp) return { competition: null };
-
-  const cands = await candidates(comp.id);
-  const cmap = new Map(cands.map((c) => [c.id, c]));
-
-  // nomination vote tallies
-  const nomCounts = (await sql`
-    SELECT candidate_id, COUNT(*) AS n
-    FROM nomination_vote WHERE competition_id=${comp.id} GROUP BY candidate_id`) as any[];
-  const nomCount = new Map<number, number>(nomCounts.map((r) => [r.candidate_id, r.n]));
-  const myNom = (await sql`
-    SELECT candidate_id FROM nomination_vote
-    WHERE competition_id=${comp.id} AND voter_id=${voterId}`) as any[];
-  const myNomSet = new Set<number>(myNom.map((r) => r.candidate_id));
-
-  // matchup vote tallies
-  const ms = await matchups(comp.id);
-  const mvCounts = (await sql`
-    SELECT mv.matchup_id, mv.choice_id, COUNT(*) AS n
-    FROM match_vote mv JOIN matchup m ON m.id=mv.matchup_id
-    WHERE m.competition_id=${comp.id}
-    GROUP BY mv.matchup_id, mv.choice_id`) as any[];
-  const countOf = new Map<string, number>();
-  for (const r of mvCounts) countOf.set(`${r.matchup_id}:${r.choice_id}`, r.n);
-  const myMv = (await sql`
-    SELECT mv.matchup_id, mv.choice_id FROM match_vote mv
-    JOIN matchup m ON m.id=mv.matchup_id
-    WHERE m.competition_id=${comp.id} AND mv.voter_id=${voterId}`) as any[];
-  const myChoice = new Map<number, number>(myMv.map((r) => [r.matchup_id, r.choice_id]));
-
-  const votesA = (m: Matchup) => countOf.get(`${m.id}:${m.a_id}`) ?? 0;
-  const votesB = (m: Matchup) => countOf.get(`${m.id}:${m.b_id}`) ?? 0;
-  const liveWinner = (m: Matchup): number | null => {
-    if (m.decided) return m.winner_id;
-    const a = votesA(m), b = votesB(m);
-    if (a === b) return null;
-    return a > b ? m.a_id : m.b_id;
-  };
+  const apiEnabled = bangumiApiEnabled();
+  if (!comp) return { competition: null, apiEnabled };
 
   const slim = (c: Candidate | undefined) =>
     c ? { id: c.id, name: c.name, nameCn: c.name_cn, image: c.image } : null;
 
-  const shapeMatch = (m: Matchup) => ({
-    id: m.id,
-    stage: m.stage,
-    round: m.round_no,
-    group: m.group_no,
-    slot: m.slot,
-    a: slim(cmap.get(m.a_id)),
-    b: slim(cmap.get(m.b_id)),
-    votesA: votesA(m),
-    votesB: votesB(m),
-    winnerId: liveWinner(m),
-    decided: m.decided,
-    myChoice: myChoice.get(m.id) ?? null,
-  });
-
   const base = {
+    apiEnabled,
     competition: {
       id: comp.id,
       title: comp.title,
@@ -122,12 +74,54 @@ export async function getState(voterId: string) {
     },
   };
 
+  // ── NOMINATION: only candidates + nomination tallies are needed ──
   if (comp.phase === "nomination") {
+    const [cands, nomCounts, myNom] = await Promise.all([
+      candidates(comp.id),
+      sql`SELECT candidate_id, COUNT(*) AS n FROM nomination_vote
+          WHERE competition_id=${comp.id} GROUP BY candidate_id` as Promise<any[]>,
+      sql`SELECT candidate_id FROM nomination_vote
+          WHERE competition_id=${comp.id} AND voter_id=${voterId}` as Promise<any[]>,
+    ]);
+    const nomCount = new Map<number, number>(nomCounts.map((r) => [r.candidate_id, r.n]));
+    const myNomSet = new Set<number>(myNom.map((r) => r.candidate_id));
     const pool = cands
       .map((c) => ({ ...slim(c)!, votes: nomCount.get(c.id) ?? 0, voted: myNomSet.has(c.id) }))
       .sort((x, y) => y.votes - x.votes || x.name.localeCompare(y.name));
     return { ...base, nomination: { pool } };
   }
+
+  // ── GROUP / KNOCKOUT / FINISHED: candidates + matchups + match-vote tallies ──
+  const [cands, ms, mvCounts, myMv] = await Promise.all([
+    candidates(comp.id),
+    matchups(comp.id),
+    sql`SELECT mv.matchup_id, mv.choice_id, COUNT(*) AS n
+        FROM match_vote mv JOIN matchup m ON m.id=mv.matchup_id
+        WHERE m.competition_id=${comp.id}
+        GROUP BY mv.matchup_id, mv.choice_id` as Promise<any[]>,
+    sql`SELECT mv.matchup_id, mv.choice_id FROM match_vote mv
+        JOIN matchup m ON m.id=mv.matchup_id
+        WHERE m.competition_id=${comp.id} AND mv.voter_id=${voterId}` as Promise<any[]>,
+  ]);
+  const cmap = new Map(cands.map((c) => [c.id, c]));
+  const countOf = new Map<string, number>();
+  for (const r of mvCounts) countOf.set(`${r.matchup_id}:${r.choice_id}`, r.n);
+  const myChoice = new Map<number, number>(myMv.map((r) => [r.matchup_id, r.choice_id]));
+
+  const votesA = (m: Matchup) => countOf.get(`${m.id}:${m.a_id}`) ?? 0;
+  const votesB = (m: Matchup) => countOf.get(`${m.id}:${m.b_id}`) ?? 0;
+  const liveWinner = (m: Matchup): number | null => {
+    if (m.decided) return m.winner_id;
+    const a = votesA(m), b = votesB(m);
+    if (a === b) return null;
+    return a > b ? m.a_id : m.b_id;
+  };
+  const shapeMatch = (m: Matchup) => ({
+    id: m.id, stage: m.stage, round: m.round_no, group: m.group_no, slot: m.slot,
+    a: slim(cmap.get(m.a_id)), b: slim(cmap.get(m.b_id)),
+    votesA: votesA(m), votesB: votesB(m),
+    winnerId: liveWinner(m), decided: m.decided, myChoice: myChoice.get(m.id) ?? null,
+  });
 
   if (comp.phase === "group") {
     const groupMs = ms.filter((m) => m.stage === "group");
@@ -140,7 +134,6 @@ export async function getState(voterId: string) {
     const groups = [...byGroup.entries()]
       .sort((a, b) => a[0] - b[0])
       .map(([g, list]) => {
-        // standings from live winners
         const members = cands.filter((c) => c.group_no === g);
         const stand = members.map((c) => {
           let wins = 0, vf = 0;
@@ -162,11 +155,7 @@ export async function getState(voterId: string) {
   const roundNos = [...new Set(koMs.map((m) => m.round_no))].sort((a, b) => a - b);
   const rounds = roundNos.map((r) => {
     const list = koMs.filter((m) => m.round_no === r).sort((a, b) => a.slot - b.slot);
-    return {
-      round: r,
-      label: roundLabel(list.length * 2), // contestants in this round
-      matchups: list.map(shapeMatch),
-    };
+    return { round: r, label: roundLabel(list.length * 2), matchups: list.map(shapeMatch) };
   });
   const champion = comp.champion_id ? slim(cmap.get(comp.champion_id)) : null;
   return { ...base, knockout: { rounds, champion, finished: comp.phase === "finished" } };
@@ -218,6 +207,14 @@ export async function startGroups(
     GROUP BY c.id ORDER BY votes DESC, c.id ASC LIMIT ${size}`) as any[];
   if (ranked.length < size) throw new Error(`提名池只有 ${ranked.length} 个角色,不足 ${size} 个。`);
 
+  // Atomically claim the transition: only the request that flips nomination→group
+  // proceeds. A concurrent/double-clicked call gets affectedRows=0 and bails out,
+  // so we never double-build the groups.
+  const cas = (await sql`UPDATE competition SET phase='group', target_size=${size},
+    groups_count=${groupsCount}, advance_per_group=${advancePerGroup}
+    WHERE id=${cid} AND phase='nomination'`) as any;
+  if (!cas.affectedRows) return;
+
   // snake distribution keeps groups balanced by nomination strength
   for (let i = 0; i < ranked.length; i++) {
     const g = i % groupsCount;
@@ -239,8 +236,6 @@ export async function startGroups(
                   VALUES (${cid}, 'group', 1, ${g}, ${slot++}, ${arr[i]}, ${arr[j]})`;
       }
   }
-  await sql`UPDATE competition SET phase='group', target_size=${size},
-            groups_count=${groupsCount}, advance_per_group=${advancePerGroup} WHERE id=${cid}`;
 }
 
 /** group → knockout: lock group results, take top N per group, seed bracket. */
@@ -250,6 +245,11 @@ export async function startKnockout(cid: number) {
   if (!c || c.phase !== "group") throw new Error("当前不在小组赛阶段。");
   const advance = c.advance_per_group as number;
   const groupsCount = c.groups_count as number;
+
+  // Atomically claim the group→knockout transition; also init ko_round=1.
+  const cas = (await sql`UPDATE competition SET phase='knockout', ko_round=1
+    WHERE id=${cid} AND phase='group'`) as any;
+  if (!cas.affectedRows) return;
 
   await lockStage(cid, "group");
 
@@ -294,7 +294,6 @@ export async function startKnockout(cid: number) {
     await sql`UPDATE candidate SET seed=${order[i]} WHERE id=${placed[i]}`;
     await sql`UPDATE candidate SET seed=${order[i + 1]} WHERE id=${placed[i + 1]}`;
   }
-  await sql`UPDATE competition SET phase='knockout' WHERE id=${cid}`;
 }
 
 /** Resolve the current knockout round; build the next one, or finish. */
@@ -302,9 +301,19 @@ export async function advanceKnockout(cid: number) {
   const comp = (await sql`SELECT * FROM competition WHERE id=${cid}`) as any[];
   if (!comp[0] || comp[0].phase !== "knockout") throw new Error("当前不在淘汰赛阶段。");
 
-  const maxRow = (await sql`SELECT MAX(round_no) AS r FROM matchup
-                            WHERE competition_id=${cid} AND stage='knockout'`) as any[];
-  const round = maxRow[0].r as number;
+  // Current round: prefer the ko_round counter; fall back to MAX(round_no).
+  let round = comp[0].ko_round as number | null;
+  if (round == null) {
+    const maxRow = (await sql`SELECT MAX(round_no) AS r FROM matchup
+                              WHERE competition_id=${cid} AND stage='knockout'`) as any[];
+    round = (maxRow[0].r as number) || 1;
+  }
+
+  // Atomically claim advancing THIS round. A concurrent/double call sees
+  // affectedRows=0 and bails, so we never resolve a round or build the next twice.
+  const cas = (await sql`UPDATE competition SET ko_round=${round + 1}
+    WHERE id=${cid} AND phase='knockout' AND ko_round=${round}`) as any;
+  if (!cas.affectedRows) return;
 
   await lockRound(cid, round);
 

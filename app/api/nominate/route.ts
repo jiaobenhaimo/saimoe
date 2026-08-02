@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ensureSchema, sql } from "@/lib/db";
 import { getActiveCompetition } from "@/lib/engine";
-import { getCharacter } from "@/lib/bangumi";
+import { getCharacter, getSubjectCharacters, parseSubjectId, type BgmHit } from "@/lib/bangumi";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+async function insertCandidate(cid: number, bgmId: string, name: string, nameCn: string, image: string) {
+  const res = (await sql`
+    INSERT IGNORE INTO candidate (competition_id, bgm_id, name, name_cn, image)
+    VALUES (${cid}, ${bgmId}, ${name}, ${nameCn || null}, ${image || null})`) as any;
+  return res.affectedRows > 0;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,29 +22,37 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "提名阶段已结束。" }, { status: 400 });
 
     const body = await req.json();
-    let name: string, nameCn: string, image: string, bgmId: string;
 
-    if (body.bgmId) {
-      const d = await getCharacter(String(body.bgmId));
-      bgmId = d.bgmId;
-      name = d.name;
-      nameCn = d.nameCn;
-      image = d.image;
-    } else if (body.manual?.name) {
-      name = String(body.manual.name).trim();
-      nameCn = String(body.manual.nameCn || "").trim();
-      image = String(body.manual.image || "").trim();
-      bgmId = "m_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    } else {
-      return NextResponse.json({ error: "缺少角色信息。" }, { status: 400 });
+    // ── batch: import a whole subject's cast ──
+    if (body.subject) {
+      const sid = parseSubjectId(String(body.subject));
+      if (!sid) return NextResponse.json({ error: "无法识别作品 ID / 链接。" }, { status: 400 });
+      const cast: BgmHit[] = await getSubjectCharacters(sid);
+      let added = 0;
+      for (const c of cast) {
+        if (await insertCandidate(comp.id, c.bgmId, c.name, "", c.image)) added++;
+      }
+      return NextResponse.json({ ok: true, imported: cast.length, added });
     }
 
-    const res = (await sql`
-      INSERT IGNORE INTO candidate (competition_id, bgm_id, name, name_cn, image)
-      VALUES (${comp.id}, ${bgmId}, ${name}, ${nameCn || null}, ${image || null})`) as any;
+    // ── single from Bangumi id ──
+    if (body.bgmId) {
+      const d = await getCharacter(String(body.bgmId));
+      const added = await insertCandidate(comp.id, d.bgmId, d.name, d.nameCn, d.image);
+      return NextResponse.json({ ok: true, added });
+    }
 
-    // affectedRows is 1 if a new row was inserted, 0 if IGNORE swallowed a duplicate.
-    return NextResponse.json({ ok: true, added: res.affectedRows > 0 });
+    // ── manual add ──
+    if (body.manual?.name) {
+      const name = String(body.manual.name).trim();
+      const nameCn = String(body.manual.nameCn || "").trim();
+      const image = String(body.manual.image || "").trim();
+      const bgmId = "m_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const added = await insertCandidate(comp.id, bgmId, name, nameCn, image);
+      return NextResponse.json({ ok: true, added });
+    }
+
+    return NextResponse.json({ error: "缺少角色信息。" }, { status: 400 });
   } catch (e: any) {
     return NextResponse.json({ error: e.message || "nominate failed" }, { status: 500 });
   }

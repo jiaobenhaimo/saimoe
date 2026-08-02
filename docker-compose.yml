@@ -22,6 +22,7 @@ services:
       DATABASE_URL: mysql://saimoe:${MYSQL_PASSWORD:-please-change-me}@db:3306/saimoe
       ADMIN_TOKEN: ${ADMIN_TOKEN:-please-change-me}
       BGM_USER_AGENT: bgm-saimoe/1.0
+      BANGUMI_API_ENABLED: "false"
     ports:
       - "3000:80"   # host 3000 → container 80 (app listens on 80)
 
