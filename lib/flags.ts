@@ -1,5 +1,5 @@
-/** Bangumi network API (search / character / subject import) is OFF unless
- * BANGUMI_API_ENABLED is exactly "true". Default = disabled. */
-export function bangumiApiEnabled(): boolean {
-  return process.env.BANGUMI_API_ENABLED === "true";
+/** Master switch for THIS service's own API. Every route except /api/health is
+ * gated by it. Disabled unless API_ENABLED is exactly "true" (default = off). */
+export function apiEnabled(): boolean {
+  return process.env.API_ENABLED === "true";
 }

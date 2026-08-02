@@ -1,30 +1,16 @@
 services:
-  db:
-    image: mysql:8.4
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-please-change-me}
-      MYSQL_DATABASE: saimoe
-      MYSQL_USER: saimoe
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-please-change-me}
-    volumes:
-      - db_data:/var/lib/mysql
-    ports:
-      - "127.0.0.1:3306:3306"   # only exposed to localhost; app talks to it over the docker network
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
-
   app:
     build: .
     restart: unless-stopped
-    depends_on:
-      - db
-    environment:
-      DATABASE_URL: mysql://saimoe:${MYSQL_PASSWORD:-please-change-me}@db:3306/saimoe
-      ADMIN_TOKEN: ${ADMIN_TOKEN:-please-change-me}
-      BGM_USER_AGENT: bgm-saimoe/1.0
-      BANGUMI_API_ENABLED: "false"
     ports:
-      - "3000:80"   # host 3000 → container 80 (app listens on 80)
+      - "3000:80"          # host 3000 → container 80
+    environment:
+      API_ENABLED: "true"
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me}
+      BGM_USER_AGENT: bgm-saimoe/1.0
+      DATA_DIR: /data       # local JSON store lives here
+    volumes:
+      - saimoe_data:/data   # persists across container restarts
 
 volumes:
-  db_data:
+  saimoe_data:

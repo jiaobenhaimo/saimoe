@@ -1,18 +1,10 @@
-import { bangumiApiEnabled } from "./flags";
-
 const BASE = "https://api.bgm.tv";
 const UA = process.env.BGM_USER_AGENT || "bgm-saimoe/1.0";
-
-function ensureEnabled() {
-  if (!bangumiApiEnabled())
-    throw new Error("Bangumi 在线接口已禁用(默认禁用)。请在环境变量设置 BANGUMI_API_ENABLED=true 才能启用搜索 / 抓取 / 批量导入。");
-}
 
 export type BgmHit = { bgmId: string; name: string; image: string };
 
 /** Search characters by keyword. Server-side (no CORS). Gated by the flag. */
 export async function searchCharacters(keyword: string): Promise<BgmHit[]> {
-  ensureEnabled();
   const res = await fetch(`${BASE}/v0/search/characters?limit=12`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json", "User-Agent": UA },
@@ -29,7 +21,6 @@ export type BgmDetail = { bgmId: string; name: string; nameCn: string; image: st
 
 /** Fetch one character's detail and extract the Simplified-Chinese name. Gated. */
 export async function getCharacter(id: string): Promise<BgmDetail> {
-  ensureEnabled();
   const res = await fetch(`${BASE}/v0/characters/${encodeURIComponent(id)}`, {
     headers: { Accept: "application/json", "User-Agent": UA },
     cache: "no-store",
@@ -42,7 +33,6 @@ export async function getCharacter(id: string): Promise<BgmDetail> {
 /** Fetch the whole cast of a subject (anime/game/…). Gated. No per-char CN name
  * (would be one request each); uses the cast list's own name + image. */
 export async function getSubjectCharacters(subjectId: string): Promise<BgmHit[]> {
-  ensureEnabled();
   const res = await fetch(`${BASE}/v0/subjects/${encodeURIComponent(subjectId)}/characters`, {
     headers: { Accept: "application/json", "User-Agent": UA },
     cache: "no-store",

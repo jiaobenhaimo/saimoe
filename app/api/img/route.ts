@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { apiEnabled } from "@/lib/flags";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,6 +11,7 @@ function allowed(host: string) {
 }
 
 export async function GET(req: NextRequest) {
+  if (!apiEnabled()) return new Response("api disabled", { status: 503 });
   const u = req.nextUrl.searchParams.get("u");
   if (!u) return new Response("missing u", { status: 400 });
   let url: URL;

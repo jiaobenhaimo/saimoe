@@ -1,165 +1,147 @@
-import mysql from "mysql2/promise";
-
-// The pool is created lazily on first query — NOT at module load. `next build`
-// imports every route module to collect page data, and at build time
-// DATABASE_URL is absent; eagerly calling createPool("") there throws
-// "Invalid URL" and fails the whole image build.
-let _pool: ReturnType<typeof mysql.createPool> | null = null;
-function pool() {
-  if (!_pool) _pool = createPoolFromEnv();
-  return _pool!;
-}
-
-function createPoolFromEnv(): ReturnType<typeof mysql.createPool> {
-  // Option A (recommended): discrete vars. Passwords with special characters
-  // (@ : / ? # % …) need NO url-encoding this way.
-  const host = process.env.MYSQL_HOST || process.env.DB_HOST;
-  if (host) {
-    return mysql.createPool({
-      host,
-      port: Number(process.env.MYSQL_PORT || process.env.DB_PORT || 3306),
-      user: process.env.MYSQL_USER || process.env.DB_USER || "root",
-      password: process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || "",
-      database: process.env.MYSQL_DATABASE || process.env.DB_NAME,
-    });
-  }
-
-  // Option B: a single connection URI, e.g. mysql://user:pass@host:3306/db
-  const url = process.env.DATABASE_URL?.trim();
-  if (url) {
-    try {
-      return mysql.createPool(url);
-    } catch (e: any) {
-      throw new Error(
-        "DATABASE_URL 无法解析(最常见原因:密码里含 @ : / ? # % 等特殊字符,未做 URL 编码,导致连接串被截断)。" +
-          "二选一修复:① 改用分开的环境变量 MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD / MYSQL_DATABASE(推荐,密码原样填,不用编码);" +
-          "② 保留 DATABASE_URL,但把密码里的特殊字符做百分号编码(@→%40, :→%3A, /→%2F, #→%23, ?→%3F, %→%25)。" +
-          "底层错误:" + (e?.message || String(e))
-      );
-    }
-  }
-
-  throw new Error(
-    "数据库环境变量未配置。请设置 MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD / MYSQL_DATABASE,或设置 DATABASE_URL。"
-  );
-}
+import fs from "fs";
+import path from "path";
 
 /**
- * Tagged-template SQL helper, e.g. `sql\`SELECT * FROM t WHERE id=${id}\``.
- * Returns plain rows for SELECT. For INSERT/UPDATE/DELETE it returns an
- * (empty) array with `.insertId` / `.affectedRows` attached, so call sites
- * that need the new auto-increment id can read `(await sql\`INSERT ...\`).insertId`.
+ * Local JSON-file store (no external database).
+ *
+ * The file is the single source of truth. Every operation does a synchronous
+ * read-modify-write, which — because Node runs our handler code single-threaded
+ * with no `await` in the middle of a mutation — is atomic per instance: two
+ * concurrent votes can't lose each other's write.
+ *
+ * Caveats (inherent to local storage): the container filesystem on most PaaS
+ * (incl. CloudBase Run) is EPHEMERAL, so data resets on redeploy/restart unless
+ * DATA_DIR points at a mounted persistent volume; and multiple instances each
+ * keep their own file, so run a SINGLE instance.
  */
-export async function sql(strings: TemplateStringsArray, ...values: unknown[]): Promise<any[]> {
-  let text = strings[0];
-  for (let i = 0; i < values.length; i++) text += "?" + strings[i + 1];
-  // Use query() rather than execute(): execute() uses server-side prepared
-  // statements, which (a) reject DDL like CREATE TABLE on some servers and
-  // (b) fail on `LIMIT ?` with "Incorrect arguments to mysqld_stmt_execute".
-  // query() still fully escapes the parameter array, so it's injection-safe.
-  const [result] = await pool().query(text, values as any[]);
-  if (Array.isArray(result)) return result as any[];
-  // ResultSetHeader from INSERT/UPDATE/DELETE
-  const arr: any[] = [];
-  (arr as any).insertId = (result as any).insertId;
-  (arr as any).affectedRows = (result as any).affectedRows;
-  return arr;
+
+export type Phase = "nomination" | "group" | "knockout" | "finished";
+
+export interface Competition {
+  id: number; title: string; description: string | null; phase: Phase;
+  target_size: number | null; groups_count: number | null; advance_per_group: number | null;
+  champion_id: number | null; ko_round: number | null; created_at: number;
+}
+export interface Candidate {
+  id: number; competition_id: number; bgm_id: string; name: string; name_cn: string | null;
+  image: string | null; group_no: number | null; seed: number | null; eliminated: boolean;
+}
+export interface Matchup {
+  id: number; competition_id: number; stage: "group" | "knockout"; round_no: number;
+  group_no: number | null; slot: number; a_id: number; b_id: number;
+  winner_id: number | null; decided: boolean;
+}
+interface NominationVote { competition_id: number; candidate_id: number; voter_id: string; }
+interface MatchVote { matchup_id: number; voter_id: string; choice_id: number; }
+
+export interface DB {
+  seq: { competition: number; candidate: number; matchup: number };
+  competitions: Competition[];
+  candidates: Candidate[];
+  matchups: Matchup[];
+  nominationVotes: NominationVote[];
+  matchVotes: MatchVote[];
 }
 
-/** ADD COLUMN that is safe to re-run: swallows MySQL error 1060 (duplicate column). */
-async function ensureColumn(table: string, column: string, definition: string): Promise<void> {
-  try {
-    // Identifiers are hardcoded call-site constants, not user input — safe to inline.
-    await pool().query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`);
-  } catch (e: any) {
-    if (e?.errno !== 1060) throw e; // 1060 = column already exists
+const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
+const FILE = path.join(DATA_DIR, "saimoe.json");
+
+function blank(): DB {
+  return { seq: { competition: 0, candidate: 0, matchup: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [] };
+}
+function normalize(o: any): DB {
+  if (!o || typeof o !== "object") return blank();
+  const b = blank();
+  return {
+    seq: {
+      competition: Number(o?.seq?.competition) || 0,
+      candidate: Number(o?.seq?.candidate) || 0,
+      matchup: Number(o?.seq?.matchup) || 0,
+    },
+    competitions: Array.isArray(o.competitions) ? o.competitions : b.competitions,
+    candidates: Array.isArray(o.candidates) ? o.candidates : b.candidates,
+    matchups: Array.isArray(o.matchups) ? o.matchups : b.matchups,
+    nominationVotes: Array.isArray(o.nominationVotes) ? o.nominationVotes : b.nominationVotes,
+    matchVotes: Array.isArray(o.matchVotes) ? o.matchVotes : b.matchVotes,
+  };
+}
+
+/** Read the whole store from disk (or a blank store if the file is absent). */
+export function readDb(): DB {
+  try { return normalize(JSON.parse(fs.readFileSync(FILE, "utf8"))); }
+  catch { return blank(); }
+}
+/** Persist the store atomically (write temp file, then rename). */
+export function writeDb(db: DB): void {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const tmp = FILE + "." + process.pid + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(db));
+  fs.renameSync(tmp, FILE);
+}
+/** Kept for API compatibility with the old DB layer; just ensures the dir exists. */
+export function ensureSchema(): void {
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {}
+}
+
+// ── route-level operations (each is an atomic read-modify-write) ──
+
+export function createCompetition(title: string): number {
+  const db = readDb();
+  const id = ++db.seq.competition;
+  db.competitions.push({ id, title, description: null, phase: "nomination", target_size: null, groups_count: null, advance_per_group: null, champion_id: null, ko_round: null, created_at: Date.now() });
+  writeDb(db);
+  return id;
+}
+
+export function deleteCompetition(cid: number): void {
+  const db = readDb();
+  const candIds = new Set(db.candidates.filter((c) => c.competition_id === cid).map((c) => c.id));
+  const matchIds = new Set(db.matchups.filter((m) => m.competition_id === cid).map((m) => m.id));
+  db.competitions = db.competitions.filter((c) => c.id !== cid);
+  db.candidates = db.candidates.filter((c) => c.competition_id !== cid);
+  db.matchups = db.matchups.filter((m) => m.competition_id !== cid);
+  db.nominationVotes = db.nominationVotes.filter((v) => v.competition_id !== cid && !candIds.has(v.candidate_id));
+  db.matchVotes = db.matchVotes.filter((v) => !matchIds.has(v.matchup_id));
+  writeDb(db);
+}
+
+/** Insert a candidate; returns false if (competition, bgm_id) already exists. */
+export function addCandidate(cid: number, bgmId: string, name: string, nameCn: string, image: string): boolean {
+  const db = readDb();
+  if (db.candidates.some((c) => c.competition_id === cid && c.bgm_id === bgmId)) return false;
+  const id = ++db.seq.candidate;
+  db.candidates.push({ id, competition_id: cid, bgm_id: bgmId, name, name_cn: nameCn || null, image: image || null, group_no: null, seed: null, eliminated: false });
+  writeDb(db);
+  return true;
+}
+
+/** Toggle a nomination vote. Returns null if the candidate doesn't exist. */
+export function toggleNomination(cid: number, candidateId: number, voterId: string): { voted: boolean } | null {
+  const db = readDb();
+  const cand = db.candidates.find((c) => c.id === candidateId && c.competition_id === cid);
+  if (!cand) return null;
+  const i = db.nominationVotes.findIndex((v) => v.competition_id === cid && v.voter_id === voterId && v.candidate_id === candidateId);
+  if (i >= 0) { db.nominationVotes.splice(i, 1); writeDb(db); return { voted: false }; }
+  db.nominationVotes.push({ competition_id: cid, candidate_id: candidateId, voter_id: voterId });
+  writeDb(db);
+  return { voted: true };
+}
+
+/** Cast / change / retract a matchup vote. */
+export function castMatchVote(cid: number, matchupId: number, voterId: string, choiceId: number): { choice: number | null } | { error: string; status: number } {
+  const db = readDb();
+  const m = db.matchups.find((x) => x.id === matchupId && x.competition_id === cid);
+  if (!m) return { error: "对战不存在。", status: 404 };
+  if (m.decided) return { error: "该场已结束,不能再投票。", status: 400 };
+  if (choiceId !== m.a_id && choiceId !== m.b_id) return { error: "无效的选择。", status: 400 };
+  const cur = db.matchVotes.find((v) => v.matchup_id === matchupId && v.voter_id === voterId);
+  if (cur && cur.choice_id === choiceId) {
+    db.matchVotes = db.matchVotes.filter((v) => !(v.matchup_id === matchupId && v.voter_id === voterId));
+    writeDb(db);
+    return { choice: null };
   }
-}
-
-/** CREATE INDEX that is safe to re-run: swallows MySQL error 1061 (duplicate key). */
-async function ensureIndex(table: string, name: string, cols: string): Promise<void> {
-  try {
-    await pool().query(`CREATE INDEX \`${name}\` ON \`${table}\` (${cols})`);
-  } catch (e: any) {
-    if (e?.errno !== 1061) throw e; // 1061 = duplicate key name
-  }
-}
-
-let initPromise: Promise<void> | null = null;
-
-/** Idempotently create tables. Safe to call on every request (guarded + IF NOT EXISTS). */
-export function ensureSchema(): Promise<void> {
-  if (!initPromise) initPromise = init();
-  return initPromise;
-}
-
-async function init(): Promise<void> {
-  await sql`CREATE TABLE IF NOT EXISTS competition (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    title VARCHAR(255) NOT NULL,
-    description TEXT,
-    phase VARCHAR(16) NOT NULL DEFAULT 'nomination',
-    target_size INT,
-    groups_count INT,
-    advance_per_group INT,
-    champion_id INT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
-
-  // Migration for databases created before `description` existed. MySQL has no
-  // ADD COLUMN IF NOT EXISTS, so add it and ignore the "duplicate column" error (1060).
-  await ensureColumn("competition", "description", "TEXT");
-  await ensureColumn("competition", "ko_round", "INT");
-
-  await sql`CREATE TABLE IF NOT EXISTS candidate (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    competition_id INT NOT NULL,
-    bgm_id VARCHAR(64) NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    name_cn VARCHAR(255),
-    image TEXT,
-    group_no INT,
-    seed INT,
-    eliminated BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_candidate_comp_bgm (competition_id, bgm_id),
-    CONSTRAINT fk_candidate_competition FOREIGN KEY (competition_id) REFERENCES competition(id) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
-
-  await sql`CREATE TABLE IF NOT EXISTS nomination_vote (
-    competition_id INT NOT NULL,
-    candidate_id INT NOT NULL,
-    voter_id VARCHAR(64) NOT NULL,
-    UNIQUE KEY uq_nom_vote (competition_id, voter_id, candidate_id),
-    CONSTRAINT fk_nom_competition FOREIGN KEY (competition_id) REFERENCES competition(id) ON DELETE CASCADE,
-    CONSTRAINT fk_nom_candidate FOREIGN KEY (candidate_id) REFERENCES candidate(id) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
-
-  await sql`CREATE TABLE IF NOT EXISTS matchup (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    competition_id INT NOT NULL,
-    stage VARCHAR(16) NOT NULL,
-    round_no INT NOT NULL DEFAULT 1,
-    group_no INT,
-    slot INT NOT NULL DEFAULT 0,
-    a_id INT NOT NULL,
-    b_id INT NOT NULL,
-    winner_id INT,
-    decided BOOLEAN NOT NULL DEFAULT FALSE,
-    CONSTRAINT fk_matchup_competition FOREIGN KEY (competition_id) REFERENCES competition(id) ON DELETE CASCADE,
-    CONSTRAINT fk_matchup_a FOREIGN KEY (a_id) REFERENCES candidate(id) ON DELETE CASCADE,
-    CONSTRAINT fk_matchup_b FOREIGN KEY (b_id) REFERENCES candidate(id) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
-
-  await sql`CREATE TABLE IF NOT EXISTS match_vote (
-    matchup_id INT NOT NULL,
-    voter_id VARCHAR(64) NOT NULL,
-    choice_id INT NOT NULL,
-    UNIQUE KEY uq_match_vote (matchup_id, voter_id),
-    CONSTRAINT fk_mv_matchup FOREIGN KEY (matchup_id) REFERENCES matchup(id) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
-
-  // Indexes that speed up the per-candidate / per-matchup tally GROUP BYs.
-  await ensureIndex("nomination_vote", "idx_nom_candidate", "candidate_id");
-  await ensureIndex("match_vote", "idx_mv_matchup_choice", "matchup_id, choice_id");
+  if (cur) cur.choice_id = choiceId;
+  else db.matchVotes.push({ matchup_id: matchupId, voter_id: voterId, choice_id: choiceId });
+  writeDb(db);
+  return { choice: choiceId };
 }

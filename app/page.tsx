@@ -84,6 +84,7 @@ export default function Page() {
 
   const load = useCallback(async () => {
     const r = await api("/api/state");
+    if (r.status === 503) { setState({ disabled: true }); setLoading(false); return; }
     setState(await r.json());
     setLoading(false);
   }, []);
@@ -137,7 +138,6 @@ export default function Page() {
 
   const comp = state?.competition;
   const phase: string = comp?.phase ?? "nomination";
-  const apiEnabled: boolean = !!state?.apiEnabled;
 
   const phases = [["nomination", "预选提名"], ["group", "小组赛"], ["knockout", "淘汰赛"], ["finished", "冠军"]] as const;
 
@@ -155,7 +155,13 @@ export default function Page() {
         </div>
       )}
 
-      {!loading && !comp && (
+      {!loading && state?.disabled && (
+        <div className="empty"><div className="big">🚧</div>
+          <p style={{ color: "var(--ink)", fontWeight: 700 }}>服务暂未开放</p>
+          <p>API 当前已禁用。请管理员设置环境变量 <code>API_ENABLED=true</code> 后重新部署。</p></div>
+      )}
+
+      {!loading && !state?.disabled && !comp && (
         <div className="empty"><div className="big">🎬</div>
           <p style={{ color: "var(--ink)", fontWeight: 700 }}>比赛还没开始</p>
           <p>管理员可前往 <a href="/admin">/admin</a> 创建一届世萌大会。</p></div>
@@ -164,23 +170,17 @@ export default function Page() {
       {/* ── NOMINATION ── */}
       {!loading && comp && phase === "nomination" && (
         <>
-          {apiEnabled ? (
-            <>
-              <div className="searchbox">
-                <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder="搜 Bangumi 角色名,提名进池子" />
-                <button onClick={search} disabled={searching || !q.trim()}>{searching ? "搜索中" : "搜索"}</button>
-              </div>
-              <div className="importbox">
-                <input value={subject} onChange={(e) => setSubject(e.target.value)} onKeyDown={(e) => e.key === "Enter" && importSubject()} placeholder="整部作品导入:粘贴 Bangumi 条目 ID 或链接" />
-                <button className="btn" onClick={importSubject} disabled={!subject.trim()}>导入全体角色</button>
-              </div>
-              {importMsg && <div className="hint">{importMsg}</div>}
-              <div className="hint">找不到?<a onClick={() => { setManual(true); setHits(null); }}>手动添加角色</a></div>
-              {searchErr && <div className="hint" style={{ color: "var(--rose-deep)" }}>{searchErr}</div>}
-            </>
-          ) : (
-            <div className="hint" style={{ marginTop: 20 }}>在线搜索已禁用,请手动添加角色。<a onClick={() => setManual(true)}>展开表单</a></div>
-          )}
+          <div className="searchbox">
+            <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder="搜 Bangumi 角色名,提名进池子" />
+            <button onClick={search} disabled={searching || !q.trim()}>{searching ? "搜索中" : "搜索"}</button>
+          </div>
+          <div className="importbox">
+            <input value={subject} onChange={(e) => setSubject(e.target.value)} onKeyDown={(e) => e.key === "Enter" && importSubject()} placeholder="整部作品导入:粘贴 Bangumi 条目 ID 或链接" />
+            <button className="btn" onClick={importSubject} disabled={!subject.trim()}>导入全体角色</button>
+          </div>
+          {importMsg && <div className="hint">{importMsg}</div>}
+          <div className="hint">找不到?<a onClick={() => { setManual(true); setHits(null); }}>手动添加角色</a></div>
+          {searchErr && <div className="hint" style={{ color: "var(--rose-deep)" }}>{searchErr}</div>}
 
           {hits && (
             <div className="results">
@@ -195,7 +195,7 @@ export default function Page() {
             </div>
           )}
 
-          {(manual || !apiEnabled) && (
+          {manual && (
             <div className="card" style={{ marginTop: 14 }}>
               <h3>手动添加角色</h3>
               <div className="field"><label>角色名(必填)</label><input value={mName} onChange={(e) => setMName(e.target.value)} /></div>

@@ -2,24 +2,24 @@
 
 基于 Bangumi 角色的三阶段人气竞赛:**预选提名 → 小组循环赛 → 单败淘汰赛**,决出总冠军。
 
-- 角色数据由后端调用 Bangumi API(无 CORS 问题),提名时自动抓取**简体中文名**。
-- 匿名投票:每个浏览器一个 httpOnly cookie,据此对提名和每场对战去重(**每人每场一票,可改可撤**)。
-- Next.js(App Router)+ MySQL。数据表**首次访问自动创建**,无需手动建库。
+- 角色数据由后端调用 Bangumi API(无 CORS),提名时自动抓取**简体中文名**;头像走后端代理绕过防盗链。
+- 匿名投票:以**设备指纹**去重(不靠公网 IP,同一 NAT 下不同设备可各投一票),每场一票、可改可撤。
+- Next.js(App Router)。**数据存本地 JSON 文件,无需任何外部数据库**。
 
 ## 快速开始
 
-**Docker(推荐)** —— 应用 + MySQL 一起起:
+**Docker(推荐)** —— 一条命令跑起来,自带持久化 volume:
 
 ```bash
-cp .env.example .env      # 改 MYSQL_PASSWORD 和 ADMIN_TOKEN;DATABASE_URL 不用填
+cp .env.example .env      # 至少改 ADMIN_TOKEN;确认 API_ENABLED=true
 docker compose up -d --build
 ```
 
-**本地开发** —— 需自备一个 MySQL:
+**本地开发:**
 
 ```bash
 npm install
-cp .env.example .env.local   # 填 DATABASE_URL 和 ADMIN_TOKEN
+cp .env.example .env.local   # 设 ADMIN_TOKEN、API_ENABLED=true
 npm run dev                  # http://localhost:3000
 ```
 
@@ -27,15 +27,14 @@ npm run dev                  # http://localhost:3000
 
 | 变量 | 说明 |
 |---|---|
-| `DATABASE_URL` | MySQL 连接串 `mysql://user:pass@host:3306/db`(Docker Compose 部署会自动拼好,无需手填) |
+| `API_ENABLED` | 服务 API 总开关,**默认关闭**;必须设为 `true` 才对外提供服务(`/api/health` 不受影响) |
 | `ADMIN_TOKEN` | 进入 `/admin` 和推进赛程的口令,设一段长随机串 |
+| `DATA_DIR` | 数据文件目录。默认容器内 `./.data`(**临时**,重新部署会清空);指到持久化挂载目录可长期保留 |
 | `BGM_USER_AGENT` | 调 Bangumi API 的 UA,可选 |
-
-> 这些变量只在**运行时**读取;`next build` / 打镜像阶段不需要它们。
 
 ## 怎么玩
 
-- 访客在 `/`:提名阶段搜角色投提名票;小组/淘汰阶段点角色投票。
+- 访客在 `/`:提名阶段搜角色 / 整部作品导入 / 手动添加,并投提名票;小组、淘汰阶段点角色投票。
 - 管理员在 `/admin`(需 `ADMIN_TOKEN`)按顺序推进:
   1. 创建比赛 →(可随时**编辑名称 / 简介**)
   2. 结束提名 → 开小组赛:填参赛人数 / 小组数 / 每组晋级(**晋级总数须为 2 的幂**,如 4 组 × 2 = 8)
@@ -44,10 +43,18 @@ npm run dev                  # http://localhost:3000
 
 ## 部署
 
-- **腾讯云开发 CloudBase Run**(免备案先上线):见 [`DEPLOY_TCB.md`](./DEPLOY_TCB.md)
-- **自托管到国内云服务器**(Docker + 备案):见 [`DEPLOY_CN.md`](./DEPLOY_CN.md)
+- **腾讯云开发 CloudBase Run**:见 [`DEPLOY_TCB.md`](./DEPLOY_TCB.md)
+- **自托管到国内云服务器**(Docker):见 [`DEPLOY_CN.md`](./DEPLOY_CN.md)
 
 镜像化直接用根目录 `Dockerfile`(多阶段构建,监听 80)。
+
+## 数据与存储
+
+数据是**容器本地的一个 JSON 文件**(`$DATA_DIR/saimoe.json`),每次写操作同步落盘、原子替换。含义:
+
+- **必须单实例运行**:多个实例各写各的文件,数据不共享。
+- 容器文件系统通常**易失**:不挂持久化卷时,重新部署 / 重启会清空数据。要长期保留,把 `DATA_DIR` 指到持久化挂载目录(云硬盘 / NAS / compose volume)。
+- 适合中小规模人气投票;不适合超大规模高并发(整份数据每次读写全量 JSON)。
 
 ## 结构
 
@@ -57,19 +64,21 @@ app/
   admin/page.tsx      管理台
   api/state           GET  当前赛况(含本人投票)
   api/bangumi/search  GET  角色搜索(服务端代理)
-  api/nominate        POST 提名角色(抓中文名)
+  api/nominate        POST 提名 / 整部作品导入
   api/vote            POST 提名投票 / 对战投票
   api/admin/action    POST 赛程推进 + 编辑信息(需令牌)
+  api/img             GET  Bangumi 图片代理(绕防盗链)
+  api/health          GET  健康检查(不读数据,探针用)
 lib/
-  db.ts               MySQL 连接池 + 自动建表(表结构的唯一来源)
+  db.ts               本地 JSON 存储(读改写 + 原子落盘)
   engine.ts           赛制引擎:分组、种子、结算、状态
-  bangumi.ts          Bangumi 搜索 + 详情(中文名)
-  voter.ts            匿名 voter cookie
+  bangumi.ts          Bangumi 搜索 / 详情 / 整部作品角色
+  voter.ts            设备指纹 / cookie 投票身份
+  flags.ts            服务 API 开关
 ```
 
 ## 说明
 
-- **平票**默认判 A 方,规则在 `lib/engine.ts` 的 `decide()`。
-- **不支持轮空**,所以晋级总数要是 2 的幂(管理台会校验)。
-- **防刷是 honor-system**,清 cookie 即可再投;要更强可换成 Bangumi OAuth(投票表已按 `voter_id` 建唯一约束,换成账号 id 即可)。
-- **结算无强事务**,极端并发下可能有个位数偏差,对人气赛足够。
+- **平票 / 0-0** 结算时判给 A 方(`lib/engine.ts` 的 `decide()`)。
+- **不支持轮空**,晋级总数要是 2 的幂(管理台会校验)。
+- **防刷是尽力而为**:设备指纹可被清理/伪造,要硬性防刷需接账号登录(如 Bangumi OAuth)。

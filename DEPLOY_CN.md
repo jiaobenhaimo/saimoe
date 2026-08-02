@@ -1,6 +1,6 @@
 # 大陆部署指南
 
-Vercel + 海外 MySQL 那套在中国大陆访问不稳定(无大陆节点,偶有被墙)。这里给两条更适合大陆的路。
+数据存本地 JSON 文件,不依赖任何外部数据库。这里给两条适合大陆的部署路。
 
 ## 前提:域名要不要备案?
 
@@ -32,7 +32,7 @@ git clone https://github.com/jiaobenhaimo/bgm-saimoe.git
 cd bgm-saimoe
 cp .env.example .env
 ```
-编辑 `.env`,把 `MYSQL_PASSWORD` 和 `ADMIN_TOKEN` 改成两段不同的随机字符串(可用 `openssl rand -hex 24` 生成)。**不需要**填 `DATABASE_URL`——`docker-compose.yml` 会用 `MYSQL_PASSWORD` 自动拼出正确的连接串,指向同一个 compose 网络里的数据库容器。
+编辑 `.env`,把 `ADMIN_TOKEN` 改成一段随机字符串(可用 `openssl rand -hex 24` 生成),确认 `API_ENABLED=true`。不需要配任何数据库。
 
 ### 4. 启动
 
@@ -64,15 +64,13 @@ git pull
 docker compose up -d --build
 ```
 
-### 数据库说明
+### 数据存储说明
 
-`lib/db.ts` 用的是标准 `mysql2` 驱动,能直接连自己 Docker 里的 MySQL,也能连阿里云 RDS MySQL、腾讯云数据库 MySQL、腾讯云开发 CloudBase MySQL——换的只是 `DATABASE_URL` 这一行,代码不用改。数据存在 `docker-compose.yml` 里的 `db_data` 这个 volume 里,`docker compose down` 不会删它,只有显式 `docker compose down -v` 才会清空。
-
----
+数据存在容器本地文件 `/data/saimoe.json`(由 `docker-compose.yml` 里的 `saimoe_data` 这个 volume 持久化),`docker compose down` 不会删它,只有 `docker compose down -v` 才会清空。**只能单实例运行**;要扩多实例得改用共享存储或数据库。
 
 ## 方案 B:腾讯云开发 CloudBase Run(不备案,几分钟上线)
 
-详细步骤已经拆成独立文档,见 [`DEPLOY_TCB.md`](./DEPLOY_TCB.md)——用的是云托管(CloudBase Run)按 `Dockerfile` 容器化部署,数据库用 CloudBase 自带的 MySQL(开一次「直连服务」拿标准连接串),和本项目现成的 `mysql2` 直连驱动完全兼容,不用改代码。
+详细步骤见 [`DEPLOY_TCB.md`](./DEPLOY_TCB.md)——云托管(CloudBase Run)按 `Dockerfile` 容器化部署;数据存本地文件,注意持久化设置。
 
 ---
 
@@ -86,4 +84,4 @@ docker compose up -d --build
 | 成本 | 服务器月租(轻量约 ¥24~60/月) | 按量计费,小流量几乎免费 |
 | 适合 | 长期正式跑、想完全掌控 | 先内测/给朋友玩,后面再转正 |
 
-先用方案 B 跑起来验证功能,备案批下来再迁到方案 A,两边用的都是同一套 `mysql2` 连接串,迁移只是改一个环境变量加换服务器,代码不用动。
+先用方案 B 跑起来验证功能,备案批下来再迁到方案 A,代码完全一样,迁移只是换台服务器、把数据文件拷过去。
