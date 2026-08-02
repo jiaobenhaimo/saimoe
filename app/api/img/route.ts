@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { apiEnabled } from "@/lib/flags";
+import { netFetch } from "@/lib/net";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +21,7 @@ export async function GET(req: NextRequest) {
     return new Response("bad scheme", { status: 400 });
   if (!allowed(url.hostname)) return new Response("host not allowed", { status: 403 });
   try {
-    const r = await fetch(url.toString(), {
+    const r = await netFetch(url.toString(), {
       headers: { Referer: "https://bgm.tv/", "User-Agent": UA },
       cache: "no-store",
       signal: AbortSignal.timeout(10_000),

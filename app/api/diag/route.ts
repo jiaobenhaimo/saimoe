@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import dns from "node:dns/promises";
 import { apiEnabled } from "@/lib/flags";
+import { netResolve4, netFetch } from "@/lib/net";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,10 +27,18 @@ export async function GET() {
     out.dns = { host: "api.bgm.tv", error: e.code || e.message };
   }
 
+  // 1b) 应用实际会使用的 IP(可信 DNS / 固定 IP)
+  try {
+    out.net = { "api.bgm.tv": await netResolve4("api.bgm.tv") };
+  } catch (e: any) {
+    out.net = { "api.bgm.tv": ["解析失败: " + (e?.message || e)] };
+  }
+
   // 2) HTTPS 探测:/v0/me 返回 401 即代表连通(我们没有传 token,不会真登录)
+  //    走与业务相同的 netFetch(可信 DNS / 固定 IP),反映修复后的真实路径。
   const started = Date.now();
   try {
-    const r = await fetch("https://api.bgm.tv/v0/me", {
+    const r = await netFetch("https://api.bgm.tv/v0/me", {
       headers: { "User-Agent": UA, Accept: "application/json" },
       cache: "no-store",
       signal: AbortSignal.timeout(10_000),
