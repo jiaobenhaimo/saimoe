@@ -33,6 +33,8 @@ export function getState(voterId: string) {
     competition: {
       id: comp.id, title: comp.title, description: comp.description, phase: comp.phase,
       groupsCount: comp.groups_count, advancePerGroup: comp.advance_per_group, championId: comp.champion_id,
+      nomEndsAt: comp.nom_ends_at ?? null, groupEndsAt: comp.group_ends_at ?? null, koRoundEndsAt: comp.ko_round_ends_at ?? null,
+      postponeDays: comp.postpone_days ?? null,
     },
   };
 
@@ -152,8 +154,8 @@ export function updateCompetition(cid: number, title: string, description: strin
 /** nomination → group: keep top `size` candidates, split into groups, build round-robin. */
 export function startGroups(cid: number, size: number, groupsCount: number, advancePerGroup: number) {
   const qualifiers = groupsCount * advancePerGroup;
-  if (!isPow2(qualifiers)) throw new Error(`晋级总数 ${qualifiers}(小组数×每组晋级)必须是 2 的幂,淘汰赛才不会有轮空。当前不是。`);
-  if (size < groupsCount * 2) throw new Error("参赛人数太少,无法组成每组至少 2 人的小组。");
+  if (!isPow2(qualifiers)) throw new Error(`晋级总数 ${qualifiers}（小组数×每组晋级）必须是 2 的幂，淘汰赛才不会有轮空。当前不是。`);
+  if (size < groupsCount * 2) throw new Error("参赛人数太少，无法组成每组至少 2 人的小组。");
 
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
@@ -166,9 +168,11 @@ export function startGroups(cid: number, size: number, groupsCount: number, adva
     .map((c) => ({ id: c.id, votes: nomCount.get(c.id) || 0 }))
     .sort((a, b) => b.votes - a.votes || a.id - b.id)
     .slice(0, size);
-  if (ranked.length < size) throw new Error(`提名池只有 ${ranked.length} 个角色,不足 ${size} 个。`);
+  if (ranked.length < size) throw new Error(`提名池只有 ${ranked.length} 个角色，不足 ${size} 个。`);
 
   comp.phase = "group"; comp.target_size = size; comp.groups_count = groupsCount; comp.advance_per_group = advancePerGroup;
+  comp.nom_ends_at = null;
+  comp.group_ends_at = comp.group_hours ? Date.now() + comp.group_hours * 3600_000 : null;
 
   const chosen = new Set(ranked.map((r) => r.id));
   for (const c of compCands) if (!chosen.has(c.id)) { c.group_no = null; c.eliminated = true; }
@@ -228,9 +232,11 @@ export function startKnockout(cid: number) {
       if (perGroupOrdered[g][rank] != null) qualifiersBySeed.push(perGroupOrdered[g][rank]);
 
   const n = qualifiersBySeed.length;
-  if (!isPow2(n)) throw new Error(`晋级人数 ${n} 不是 2 的幂,无法生成干净的淘汰赛(检查每组人数是否够 ${advance} 名晋级)。`);
+  if (!isPow2(n)) throw new Error(`晋级人数 ${n} 不是 2 的幂，无法生成干净的淘汰赛（检查每组人数是否够 ${advance} 名晋级）。`);
 
   comp.phase = "knockout"; comp.ko_round = 1;
+  comp.group_ends_at = null;
+  comp.ko_round_ends_at = comp.round_hours ? Date.now() + comp.round_hours * 3600_000 : null;
   for (const id of eliminatedIds) { const c = db.candidates.find((x) => x.id === id); if (c) c.eliminated = true; }
 
   const order = bracketSeedOrder(n);
@@ -266,10 +272,59 @@ export function advanceKnockout(cid: number) {
   comp.ko_round = round + 1;
   if (winners.length <= 1) {
     comp.phase = "finished"; comp.champion_id = winners[0] ?? null;
+    comp.ko_round_ends_at = null;
     writeDb(db);
     return;
   }
+  comp.ko_round_ends_at = comp.round_hours ? Date.now() + comp.round_hours * 3600_000 : null;
   for (let i = 0; i < winners.length; i += 2)
     db.matchups.push({ id: ++db.seq.matchup, competition_id: cid, stage: "knockout", round_no: round + 1, group_no: null, slot: i / 2, a_id: winners[i], b_id: winners[i + 1], winner_id: null, decided: false });
   writeDb(db);
+}
+
+// ── scheduling ────────────────────────────────────────────────
+export interface ScheduleOpts {
+  nomEndsAt: number | null;      // epoch ms when nomination auto-closes
+  autoSize: number; autoGroups: number; autoAdvance: number;
+  groupHours: number | null;     // group-stage duration
+  roundHours: number | null;     // per knockout-round duration
+  postponeDays: number;          // days to push back if the pool is short at the deadline
+}
+
+/** Arm the automatic schedule (only meaningful in the nomination phase). */
+export function scheduleCompetition(cid: number, o: ScheduleOpts) {
+  const qualifiers = o.autoGroups * o.autoAdvance;
+  if (!isPow2(qualifiers)) throw new Error(`晋级总数 ${qualifiers}（小组数×每组晋级）必须是 2 的幂。`);
+  if (o.autoSize < o.autoGroups * 2) throw new Error("参赛人数太少，无法组成每组至少 2 人的小组。");
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp) return;
+  comp.auto_size = o.autoSize; comp.auto_groups = o.autoGroups; comp.auto_advance = o.autoAdvance;
+  comp.group_hours = o.groupHours; comp.round_hours = o.roundHours;
+  comp.postpone_days = o.postponeDays > 0 ? o.postponeDays : 1;
+  comp.nom_ends_at = o.nomEndsAt && o.nomEndsAt > Date.now() ? o.nomEndsAt : null;
+  writeDb(db);
+}
+
+/** Clear the automatic schedule (revert to manual control). */
+export function clearSchedule(cid: number) {
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp) return;
+  comp.nom_ends_at = null; comp.group_ends_at = null; comp.ko_round_ends_at = null;
+  writeDb(db);
+}
+
+/** Push the nomination deadline back by `postpone_days` (pool was too small). */
+export function postponeNomination(cid: number) {
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp || comp.phase !== "nomination" || !comp.nom_ends_at) return;
+  comp.nom_ends_at += (comp.postpone_days || 1) * 86400_000;
+  writeDb(db);
+}
+
+/** How many candidates are currently in the pool (used to decide postpone). */
+export function poolSize(cid: number): number {
+  return readDb().candidates.filter((c) => c.competition_id === cid).length;
 }

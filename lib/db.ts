@@ -21,6 +21,10 @@ export interface Competition {
   id: number; title: string; description: string | null; phase: Phase;
   target_size: number | null; groups_count: number | null; advance_per_group: number | null;
   champion_id: number | null; ko_round: number | null; created_at: number;
+  // ── timed schedule (epoch ms; null = not scheduled) ──
+  nom_ends_at: number | null; group_ends_at: number | null; ko_round_ends_at: number | null;
+  auto_size: number | null; auto_groups: number | null; auto_advance: number | null;
+  group_hours: number | null; round_hours: number | null; postpone_days: number | null;
 }
 export interface Candidate {
   id: number; competition_id: number; bgm_id: string; name: string; name_cn: string | null;
@@ -88,7 +92,7 @@ export function ensureSchema(): void {
 export function createCompetition(title: string): number {
   const db = readDb();
   const id = ++db.seq.competition;
-  db.competitions.push({ id, title, description: null, phase: "nomination", target_size: null, groups_count: null, advance_per_group: null, champion_id: null, ko_round: null, created_at: Date.now() });
+  db.competitions.push({ id, title, description: null, phase: "nomination", target_size: null, groups_count: null, advance_per_group: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, auto_groups: null, auto_advance: null, group_hours: null, round_hours: null, postpone_days: null });
   writeDb(db);
   return id;
 }
@@ -132,7 +136,7 @@ export function castMatchVote(cid: number, matchupId: number, voterId: string, c
   const db = readDb();
   const m = db.matchups.find((x) => x.id === matchupId && x.competition_id === cid);
   if (!m) return { error: "对战不存在。", status: 404 };
-  if (m.decided) return { error: "该场已结束,不能再投票。", status: 400 };
+  if (m.decided) return { error: "该场已结束，不能再投票。", status: 400 };
   if (choiceId !== m.a_id && choiceId !== m.b_id) return { error: "无效的选择。", status: 400 };
   const cur = db.matchVotes.find((v) => v.matchup_id === matchupId && v.voter_id === voterId);
   if (cur && cur.choice_id === choiceId) {

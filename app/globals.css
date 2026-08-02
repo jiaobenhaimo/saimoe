@@ -166,3 +166,26 @@ a { color: var(--rose-deep); }
 @media (prefers-reduced-motion: reduce) {
   .champ::after, .champ .crown, .skel::after { animation: none; }
 }
+
+/* ─────────── overflow fixes + scheduler UI (this pass) ─────────── */
+
+/* never let a control spill out of its container */
+input, button, select, textarea { max-width: 100%; }
+.field { min-width: 0; }
+.field input { width: 100%; min-width: 0; }
+
+/* 3-up rows: equal columns that are allowed to shrink (minmax 0) */
+.row3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 460px) { .row3 { grid-template-columns: 1fr; } }
+
+/* section separator inside a card */
+.sep { border: none; border-top: 1px solid var(--line); margin: 16px 0 12px; }
+
+/* deadline / countdown banner on the vote page */
+.deadline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin: 12px 0 2px; padding: 10px 14px; border: 1.5px solid var(--line); border-radius: 12px; background: #fff; }
+.deadline .dl-label { font-weight: 800; color: var(--ink); }
+.deadline .dl-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.deadline .dl-remain { margin-left: auto; font-weight: 800; color: var(--rose-deep); font-variant-numeric: tabular-nums; }
+
+/* rules page */
+.rules-p { margin: 6px 0 0; color: var(--ink); line-height: 1.75; }

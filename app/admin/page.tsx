@@ -2,6 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+function fmtAbs(ms?: number | null): string {
+  if (!ms) return "";
+  try { return new Date(ms).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }); }
+  catch { return ""; }
+}
+
 export default function Admin() {
   const [token, setToken] = useState("");
   const [state, setState] = useState<any>(null);
@@ -13,7 +19,12 @@ export default function Admin() {
   const [groups, setGroups] = useState(4);
   const [advance, setAdvance] = useState(2);
 
-  // edit-info form (title + description of an existing competition)
+  // schedule inputs
+  const [nomLocal, setNomLocal] = useState("");
+  const [gHours, setGHours] = useState(48);
+  const [rHours, setRHours] = useState(24);
+  const [pDays, setPDays] = useState(2);
+
   const [editTitle, setEditTitle] = useState("");
   const [editDesc, setEditDesc] = useState("");
 
@@ -26,7 +37,7 @@ export default function Admin() {
   useEffect(() => { load(); }, [load]);
 
   const act = async (action: string, extra: Record<string, unknown> = {}) => {
-    if (busy) return; // prevent double-submit: admin transitions aren't concurrency-safe
+    if (busy) return; // prevent double-submit
     setBusy(true);
     localStorage.setItem("adminToken", token);
     setMsg(null);
@@ -38,7 +49,7 @@ export default function Admin() {
       });
       const j = await r.json();
       if (!r.ok) setMsg({ t: j.error || "操作失败", ok: false });
-      else setMsg({ t: "已执行:" + action, ok: true });
+      else setMsg({ t: "已执行：" + action, ok: true });
       await load();
     } finally {
       setBusy(false);
@@ -48,13 +59,8 @@ export default function Admin() {
   const comp = state?.competition;
   const phase = comp?.phase;
 
-  // Prefill the edit form whenever a (different) competition loads, without
-  // clobbering the admin's typing on re-fetches of the same competition.
   useEffect(() => {
-    if (comp) {
-      setEditTitle(comp.title || "");
-      setEditDesc(comp.description || "");
-    }
+    if (comp) { setEditTitle(comp.title || ""); setEditDesc(comp.description || ""); }
   }, [comp?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const qualifiers = groups * advance;
@@ -64,7 +70,7 @@ export default function Admin() {
     <main className="wrap admin">
       <div className="eyebrow">Admin</div>
       <h1 className="title" style={{ fontSize: 30 }}>赛事控制台</h1>
-      <p className="subtitle">推进比赛阶段。所有操作需要管理员令牌(环境变量 <code>ADMIN_TOKEN</code>)。</p>
+      <p className="subtitle">推进比赛阶段。所有操作需要管理员令牌（环境变量 <code>ADMIN_TOKEN</code>)。</p>
 
       <div className="card">
         <div className="field"><label>管理员令牌</label>
@@ -74,10 +80,15 @@ export default function Admin() {
       <div className="card">
         <h3>当前状态</h3>
         {comp ? (
-          <p style={{ margin: 0 }}>
-            《{comp.title}》— 阶段:<b>{phase}</b>
-            {comp.groupsCount ? ` · ${comp.groupsCount} 组,每组取 ${comp.advancePerGroup}` : ""}
-          </p>
+          <>
+            <p style={{ margin: 0 }}>
+              《{comp.title}》— 阶段：<b>{phase}</b>
+              {comp.groupsCount ? ` · ${comp.groupsCount} 组，每组取 ${comp.advancePerGroup}` : ""}
+            </p>
+            {phase === "nomination" && comp.nomEndsAt && <p className="hint" style={{ marginBottom: 0 }}>已定时：提名将于 <b>{fmtAbs(comp.nomEndsAt)}</b> 截止；人数不足顺延 {comp.postponeDays} 天。</p>}
+            {phase === "group" && comp.groupEndsAt && <p className="hint" style={{ marginBottom: 0 }}>小组赛将于 <b>{fmtAbs(comp.groupEndsAt)}</b> 自动结算。</p>}
+            {phase === "knockout" && comp.koRoundEndsAt && <p className="hint" style={{ marginBottom: 0 }}>本轮将于 <b>{fmtAbs(comp.koRoundEndsAt)}</b> 自动推进。</p>}
+          </>
         ) : <p style={{ margin: 0, color: "var(--muted)" }}>暂无比赛。</p>}
       </div>
 
@@ -86,13 +97,11 @@ export default function Admin() {
           <h3>编辑比赛信息</h3>
           <div className="field"><label>比赛名称</label>
             <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} /></div>
-          <div className="field"><label>简介 / 副标题(可选,显示在投票页标题下方)</label>
+          <div className="field"><label>简介 / 副标题（可选，显示在投票页标题下方）</label>
             <input value={editDesc} onChange={(e) => setEditDesc(e.target.value)}
-              placeholder="例如:2026 春季 · 由你决定最萌角色" /></div>
+              placeholder="例如：2026 春季 · 由你决定最萌角色" /></div>
           <button className="btn solid" disabled={busy || !editTitle.trim()}
-            onClick={() => act("update", { title: editTitle, description: editDesc })}>
-            保存修改
-          </button>
+            onClick={() => act("update", { title: editTitle, description: editDesc })}>保存修改</button>
         </div>
       )}
 
@@ -101,13 +110,13 @@ export default function Admin() {
           <h3>① 创建新一届</h3>
           <div className="field"><label>标题</label>
             <input value={title} onChange={(e) => setTitle(e.target.value)} /></div>
-          <button className="btn solid" disabled={busy} onClick={() => act("create", { title })}>创建比赛(进入提名阶段)</button>
+          <button className="btn solid" disabled={busy} onClick={() => act("create", { title })}>创建比赛（进入提名阶段）</button>
         </div>
       )}
 
       {phase === "nomination" && (
         <div className="card">
-          <h3>② 结束提名,开小组赛</h3>
+          <h3>② 结束提名 → 小组赛</h3>
           <div className="row3">
             <div className="field"><label>参赛人数</label>
               <input type="number" value={size} onChange={(e) => setSize(+e.target.value)} /></div>
@@ -116,20 +125,36 @@ export default function Admin() {
             <div className="field"><label>每组晋级</label>
               <input type="number" value={advance} onChange={(e) => setAdvance(+e.target.value)} /></div>
           </div>
-          <p className="hint" style={{ color: pow2 ? "var(--muted)" : "var(--rose-deep)" }}>
-            晋级总数 = {qualifiers}{pow2 ? "(是 2 的幂 ✓)" : "(需为 2 的幂:4 / 8 / 16…)"}
-          </p>
+          {!pow2 && <p className="hint" style={{ color: "var(--rose-deep)" }}>晋级总数 {qualifiers} 需为 2 的幂（如 4 / 8 / 16)。</p>}
+
           <button className="btn solid" disabled={busy || !pow2}
-            onClick={() => act("start_groups", { size, groups, advance })}>
-            取提名前 {size} 名,分 {groups} 组循环
+            onClick={() => act("start_groups", { size, groups, advance })}>立即开始（取前 {size} 名，分 {groups} 组）</button>
+
+          <hr className="sep" />
+          <h3 style={{ fontSize: 15 }}>或：定时自动开赛</h3>
+          <p className="hint">到设定的提名截止时间自动开小组赛；若届时提名人数不足 {size}，自动顺延若干天（后续赛程随之顺延）。</p>
+          <div className="field"><label>提名截止时间</label>
+            <input type="datetime-local" value={nomLocal} onChange={(e) => setNomLocal(e.target.value)} /></div>
+          <div className="row3">
+            <div className="field"><label>小组赛时长（小时）</label>
+              <input type="number" value={gHours} onChange={(e) => setGHours(+e.target.value)} /></div>
+            <div className="field"><label>每轮淘汰赛（小时）</label>
+              <input type="number" value={rHours} onChange={(e) => setRHours(+e.target.value)} /></div>
+            <div className="field"><label>人数不足顺延（天）</label>
+              <input type="number" value={pDays} onChange={(e) => setPDays(+e.target.value)} /></div>
+          </div>
+          <button className="btn solid" disabled={busy || !pow2 || !nomLocal}
+            onClick={() => act("schedule", { nomEndsAt: nomLocal ? new Date(nomLocal).getTime() : 0, size, groups, advance, groupHours: gHours, roundHours: rHours, postponeDays: pDays })}>
+            启动定时赛程
           </button>
+          {comp.nomEndsAt && <p className="hint">已定时（截止 {fmtAbs(comp.nomEndsAt)})。<a onClick={() => act("unschedule")}>取消定时</a></p>}
         </div>
       )}
 
       {phase === "group" && (
         <div className="card">
-          <h3>③ 结束小组赛,开淘汰赛</h3>
-          <p className="hint">按当前票数结算每组名次,晋级者进入单败淘汰赛。</p>
+          <h3>③ 结束小组赛，开淘汰赛</h3>
+          <p className="hint">按当前票数结算每组名次，晋级者进入单败淘汰赛。{comp.groupEndsAt ? "（已定时，也可在此手动提前）" : ""}</p>
           <button className="btn solid" disabled={busy} onClick={() => act("start_knockout")}>结算小组赛 → 生成淘汰赛</button>
         </div>
       )}
@@ -137,15 +162,15 @@ export default function Admin() {
       {phase === "knockout" && (
         <div className="card">
           <h3>④ 推进淘汰赛一轮</h3>
-          <p className="hint">按当前票数结算本轮,生成下一轮;打到只剩 1 人时产生冠军。</p>
+          <p className="hint">按当前票数结算本轮，生成下一轮；打到只剩 1 人时产生冠军。{comp.koRoundEndsAt ? "（已定时，也可在此手动提前）" : ""}</p>
           <button className="btn solid" disabled={busy} onClick={() => act("advance")}>结算本轮 → 下一轮 / 决出冠军</button>
         </div>
       )}
 
       <div className="card">
         <h3>危险操作</h3>
-        <p className="hint">删除当前比赛及其全部数据,无法撤销。</p>
-        <button className="btn" disabled={busy} onClick={() => { if (confirm("确认删除当前比赛?")) act("reset"); }}>重置 / 删除当前比赛</button>
+        <p className="hint">删除当前比赛及其全部数据，无法撤销。</p>
+        <button className="btn" disabled={busy} onClick={() => { if (confirm("确认删除当前比赛？")) act("reset"); }}>重置 / 删除当前比赛</button>
       </div>
 
       {msg && <div className={"msg " + (msg.ok ? "ok" : "err")}>{msg.t}</div>}
