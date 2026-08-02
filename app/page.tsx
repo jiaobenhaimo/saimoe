@@ -100,7 +100,6 @@ export default function Page() {
 
   return (
     <main className="wrap">
-      <div className="eyebrow">Bangumi · 番组计划</div>
       <h1 className="title">{comp?.title || "世萌大会"}</h1>
       <p className="subtitle">{comp?.description || "提名你支持的角色,一路投票送 TA 走到最后。每个浏览器每场一票,可改可撤。"}</p>
       <div className="phasebar">
@@ -232,7 +231,7 @@ export default function Page() {
       )}
 
       <div className="foot">
-        数据来自 Bangumi 番组计划 · 匿名投票(cookie 记名)· 中文名取自角色资料的简体中文名<br />
+        数据来自 Bangumi · 匿名投票(cookie 记名)· 中文名取自角色资料的简体中文名<br />
         管理员入口:<a href="/admin">/admin</a>
       </div>
     </main>

@@ -6,13 +6,42 @@ import mysql from "mysql2/promise";
 // "Invalid URL" and fails the whole image build.
 let _pool: ReturnType<typeof mysql.createPool> | null = null;
 function pool() {
-  if (!_pool) {
-    const url = process.env.DATABASE_URL;
-    if (!url) throw new Error("DATABASE_URL is not set. Set it in the container/host environment.");
-    // DATABASE_URL is a standard MySQL URI: mysql://user:password@host:3306/dbname
-    _pool = mysql.createPool(url);
-  }
+  if (!_pool) _pool = createPoolFromEnv();
   return _pool!;
+}
+
+function createPoolFromEnv(): ReturnType<typeof mysql.createPool> {
+  // Option A (recommended): discrete vars. Passwords with special characters
+  // (@ : / ? # % …) need NO url-encoding this way.
+  const host = process.env.MYSQL_HOST || process.env.DB_HOST;
+  if (host) {
+    return mysql.createPool({
+      host,
+      port: Number(process.env.MYSQL_PORT || process.env.DB_PORT || 3306),
+      user: process.env.MYSQL_USER || process.env.DB_USER || "root",
+      password: process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || "",
+      database: process.env.MYSQL_DATABASE || process.env.DB_NAME,
+    });
+  }
+
+  // Option B: a single connection URI, e.g. mysql://user:pass@host:3306/db
+  const url = process.env.DATABASE_URL?.trim();
+  if (url) {
+    try {
+      return mysql.createPool(url);
+    } catch (e: any) {
+      throw new Error(
+        "DATABASE_URL 无法解析(最常见原因:密码里含 @ : / ? # % 等特殊字符,未做 URL 编码,导致连接串被截断)。" +
+          "二选一修复:① 改用分开的环境变量 MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD / MYSQL_DATABASE(推荐,密码原样填,不用编码);" +
+          "② 保留 DATABASE_URL,但把密码里的特殊字符做百分号编码(@→%40, :→%3A, /→%2F, #→%23, ?→%3F, %→%25)。" +
+          "底层错误:" + (e?.message || String(e))
+      );
+    }
+  }
+
+  throw new Error(
+    "数据库环境变量未配置。请设置 MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD / MYSQL_DATABASE,或设置 DATABASE_URL。"
+  );
 }
 
 /**
