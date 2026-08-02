@@ -9,6 +9,7 @@ services:
       ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me}
       BGM_USER_AGENT: bgm-saimoe/1.0
       DATA_DIR: /data       # local JSON store lives here
+      BACKUP_KEEP: "48"     # keep last 48 snapshots (~24h at 30-min interval)
     volumes:
       - saimoe_data:/data   # persists across container restarts
 

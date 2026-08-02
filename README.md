@@ -50,11 +50,19 @@ npm run dev                  # http://localhost:3000
 
 ## 数据与存储
 
-数据是**容器本地的一个 JSON 文件**(`$DATA_DIR/saimoe.json`),每次写操作同步落盘、原子替换。含义:
+数据是**容器本地的一个 JSON 文件**(`$DATA_DIR/saimoe.json`),每次写操作同步落盘、原子替换;进程内按文件 mtime 缓存,避免重复读盘。含义:
 
 - **必须单实例运行**:多个实例各写各的文件,数据不共享。
 - 容器文件系统通常**易失**:不挂持久化卷时,重新部署 / 重启会清空数据。要长期保留,把 `DATA_DIR` 指到持久化挂载目录(云硬盘 / NAS / compose volume)。
 - 适合中小规模人气投票;不适合超大规模高并发(整份数据每次读写全量 JSON)。
+
+**自动备份**:进程每 30 分钟把数据快照到 `$DATA_DIR/backups/saimoe-<时间戳>.json`,本地保留最近 `BACKUP_KEEP` 份(默认 48,约 24 小时)。若 `DATA_DIR` 挂了持久化卷,这些快照即可用于恢复(用某个快照覆盖 `saimoe.json` 再重启即可)。要做**异地备份**,设置 `BACKUP_HOOK`,例如把快照推到 CloudBase 云存储:
+
+```
+BACKUP_HOOK="tcb storage upload {FILE} saimoe-backups/{NAME}"
+```
+
+(需容器内装好并登录 `tcb` CLI;`{FILE}`/`{NAME}` 会被替换为快照路径/文件名。也可以在自己机器上用 `tcb storage upload $DATA_DIR/backups saimoe-backups` 定期上传。)
 
 ## 结构
 
@@ -75,6 +83,8 @@ lib/
   bangumi.ts          Bangumi 搜索 / 详情 / 整部作品角色
   voter.ts            设备指纹 / cookie 投票身份
   flags.ts            服务 API 开关
+  schedule.ts         定时赛程推进
+  backup.ts           每 30 分钟数据快照
 ```
 
 ## 说明

@@ -189,3 +189,40 @@ input, button, select, textarea { max-width: 100%; }
 
 /* rules page */
 .rules-p { margin: 6px 0 0; color: var(--ink); line-height: 1.75; }
+
+/* ─────────── polish pass (typography / depth / interaction / a11y) ─────────── */
+body { font-size: 15px; line-height: 1.6; }
+
+/* softer, layered card depth + consistent rhythm */
+.card { box-shadow: 0 1px 2px rgba(36,24,32,.04), 0 10px 30px -20px rgba(36,24,32,.22); }
+.card h3 { margin: 0 0 10px; font-size: 15px; letter-spacing: .01em; }
+
+/* section label to group related controls (e.g. the two search inputs) */
+.sectlabel { font-size: 12px; font-weight: 800; letter-spacing: .06em; color: var(--rose-deep); margin: 24px 2px 2px; }
+
+/* results/pool rows: subtle hover, tighter typographic scale */
+.rrow, .prow { transition: background .12s ease; }
+.rrow:hover, .prow:hover { background: #fdf6f2; }
+.nm { font-weight: 600; letter-spacing: .01em; }
+
+/* buttons: gentle press feedback + smooth transitions */
+.btn { transition: background .15s ease, color .15s ease, border-color .15s ease, transform .06s ease; }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.searchbox button { transition: background .15s ease, transform .06s ease; }
+.searchbox button:hover:not(:disabled) { background: var(--rose-deep); }
+.searchbox button:active:not(:disabled) { transform: translateY(1px); }
+
+/* deadline banner: warmer accent so it reads as important-but-calm */
+.deadline { background: linear-gradient(180deg, #fff, var(--rose-soft)); border-color: var(--rose-soft); }
+
+/* phase stepper: give the active chip a soft ring for clearer "you are here" */
+.chip.on { box-shadow: 0 0 0 4px var(--rose-soft); }
+
+/* champion crown gets a bit more presence */
+.champ .who { letter-spacing: -.01em; }
+
+/* keyboard accessibility: visible focus ring everywhere */
+:focus-visible { outline: 2px solid var(--rose); outline-offset: 2px; border-radius: 6px; }
+
+/* keep long CJK names from breaking the row layout */
+.nm, .cn, .sub { overflow-wrap: anywhere; }

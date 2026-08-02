@@ -50,6 +50,11 @@ export interface DB {
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
 const FILE = path.join(DATA_DIR, "saimoe.json");
 
+/** Absolute path of the live data file (used by the backup job). */
+export function dataFilePath(): string { return FILE; }
+/** Absolute path of the data directory. */
+export function dataDirPath(): string { return DATA_DIR; }
+
 function blank(): DB {
   return { seq: { competition: 0, candidate: 0, matchup: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [] };
 }
@@ -70,17 +75,29 @@ function normalize(o: any): DB {
   };
 }
 
-/** Read the whole store from disk (or a blank store if the file is absent). */
+/** Read the whole store from disk (or a blank store if the file is absent).
+ *  Cached by file mtime so repeated reads in one process skip the disk read;
+ *  always returns a deep clone, so callers can mutate freely before writeDb(). */
+let cache: { mtimeMs: number; db: DB } | null = null;
 export function readDb(): DB {
-  try { return normalize(JSON.parse(fs.readFileSync(FILE, "utf8"))); }
-  catch { return blank(); }
+  try {
+    const st = fs.statSync(FILE);
+    if (cache && cache.mtimeMs === st.mtimeMs) return structuredClone(cache.db);
+    const db = normalize(JSON.parse(fs.readFileSync(FILE, "utf8")));
+    cache = { mtimeMs: st.mtimeMs, db };
+    return structuredClone(db);
+  } catch {
+    return blank();
+  }
 }
-/** Persist the store atomically (write temp file, then rename). */
+/** Persist the store atomically (write temp file, then rename), and refresh the cache. */
 export function writeDb(db: DB): void {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const tmp = FILE + "." + process.pid + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(db));
   fs.renameSync(tmp, FILE);
+  try { cache = { mtimeMs: fs.statSync(FILE).mtimeMs, db: structuredClone(db) }; }
+  catch { cache = null; }
 }
 /** Kept for API compatibility with the old DB layer; just ensures the dir exists. */
 export function ensureSchema(): void {

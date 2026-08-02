@@ -198,7 +198,7 @@ export default function Page() {
   return (
     <main className="wrap">
       <h1 className="title">{comp?.title || "世萌大会"}</h1>
-      <p className="subtitle">{comp?.description || "提名你支持的角色，一路投票送 TA 走到最后。提名阶段可给任意多个角色各投一票；对战阶段每场一票，均可改可撤。"}</p>
+      <p className="subtitle">{comp?.description || "为你喜爱的角色提名助威，从提名池一路投到总决赛。提名阶段可支持任意多个角色（每个角色一票）；对战阶段每场一票，均可随时改投或撤回。"}</p>
       <div className="phasebar">
         {phases.map(([p, name]) => <span key={p} className={"chip" + (p === phase ? " on" : "")}>{name}</span>)}
       </div>
@@ -233,16 +233,17 @@ export default function Page() {
       {/* ── NOMINATION ── */}
       {!loading && comp && phase === "nomination" && (
         <>
+          <div className="sectlabel">提名角色</div>
           <div className="searchbox">
-            <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder="搜角色名，提名单个角色" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder="输入角色名，提名单个角色" />
             <button onClick={search} disabled={searching || !q.trim()}>{searching ? "搜索中" : "搜角色"}</button>
           </div>
           <div className="searchbox">
-            <input value={subQ} onChange={(e) => setSubQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && searchSubjects()} placeholder="搜作品名，一次导入整部作品的全体角色" />
+            <input value={subQ} onChange={(e) => setSubQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && searchSubjects()} placeholder="输入作品名，批量导入其全部角色" />
             <button onClick={searchSubjects} disabled={subSearching || !subQ.trim()}>{subSearching ? "搜索中" : "搜作品"}</button>
           </div>
           {importMsg && <div className="hint">{importMsg}</div>}
-          <div className="hint">找不到？<a onClick={() => { setManual(true); setHits(null); }}>手动添加角色</a></div>
+          <div className="hint">没有找到？<a onClick={() => { setManual(true); setHits(null); }}>手动添加角色</a></div>
           {searchErr && <div className="hint" style={{ color: "var(--rose-deep)" }}>{searchErr}</div>}
 
           {subHits && (

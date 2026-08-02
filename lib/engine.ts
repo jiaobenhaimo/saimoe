@@ -1,7 +1,5 @@
 import { readDb, writeDb, type DB, type Competition, type Candidate, type Matchup } from "./db";
 
-export type { Competition, Candidate, Matchup };
-
 // ── reads ─────────────────────────────────────────────────────
 export function getActiveCompetition(): Competition | null {
   const db = readDb();
