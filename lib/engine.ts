@@ -359,7 +359,7 @@ async function lockRound(cid: number, round: number) {
 async function decide(m: Matchup) {
   const a = voteCache.get(`${m.id}:${m.a_id}`) ?? 0;
   const b = voteCache.get(`${m.id}:${m.b_id}`) ?? 0;
-  // tie-break: lower seed (stronger) wins; fall back to a-side
+  // tie / zero-vote matchups resolve deterministically to the A side
   const winner = a === b ? m.a_id : a > b ? m.a_id : m.b_id;
   await sql`UPDATE matchup SET winner_id=${winner}, decided=true WHERE id=${m.id}`;
 }

@@ -6,6 +6,7 @@ export default function Admin() {
   const [token, setToken] = useState("");
   const [state, setState] = useState<any>(null);
   const [msg, setMsg] = useState<{ t: string; ok: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const [title, setTitle] = useState("Bangumi 世萌大会 2026");
   const [size, setSize] = useState(16);
@@ -25,17 +26,23 @@ export default function Admin() {
   useEffect(() => { load(); }, [load]);
 
   const act = async (action: string, extra: Record<string, unknown> = {}) => {
+    if (busy) return; // prevent double-submit: admin transitions aren't concurrency-safe
+    setBusy(true);
     localStorage.setItem("adminToken", token);
     setMsg(null);
-    const r = await fetch("/api/admin/action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin-token": token },
-      body: JSON.stringify({ action, ...extra }),
-    });
-    const j = await r.json();
-    if (!r.ok) setMsg({ t: j.error || "操作失败", ok: false });
-    else setMsg({ t: "已执行:" + action, ok: true });
-    await load();
+    try {
+      const r = await fetch("/api/admin/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-token": token },
+        body: JSON.stringify({ action, ...extra }),
+      });
+      const j = await r.json();
+      if (!r.ok) setMsg({ t: j.error || "操作失败", ok: false });
+      else setMsg({ t: "已执行:" + action, ok: true });
+      await load();
+    } finally {
+      setBusy(false);
+    }
   };
 
   const comp = state?.competition;
@@ -82,7 +89,7 @@ export default function Admin() {
           <div className="field"><label>简介 / 副标题(可选,显示在投票页标题下方)</label>
             <input value={editDesc} onChange={(e) => setEditDesc(e.target.value)}
               placeholder="例如:2026 春季 · 由你决定最萌角色" /></div>
-          <button className="btn solid" disabled={!editTitle.trim()}
+          <button className="btn solid" disabled={busy || !editTitle.trim()}
             onClick={() => act("update", { title: editTitle, description: editDesc })}>
             保存修改
           </button>
@@ -94,7 +101,7 @@ export default function Admin() {
           <h3>① 创建新一届</h3>
           <div className="field"><label>标题</label>
             <input value={title} onChange={(e) => setTitle(e.target.value)} /></div>
-          <button className="btn solid" onClick={() => act("create", { title })}>创建比赛(进入提名阶段)</button>
+          <button className="btn solid" disabled={busy} onClick={() => act("create", { title })}>创建比赛(进入提名阶段)</button>
         </div>
       )}
 
@@ -112,7 +119,7 @@ export default function Admin() {
           <p className="hint" style={{ color: pow2 ? "var(--muted)" : "var(--rose-deep)" }}>
             晋级总数 = {qualifiers}{pow2 ? "(是 2 的幂 ✓)" : "(需为 2 的幂:4 / 8 / 16…)"}
           </p>
-          <button className="btn solid" disabled={!pow2}
+          <button className="btn solid" disabled={busy || !pow2}
             onClick={() => act("start_groups", { size, groups, advance })}>
             取提名前 {size} 名,分 {groups} 组循环
           </button>
@@ -123,7 +130,7 @@ export default function Admin() {
         <div className="card">
           <h3>③ 结束小组赛,开淘汰赛</h3>
           <p className="hint">按当前票数结算每组名次,晋级者进入单败淘汰赛。</p>
-          <button className="btn solid" onClick={() => act("start_knockout")}>结算小组赛 → 生成淘汰赛</button>
+          <button className="btn solid" disabled={busy} onClick={() => act("start_knockout")}>结算小组赛 → 生成淘汰赛</button>
         </div>
       )}
 
@@ -131,14 +138,14 @@ export default function Admin() {
         <div className="card">
           <h3>④ 推进淘汰赛一轮</h3>
           <p className="hint">按当前票数结算本轮,生成下一轮;打到只剩 1 人时产生冠军。</p>
-          <button className="btn solid" onClick={() => act("advance")}>结算本轮 → 下一轮 / 决出冠军</button>
+          <button className="btn solid" disabled={busy} onClick={() => act("advance")}>结算本轮 → 下一轮 / 决出冠军</button>
         </div>
       )}
 
       <div className="card">
         <h3>危险操作</h3>
         <p className="hint">删除当前比赛及其全部数据,无法撤销。</p>
-        <button className="btn" onClick={() => { if (confirm("确认删除当前比赛?")) act("reset"); }}>重置 / 删除当前比赛</button>
+        <button className="btn" disabled={busy} onClick={() => { if (confirm("确认删除当前比赛?")) act("reset"); }}>重置 / 删除当前比赛</button>
       </div>
 
       {msg && <div className={"msg " + (msg.ok ? "ok" : "err")}>{msg.t}</div>}
