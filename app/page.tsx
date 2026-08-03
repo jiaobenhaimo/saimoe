@@ -55,14 +55,10 @@ function api(path: string, opts: RequestInit = {}) {
   return fetch(path, { ...opts, headers, cache: "no-store" });
 }
 
-// route Bangumi images through our proxy so hotlink protection doesn't blank them
+// 浏览器直接加载 Bangumi 图片(用户网络可达,不经服务端);统一转成方形 grid 尺寸。
 function imgSrc(url?: string | null): string {
   if (!url) return "";
-  try {
-    const h = new URL(url).hostname;
-    if (h === "bgm.tv" || h.endsWith(".bgm.tv")) return "/api/img?u=" + encodeURIComponent(url);
-  } catch {}
-  return url;
+  return url.replace(/(\/pic\/crt\/)[a-z](\/)/, "$1g$2");
 }
 
 function initials(n?: string) { return n?.trim()?.[0]?.toUpperCase() || "?"; }
@@ -114,10 +110,6 @@ export default function Page() {
   const [state, setState] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState(false);
-  const [q, setQ] = useState("");
-  const [hits, setHits] = useState<any[] | null>(null);
-  const [searching, setSearching] = useState(false);
-  const [searchErr, setSearchErr] = useState("");
   const [manual, setManual] = useState(false);
   const [mName, setMName] = useState("");
   const [mImg, setMImg] = useState("");
@@ -159,27 +151,18 @@ export default function Page() {
     return () => clearInterval(t);
   }, [load]);
 
-  const search = async () => {
-    const kw = q.trim(); if (!kw) return;
-    setSearching(true); setSearchErr(""); setHits(null); setManual(false);
-    try {
-      const r = await api(`/api/bangumi/search?q=${encodeURIComponent(kw)}`);
-      const j = await r.json();
-      if (j.error) { setSearchErr(T("search.fail", { err: j.error })); setManual(true); setMName(kw); setHits(null); }
-      else setHits(j.hits || []);
-    } catch { setSearchErr(T("net.err")); setManual(true); setMName(kw); setHits(null); }
-    finally { setSearching(false); }
-  };
-
+  // 浏览器直接调 Bangumi 老接口 GET /search/subject(GET 支持跨域,无需代理/服务端)
   const searchSubjects = async () => {
     const kw = subQ.trim(); if (!kw) return;
     setSubSearching(true); setImportMsg(""); setSubHits(null);
     try {
-      const r = await api(`/api/bangumi/subjects?q=${encodeURIComponent(kw)}`);
+      const r = await fetch(`https://api.bgm.tv/search/subject/${encodeURIComponent(kw)}?type=2&responseGroup=large&max_results=12`, { headers: { Accept: "application/json" } });
+      const ct = r.headers.get("content-type") || "";
+      if (!r.ok || !ct.includes("json")) { setImportMsg(T("subject.neterr")); setSubHits([]); return; }
       const j = await r.json();
-      if (j.error) setImportMsg(T("subject.fail", { err: j.error }));
-      setSubHits(j.hits || []);
-    } catch { setImportMsg(T("subject.neterr")); }
+      const list = Array.isArray(j?.list) ? j.list : [];
+      setSubHits(list.map((x: any) => ({ subjectId: String(x.id), name: x.name || "", nameCn: x.name_cn || "", image: x.images?.grid || x.images?.common || "" })));
+    } catch { setImportMsg(T("subject.neterr")); setSubHits([]); }
     finally { setSubSearching(false); }
   };
 
@@ -191,17 +174,28 @@ export default function Page() {
       return await r.json();
     } finally { busyRef.current = false; }
   };
-  const nominate = async (bgmId: string) => { await post({ bgmId }); await load(); };
   const nominateManual = async () => {
     if (!mName.trim()) return;
     await post({ manual: { name: mName.trim(), image: mImg.trim() } });
-    setMName(""); setMImg(""); setManual(false); setHits(null); await load();
+    setMName(""); setMImg(""); setManual(false); await load();
   };
+  // 浏览器直接调 GET /v0/subjects/{id}/characters(GET 支持跨域),再把结果交给服务端存储
   const importSubject = async (subjectId: string, name: string) => {
     setImportMsg(T("import.progress", { name }));
-    const j = await post({ subject: subjectId });
-    setImportMsg(j?.error ? T("import.fail", { err: j.error }) : T("import.done", { name, added: j?.added ?? 0, imported: j?.imported ?? 0 }));
-    await load();
+    try {
+      const r = await fetch(`https://api.bgm.tv/v0/subjects/${encodeURIComponent(subjectId)}/characters`, { headers: { Accept: "application/json" } });
+      if (!r.ok) { setImportMsg(T("import.fail", { err: "HTTP " + r.status })); return; }
+      const arr = await r.json();
+      const chars = (Array.isArray(arr) ? arr : [])
+        .map((c: any) => ({ bgmId: "c" + c.id, name: c.name || "", nameCn: "", image: c.images?.grid || c.images?.medium || "" }))
+        .filter((c: any) => c.name);
+      if (!chars.length) { setImportMsg(T("import.fail", { err: "no characters" })); return; }
+      const j = await post({ batch: chars });
+      setImportMsg(j?.error ? T("import.fail", { err: j.error }) : T("import.done", { name, added: j?.added ?? 0, imported: chars.length }));
+      await load();
+    } catch (e: any) {
+      setImportMsg(T("import.fail", { err: e?.message || "network" }));
+    }
   };
 
   const nomVote = async (candidateId: number) => {
@@ -279,16 +273,11 @@ export default function Page() {
         <>
           <div className="sectlabel">{T("nom.section")}</div>
           <div className="searchbox">
-            <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder={T("nom.ph.char")} />
-            <button onClick={search} disabled={searching || !q.trim()}>{searching ? T("common.searching") : T("nom.searchChar")}</button>
-          </div>
-          <div className="searchbox">
             <input value={subQ} onChange={(e) => setSubQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && searchSubjects()} placeholder={T("nom.ph.subject")} />
             <button onClick={searchSubjects} disabled={subSearching || !subQ.trim()}>{subSearching ? T("common.searching") : T("nom.searchSubject")}</button>
           </div>
           {importMsg && <div className="hint">{importMsg}</div>}
-          <div className="hint">{T("nom.notFoundQ")}<a onClick={() => { setManual(true); setHits(null); }}>{T("nom.manualAdd")}</a></div>
-          {searchErr && <div className="hint" style={{ color: "var(--rose-deep)" }}>{searchErr}</div>}
+          <div className="hint">{T("nom.notFoundQ")}<a onClick={() => setManual(true)}>{T("nom.manualAdd")}</a></div>
 
           {subHits && (
             <div className="results">
@@ -298,19 +287,6 @@ export default function Page() {
                   <Avatar c={{ id: 0, name: s.nameCn || s.name, nameCn: null, image: s.image }} />
                   <div className="meta"><div className="nm">{s.nameCn || s.name}</div><div className="sub">{s.nameCn && s.nameCn !== s.name ? s.name + " · " : ""}{T("nom.subjectTag")} · #{s.subjectId}</div></div>
                   <button className="btn" onClick={() => importSubject(s.subjectId, s.nameCn || s.name)}>{T("nom.importAll")}</button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {hits && (
-            <div className="results">
-              {hits.length === 0 && <div className="rrow"><span className="hint">{T("nom.noChar")}</span></div>}
-              {hits.map((h) => (
-                <div className="rrow" key={h.bgmId}>
-                  <Avatar c={{ id: 0, name: h.name, nameCn: null, image: h.image }} />
-                  <div className="meta"><div className="nm">{h.name}</div><div className="sub">{T("nom.charTag")} · #{h.bgmId}</div></div>
-                  <button className="btn" onClick={() => nominate(h.bgmId)}>{T("nom.plus")}</button>
                 </div>
               ))}
             </div>
