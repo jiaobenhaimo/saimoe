@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
-import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline, setPace, resolvePlayoff } from "@/lib/engine";
+import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline, setPace, setGroupDayCap, resolvePlayoff } from "@/lib/engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
     if (action === "schedule") {
+      if (body.dayCap !== undefined) setGroupDayCap(comp.id, Number(body.dayCap));
       scheduleCompetition(comp.id, {
         nomEndsAt: Number(body.nomEndsAt) || null,
         autoSize: Number(body.size), autoGroups: Number(body.groups), autoAdvance: Number(body.advance),
@@ -57,8 +58,9 @@ export async function POST(req: NextRequest) {
     }
     if (action === "delete_comment") { deleteComment(comp.id, Number(body.commentId)); rec(`删除评论 #${Number(body.commentId)}`); return NextResponse.json({ ok: true }); }
     if (action === "start_groups") {
+      if (body.dayCap !== undefined) setGroupDayCap(comp.id, Number(body.dayCap));
       startGroups(comp.id, Number(body.size), Number(body.perRound) || 0, Number(body.roundDays) || 0);
-      rec(`开小组赛(取前 ${Number(body.size)} 名)`);
+      rec(`开小组赛(取前 ${Number(body.size)} 名;每比赛日最多 ${Number(body.dayCap) || 4} 场)`);
       return NextResponse.json({ ok: true });
     }
     if (action === "start_knockout") { startKnockout(comp.id); rec("结算小组赛 → 生成淘汰赛"); return NextResponse.json({ ok: true }); }
