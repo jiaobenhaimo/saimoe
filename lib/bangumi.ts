@@ -19,12 +19,11 @@ function headers(json = false) {
 async function bgmFetch(url: string, init: RequestInit, what: string): Promise<any> {
   let res: Response;
   try {
-    // 15s 超时,避免网络异常时请求无限挂起;netFetch 走可信 DNS / 固定 IP,避开 DNS 污染
+    // 15s 超时,避免请求无限挂起;netFetch 有 BGM_PROXY 走代理,否则直连
     res = await netFetch(url, { ...init, cache: "no-store", signal: AbortSignal.timeout(15_000) });
   } catch (e: any) {
-    // surface the real cause (ENOTFOUND = DNS 解析失败, ECONNREFUSED/超时 = 出网被拦截)
     const code = e?.cause?.code || e?.code || e?.name || "";
-    throw new Error(`${what}：网络请求失败（${code || "无法访问 api.bgm.tv"}）。已尝试全部候选 IP 仍失败——可能是按 SNI 封锁，请在环境变量设置 BGM_PROXY（正向代理）或 BGM_API_IP（固定可用 IP）；详情见 /api/diag。`);
+    throw new Error(`${what}：网络请求失败（${code || "无法访问 api.bgm.tv"}）。容器直连 Bangumi 被 SNI 封锁时无法访问,请在环境变量设置 BGM_PROXY 指向一个可用的正向代理;详情见 /api/diag。`);
   }
   if (!res.ok) {
     let body = "";

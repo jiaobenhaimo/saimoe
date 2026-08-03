@@ -24,6 +24,20 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
 
+    // ── client-resolved batch: store pre-fetched candidates (browser did the Bangumi GET; server never touches Bangumi) ──
+    if (Array.isArray(body.batch)) {
+      let added = 0;
+      for (const c of body.batch.slice(0, 200)) {
+        const name = String(c?.name || "").trim();
+        if (!name) continue;
+        const bgmId = String(c?.bgmId || "m_" + Math.random().toString(36).slice(2, 8));
+        const nameCn = String(c?.nameCn || "").trim();
+        const image = String(c?.image || "").trim();
+        if (addCandidate(comp.id, bgmId, name, nameCn, image)) added++;
+      }
+      return NextResponse.json({ ok: true, added, imported: body.batch.length });
+    }
+
     // ── batch: import a whole subject's cast ──
     if (body.subject) {
       const sid = parseSubjectId(String(body.subject));
