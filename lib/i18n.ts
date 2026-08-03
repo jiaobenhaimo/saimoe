@@ -72,6 +72,7 @@ const D: Record<string, Entry> = {
   "nom.vote": { zh: "投一票", en: "Vote", ja: "投票" },
   "nom.remove": { zh: "移除", en: "Remove", ja: "削除" },
 
+  "search.trysubject": { zh: "没搜到角色(或跨域受限)。试试下面的「搜作品名」导入,或手动添加。", en: "No character results (or blocked). Try \u201Csearch anime\u201D below, or add manually.", ja: "キャラが見つかりません。下の「作品名で検索」か手動追加をお試しください。" },
   "search.fail": { zh: "在线搜索失败（{err}），可手动添加。", en: "Online search failed ({err}); you can add manually.", ja: "オンライン検索に失敗（{err}）。手動追加できます。" },
   "subject.fail": { zh: "作品搜索失败：{err}", en: "Anime search failed: {err}", ja: "作品検索に失敗：{err}" },
   "subject.neterr": { zh: "作品搜索网络错误。", en: "Anime search network error.", ja: "作品検索でネットワークエラー。" },

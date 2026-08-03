@@ -29,6 +29,8 @@ export default function Admin() {
   const [perRound, setPerRound] = useState(0);
   const [roundDays, setRoundDays] = useState(0);
   const [dlHours, setDlHours] = useState(24);
+  const [paceDays, setPaceDays] = useState(1);
+  const [paceHours, setPaceHours] = useState(24);
 
   const [editTitle, setEditTitle] = useState("");
   const [editDesc, setEditDesc] = useState("");
@@ -126,6 +128,7 @@ export default function Admin() {
       <h1 className="title" style={{ fontSize: 30 }}>赛事控制台</h1>
       <p className="subtitle">推进比赛阶段。所有操作需要管理员令牌（环境变量 <code>ADMIN_TOKEN</code>)。</p>
 
+      <div className="admin-cards">
       <div className="card">
         <div className="field"><label>管理员令牌</label>
           <input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="ADMIN_TOKEN" /></div>
@@ -291,6 +294,24 @@ export default function Admin() {
             <div className="field"><label>&nbsp;</label>
               <button className="btn" disabled={busy} onClick={() => act("set_deadline", { hours: 0 })}>清除截止</button></div>
           </div>
+          {phase === "group" && (
+            <div className="row3" style={{ marginTop: 8 }}>
+              <div className="field"><label>后续每比赛日天数</label>
+                <input type="number" min={0} step={0.5} value={paceDays} onChange={(e) => setPaceDays(+e.target.value)} /></div>
+              <div className="field"><label>&nbsp;</label>
+                <button className="btn" disabled={busy} onClick={() => act("set_pace", { groupRoundDays: paceDays })}>更新后续节奏</button></div>
+              <div className="field"><label>&nbsp;</label><span className="hint">影响之后每个比赛日的自动截止</span></div>
+            </div>
+          )}
+          {phase === "knockout" && (
+            <div className="row3" style={{ marginTop: 8 }}>
+              <div className="field"><label>后续每轮小时</label>
+                <input type="number" min={0} value={paceHours} onChange={(e) => setPaceHours(+e.target.value)} /></div>
+              <div className="field"><label>&nbsp;</label>
+                <button className="btn" disabled={busy} onClick={() => act("set_pace", { roundHours: paceHours })}>更新后续节奏</button></div>
+              <div className="field"><label>&nbsp;</label><span className="hint">影响之后每轮的自动截止</span></div>
+            </div>
+          )}
         </div>
       )}
 
@@ -334,6 +355,8 @@ export default function Admin() {
         <h3>危险操作</h3>
         <p className="hint">删除当前比赛及其全部数据，无法撤销。</p>
         <button className="btn" disabled={busy} onClick={() => { if (confirm("确认删除当前比赛？")) act("reset"); }}>重置 / 删除当前比赛</button>
+      </div>
+
       </div>
 
       {msg && <div className={"msg " + (msg.ok ? "ok" : "err")}>{msg.t}</div>}

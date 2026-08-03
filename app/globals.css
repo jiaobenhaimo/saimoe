@@ -313,3 +313,21 @@ body { font-size: 15px; line-height: 1.6; }
 /* ghost button (e.g. remove-own-nomination) */
 .btn.ghost { background: transparent; border: 1.5px solid var(--line); color: var(--muted); }
 .btn.ghost:hover { border-color: var(--rose); color: var(--rose-deep); }
+
+/* ─────────── layout polish (admin wider + pool 2-col on desktop) ─────────── */
+.admin { max-width: 980px; }
+.admin-cards { column-count: 2; column-gap: 18px; margin-top: 4px; }
+.admin-cards > .card { break-inside: avoid; display: inline-block; width: 100%; margin: 0 0 18px; vertical-align: top; }
+@media (max-width: 720px) { .admin-cards { column-count: 1; } }
+
+/* nomination pool: single bordered list on mobile, 2-column card grid on wider screens */
+@media (min-width: 720px) {
+  .results.pool { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; border: none; background: transparent; overflow: visible; }
+  .results.pool .prow { border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; background: var(--surface); }
+  .results.pool .prow:hover { background: var(--hover); }
+}
+
+/* typography polish */
+.subtitle { max-width: 62ch; }
+.meta .nm { font-size: 15.5px; }
+.sectlabel { margin-top: 28px; }

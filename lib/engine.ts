@@ -546,3 +546,13 @@ export function setPhaseDeadline(cid: number, hours: number) {
   else if (comp.phase === "knockout") comp.ko_round_ends_at = at;
   writeDb(db);
 }
+
+/** 调整"节奏":后续小组赛比赛日的天数 / 后续淘汰赛每轮的小时数(0 表示不改)。 */
+export function setPace(cid: number, groupRoundDays: number, roundHours: number) {
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp) return;
+  if (groupRoundDays > 0) comp.group_round_days = Math.floor(groupRoundDays);
+  if (roundHours > 0) comp.round_hours = Math.floor(roundHours);
+  writeDb(db);
+}
