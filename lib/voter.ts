@@ -29,3 +29,16 @@ export async function getVoterId(): Promise<string> {
   }
   return "ck_" + vid;
 }
+
+/**
+ * Coarse, cross-browser device hint from the `x-db` header (see computeDeviceBucket
+ * on the client). Deliberately low-entropy: it is stored as vote METADATA to let an
+ * operator later FLAG possible same-device multi-browser voting. It is NEVER used to
+ * de-duplicate or reject a vote — doing so would collapse distinct people who happen
+ * to share a hardware profile (the NAT problem again). Returns null when absent.
+ */
+export async function getDeviceBucket(): Promise<string | null> {
+  const h = await headers();
+  const db = h.get("x-db");
+  return db && /^[a-f0-9]{16,128}$/.test(db) ? db : null;
+}

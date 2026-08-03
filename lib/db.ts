@@ -15,7 +15,7 @@ import path from "path";
  * SINGLE instance.
  */
 
-export type Phase = "nomination" | "group" | "knockout" | "finished";
+export type Phase = "nomination" | "group" | "playoff" | "knockout" | "finished";
 
 export interface Competition {
   id: number; title: string; description: string | null; phase: Phase;
@@ -37,14 +37,20 @@ export interface Candidate {
   id: number; competition_id: number; bgm_id: string; name: string; name_cn: string | null;
   image: string | null; group_no: number | null; seed: number | null; eliminated: boolean;
   subject_name: string | null; added_by: string | null; name_en: string | null;
+  // epoch ms a *user* self-nominated this (null for admin/subject-imported bulk → never swept)
+  nominated_at?: number | null;
 }
 export interface Matchup {
   id: number; competition_id: number; stage: "group" | "knockout" | "playoff"; round_no: number;
   group_no: number | null; slot: number; a_id: number; b_id: number;
   winner_id: number | null; decided: boolean; matchday?: number | null;
 }
-interface NominationVote { competition_id: number; candidate_id: number; voter_id: string; }
-interface MatchVote { matchup_id: number; voter_id: string; choice_id: number; }
+interface NominationVote { competition_id: number; candidate_id: number; voter_id: string; created_at?: number; device_bucket?: string | null; }
+interface MatchVote { matchup_id: number; voter_id: string; choice_id: number; created_at?: number; device_bucket?: string | null; }
+
+/** Non-identifying metadata attached to a vote. `bucket` is a coarse, cross-browser
+ *  device hint used only to FLAG possible multi-browser voting later — never to dedup. */
+export type VoteMeta = { bucket?: string | null };
 export interface Comment {
   id: number; competition_id: number; matchup_id: number; voter_id: string;
   name: string; text: string; created_at: number;
@@ -155,7 +161,7 @@ export function addCandidate(cid: number, bgmId: string, name: string, nameCn: s
   const db = readDb();
   if (db.candidates.some((c) => c.competition_id === cid && c.bgm_id === bgmId)) return false;
   const id = ++db.seq.candidate;
-  db.candidates.push({ id, competition_id: cid, bgm_id: bgmId, name, name_cn: nameCn || null, image: image || null, group_no: null, seed: null, eliminated: false, subject_name: subjectName || null, added_by: addedBy || null, name_en: nameEn || null });
+  db.candidates.push({ id, competition_id: cid, bgm_id: bgmId, name, name_cn: nameCn || null, image: image || null, group_no: null, seed: null, eliminated: false, subject_name: subjectName || null, added_by: addedBy || null, name_en: nameEn || null, nominated_at: addedBy ? Date.now() : null });
   writeDb(db);
   return true;
 }
@@ -174,6 +180,48 @@ export function removeOwnCandidate(cid: number, candidateId: number, voterId: st
   return { ok: true };
 }
 
+/** Set of candidate ids in this competition that have at least one nomination vote. */
+function votedCandidateIds(db: DB, cid: number): Set<number> {
+  const s = new Set<number>();
+  for (const v of db.nominationVotes) if (v.competition_id === cid) s.add(v.candidate_id);
+  return s;
+}
+
+/** Remove the CALLER's own self-nominations that still have zero votes. Fired by the
+ *  page-close beacon so abandoned nominees vanish the moment the nominator leaves.
+ *  A nominee anyone has voted for is kept (it's no longer an orphan). Returns count. */
+export function sweepOwnOrphans(cid: number, voterId: string): number {
+  const db = readDb();
+  const voted = votedCandidateIds(db, cid);
+  const doomed = db.candidates.filter(
+    (c) => c.competition_id === cid && (c.added_by || "") === voterId && c.nominated_at != null && !voted.has(c.id)
+  );
+  if (!doomed.length) return 0;
+  const ids = new Set(doomed.map((c) => c.id));
+  db.candidates = db.candidates.filter((c) => !ids.has(c.id));
+  db.nominationVotes = db.nominationVotes.filter((v) => !ids.has(v.candidate_id));
+  writeDb(db);
+  return doomed.length;
+}
+
+/** Backstop sweep: remove user-added nominees that are still at zero votes and older
+ *  than `graceMs`. Catches the cases the page-close beacon misses (crash, force-kill,
+ *  mobile backgrounding). Safe to call often; only writes when something is removed. */
+export function sweepOrphanNominations(cid: number, graceMs: number): number {
+  const db = readDb();
+  const now = Date.now();
+  const voted = votedCandidateIds(db, cid);
+  const doomed = db.candidates.filter(
+    (c) => c.competition_id === cid && !!c.added_by && c.nominated_at != null && now - (c.nominated_at as number) > graceMs && !voted.has(c.id)
+  );
+  if (!doomed.length) return 0;
+  const ids = new Set(doomed.map((c) => c.id));
+  db.candidates = db.candidates.filter((c) => !ids.has(c.id));
+  db.nominationVotes = db.nominationVotes.filter((v) => !ids.has(v.candidate_id));
+  writeDb(db);
+  return doomed.length;
+}
+
 /** Remove a candidate and all its votes (and any matchups referencing it).
  *  Returns false if the candidate doesn't exist. Only call during nomination. */
 export function removeCandidate(cid: number, candidateId: number): boolean {
@@ -189,7 +237,7 @@ export function removeCandidate(cid: number, candidateId: number): boolean {
 }
 
 /** Toggle a nomination vote. Returns null if the candidate doesn't exist. */
-export function toggleNomination(cid: number, candidateId: number, voterId: string): { voted: boolean } | { error: string } | null {
+export function toggleNomination(cid: number, candidateId: number, voterId: string, meta?: VoteMeta): { voted: boolean } | { error: string } | null {
   const db = readDb();
   const cand = db.candidates.find((c) => c.id === candidateId && c.competition_id === cid);
   if (!cand) return null;
@@ -201,13 +249,13 @@ export function toggleNomination(cid: number, candidateId: number, voterId: stri
     const cnt = db.nominationVotes.filter((v) => v.competition_id === cid && v.voter_id === voterId).length;
     if (cnt >= limit) return { error: `每人最多提名 ${limit} 个角色，请先撤回一个再提名其他角色。` };
   }
-  db.nominationVotes.push({ competition_id: cid, candidate_id: candidateId, voter_id: voterId });
+  db.nominationVotes.push({ competition_id: cid, candidate_id: candidateId, voter_id: voterId, created_at: Date.now(), device_bucket: meta?.bucket ?? null });
   writeDb(db);
   return { voted: true };
 }
 
 /** Cast / change / retract a matchup vote. */
-export function castMatchVote(cid: number, matchupId: number, voterId: string, choiceId: number): { choice: number | null } | { error: string; status: number } {
+export function castMatchVote(cid: number, matchupId: number, voterId: string, choiceId: number, meta?: VoteMeta): { choice: number | null } | { error: string; status: number } {
   const db = readDb();
   const m = db.matchups.find((x) => x.id === matchupId && x.competition_id === cid);
   if (!m) return { error: "对战不存在。", status: 404 };
@@ -230,7 +278,7 @@ export function castMatchVote(cid: number, matchupId: number, voterId: string, c
     return { choice: null };
   }
   if (cur) cur.choice_id = choiceId;
-  else db.matchVotes.push({ matchup_id: matchupId, voter_id: voterId, choice_id: choiceId });
+  else db.matchVotes.push({ matchup_id: matchupId, voter_id: voterId, choice_id: choiceId, created_at: Date.now(), device_bucket: meta?.bucket ?? null });
   writeDb(db);
   return { choice: choiceId };
 }

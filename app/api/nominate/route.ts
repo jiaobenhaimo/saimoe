@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema, addCandidate, removeOwnCandidate } from "@/lib/db";
+import { ensureSchema, addCandidate, removeOwnCandidate, sweepOwnOrphans } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition } from "@/lib/engine";
 import { getVoterId } from "@/lib/voter";
@@ -25,6 +25,12 @@ export async function POST(req: NextRequest) {
 
     const vid = await getVoterId();
     const body = await req.json();
+
+    // ── page-close beacon: drop the caller's own un-voted (0-vote) self-nominations ──
+    if (body.sweep === true) {
+      if (comp.phase !== "nomination") return NextResponse.json({ ok: true, removed: 0 });
+      return NextResponse.json({ ok: true, removed: sweepOwnOrphans(comp.id, vid) });
+    }
 
     // ── remove a character the current user nominated (only if it has 0 votes) ──
     if (body.remove != null) {
