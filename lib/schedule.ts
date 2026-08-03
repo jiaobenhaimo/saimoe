@@ -1,4 +1,8 @@
 import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, resolvePlayoff, postponeNomination, poolSize } from "./engine";
+import { sweepOrphanNominations } from "./db";
+
+/** Grace period before an un-voted self-nomination is swept (minutes). Env-tunable. */
+const ORPHAN_GRACE_MIN = Number(process.env.SAIMOE_ORPHAN_GRACE_MIN) || 30;
 
 let last = 0;
 
@@ -15,6 +19,9 @@ export function runTick(force = false): void {
   try {
     const comp = getActiveCompetition();
     if (!comp) return;
+
+    // garbage-collect abandoned 0-vote self-nominations while nomination is open
+    if (comp.phase === "nomination") sweepOrphanNominations(comp.id, ORPHAN_GRACE_MIN * 60_000);
 
     if (comp.phase === "nomination" && comp.nom_ends_at && now >= comp.nom_ends_at) {
       const size = comp.auto_size || 0;

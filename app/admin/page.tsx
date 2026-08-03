@@ -13,6 +13,7 @@ export default function Admin() {
   const [state, setState] = useState<any>(null);
   const [msg, setMsg] = useState<{ t: string; ok: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [obs, setObs] = useState<any>(null);
 
   const [title, setTitle] = useState("Bangumi 世萌大会 2026");
   const [size, setSize] = useState(16);
@@ -83,6 +84,17 @@ export default function Admin() {
       setBusy(false);
     }
   };
+
+  const loadObs = useCallback(async () => {
+    const tk = token || localStorage.getItem("adminToken") || "";
+    if (!tk) return;
+    try {
+      const r = await fetch("/api/admin/observe", { headers: { "x-admin-token": tk }, cache: "no-store" });
+      if (r.ok) setObs(await r.json());
+    } catch {}
+  }, [token]);
+  useEffect(() => { if (token) loadObs(); }, [token, loadObs]);
+  const invalidate = async (by: string, key: string) => { await act("invalidate_votes", { by, key }); await loadObs(); };
 
   const ping = async () => {
     setPinging(true); setPingResult(null);
@@ -350,6 +362,58 @@ export default function Admin() {
           <p className="hint">导出当前比赛的赛况数据（JSON 为完整结构，CSV 为扁平表格）。</p>
           <button className="btn" disabled={busy} onClick={() => downloadExport("json")}>导出 JSON</button>{" "}
           <button className="btn" disabled={busy} onClick={() => downloadExport("csv")}>导出 CSV</button>
+        </div>
+      )}
+
+      {comp && obs && (
+        <div className="card">
+          <h3>🛡️ 异常投票看板</h3>
+          <p className="hint">
+            共 {obs.totals?.votes ?? 0} 票(含元数据 {obs.totals?.withMeta ?? 0})、{obs.totals?.matches ?? 0} 场对局。
+            阈值:同设备 ≥{obs.thresholds?.DEVICE_MIN} 身份 · 同 IP ≥{obs.thresholds?.IP_MIN} 身份 · {Math.round((obs.thresholds?.BURST_WINDOW_MS || 0) / 1000)}s 内 ≥{obs.thresholds?.BURST_MIN} 票 · 覆盖 ≥{Math.round((obs.thresholds?.COVERAGE_PCT || 0) * 100)}%。
+            {" "}<a onClick={loadObs}>刷新</a>
+          </p>
+          {(!obs.flags || obs.flags.length === 0) ? (
+            <p className="hint">未发现可疑模式 👍</p>
+          ) : (
+            <div className="pool-admin">
+              {obs.flags.map((f: any) => (
+                <div className="prow" key={f.type + ":" + f.key}>
+                  <span className={"flagtag flag-" + f.type}>{f.type === "device" ? "设备" : f.type === "ip" ? "IP" : f.type === "burst" ? "爆发" : "覆盖"}</span>
+                  <div className="meta"><div className="nm">{f.keyShort}{f.identities ? ` · ${f.identities} 身份` : ""} · {f.votes} 票</div><div className="sub">{f.detail}</div></div>
+                  <button className="btn" disabled={busy} onClick={() => { if (confirm(`确认作废「${f.keyShort}」的全部票?不可撤销。若该轮已结算,请随后「按当前票数重算本轮」。`)) invalidate(f.by, f.key); }}>作废</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {comp && obs && obs.timeline && obs.timeline.length > 0 && (
+        <div className="card">
+          <h3>🗓️ 赛程时间线预览</h3>
+          <p className="hint">按当前排程与节奏推算的预计时间点(仅预览,实际以自动/手动推进为准;“—”表示该步为手动或尚未设定节奏)。</p>
+          <ul className="timeline">
+            {obs.timeline.map((it: any, i: number) => (
+              <li key={i}><span className="tl-at">{it.at ? fmtAbs(it.at) : "—"}</span><span className="tl-label">{it.label}</span>{it.note ? <span className="tl-note">{it.note}</span> : null}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {comp && obs && (
+        <div className="card">
+          <h3>🗂️ 操作审计日志</h3>
+          <p className="hint">最近的管理操作(最多 200 条,倒序)。{" "}<a onClick={loadObs}>刷新</a></p>
+          {(!obs.audit || obs.audit.length === 0) ? (
+            <p className="hint">暂无记录。</p>
+          ) : (
+            <ul className="audit">
+              {obs.audit.map((a: any) => (
+                <li key={a.id}><span className="au-ts">{fmtAbs(a.ts)}</span><span className="au-sum">{a.summary}</span>{a.phase ? <span className="au-phase">{a.phase}</span> : null}</li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
