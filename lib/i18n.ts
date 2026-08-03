@@ -118,6 +118,21 @@ const D: Record<string, Entry> = {
   "match.rateNote": { zh: "赛中仅显示得票率，结算后公布票数", en: "Only vote share shown during the match; counts revealed after", ja: "試合中は得票率のみ、確定後に票数を公開" },
   "match.settled": { zh: "本场已结算 · 得票已公布", en: "Settled · counts revealed", ja: "確定 · 票数公開済" },
 
+  // pick'em (predictions + leaderboard)
+  "pick.title": { zh: "预测排行榜", en: "Pick'em Leaderboard", ja: "予想ランキング" },
+  "pick.hint": { zh: "预测每场胜者,猜对得 1 分;该场结算后锁定。", en: "Predict each winner — 1 pt per correct pick, locked once the match settles.", ja: "各対戦の勝者を予想、的中で1点。試合確定後にロック。" },
+  "pick.pickLabel": { zh: "预测", en: "Pick", ja: "予想" },
+  "pick.hit": { zh: "命中", en: "hit", ja: "的中" },
+  "pick.miss": { zh: "未中", en: "miss", ja: "外れ" },
+  "pick.name": { zh: "昵称（用于排行榜）", en: "Name (leaderboard)", ja: "ニックネーム（ランキング用）" },
+  "pick.save": { zh: "保存", en: "Save", ja: "保存" },
+  "pick.pts": { zh: "分", en: "pts", ja: "点" },
+  "pick.acc": { zh: "命中率", en: "ACC", ja: "的中率" },
+  "pick.noBoard": { zh: "还没有人参与预测,来押第一注吧!", en: "No picks yet — make the first prediction!", ja: "まだ予想がありません。最初の予想をどうぞ!" },
+  "pick.myStats": { zh: "我的排名 #{r} · {p} 分 · 命中 {c}/{t}", en: "My rank #{r} · {p} pts · {c}/{t} correct", ja: "順位 #{r} · {p}点 · 的中 {c}/{t}" },
+  "pick.myNone": { zh: "还没有预测,快去押注吧", en: "No picks yet — go make one!", ja: "まだ予想がありません。予想してみよう!" },
+  "pick.anon": { zh: "匿名", en: "Anonymous", ja: "匿名" },
+
   "cmt.collapse": { zh: "收起评论", en: "Hide comments", ja: "コメントを隠す" },
   "cmt.open": { zh: "评论", en: "Comments", ja: "コメント" },
   "cmt.name": { zh: "昵称（可选）", en: "Name (optional)", ja: "名前（任意）" },

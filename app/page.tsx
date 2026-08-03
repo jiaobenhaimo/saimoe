@@ -9,7 +9,7 @@ type Match = {
   id: number; stage: string; round: number; group: number | null; slot: number;
   a: Slim | null; b: Slim | null;
   votesA: number | null; votesB: number | null; total: number | null; rateA: number | null;
-  winnerId: number | null; decided: boolean; myChoice: number | null; commentN: number;
+  winnerId: number | null; decided: boolean; myChoice: number | null; myPick: number | null; commentN: number;
   live?: boolean; matchday?: number;
 };
 
@@ -159,6 +159,13 @@ export default function Page() {
   const [nomErr, setNomErr] = useState("");
   const [lang, setLang] = useLang();
   const T = (k: string, p?: Record<string, string | number>) => t(lang, k, p);
+
+  // pick'em display name (prefilled once from server)
+  const [pname, setPname] = useState("");
+  const nameLoaded = useRef(false);
+  useEffect(() => {
+    if (!nameLoaded.current && state?.pick?.me) { setPname(state.pick.me.name || ""); nameLoaded.current = true; }
+  }, [state]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -324,6 +331,14 @@ export default function Page() {
     await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "match", matchupId, choiceId }) });
     await load();
   };
+  const pick = async (matchupId: number, pickId: number | null) => {
+    await api("/api/pick", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ matchupId, pickId }) });
+    await load();
+  };
+  const savePickName = async () => {
+    await api("/api/pick", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: pname }) });
+    await load();
+  };
 
   const comp = state?.competition;
   const phase: string = comp?.phase ?? "nomination";
@@ -403,8 +418,39 @@ export default function Page() {
             <span className="votenow-prog">{T("vote.now.progress", { x: openVoted, n: openMatches.length })}</span>
           </div>
           <div className="votenow-grid">
-            {openMatches.map((m) => <MatchCard key={"vn" + m.id} m={m} onVote={matchVote} lang={lang} compact />)}
+            {openMatches.map((m) => <MatchCard key={"vn" + m.id} m={m} onVote={matchVote} onPick={pick} lang={lang} compact />)}
           </div>
+        </div>
+      )}
+
+      {/* ── Pick'em leaderboard ── */}
+      {!loading && !loadErr && state?.pick && state.pick.top && (
+        <div className="card pickboard">
+          <div className="pickboard-h">
+            <span className="pickboard-title">🏆 {T("pick.title")}</span>
+            <span className="pickboard-mine">{state.pick.me.total > 0 ? T("pick.myStats", { r: state.pick.me.rank, p: state.pick.me.points, c: state.pick.me.correct, t: state.pick.me.total }) : T("pick.myNone")}</span>
+          </div>
+          <div className="hint">{T("pick.hint")}</div>
+          <div className="pick-name-row">
+            <input value={pname} onChange={(e) => setPname(e.target.value)} placeholder={T("pick.name")} maxLength={24} />
+            <button className="btn" onClick={savePickName} disabled={pname.trim() === (state.pick.me.name || "")}>{T("pick.save")}</button>
+          </div>
+          {state.pick.top.length === 0 ? <div className="hint">{T("pick.noBoard")}</div> : (
+            <div className="board">
+              <div className="board-row board-head">
+                <span className="board-rank num">#</span><span className="board-name">{T("pick.name")}</span>
+                <span className="board-pts num">{T("pick.pts")}</span><span className="board-acc num">{T("pick.acc")}</span>
+              </div>
+              {state.pick.top.map((r: any, i: number) => (
+                <div className="board-row" key={i}>
+                  <span className="board-rank num">{i + 1}</span>
+                  <span className="board-name">{r.name}</span>
+                  <span className="board-pts num">{r.points}</span>
+                  <span className="board-acc num">{r.total ? Math.round((r.correct / r.total) * 100) + "%" : "—"}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -547,7 +593,7 @@ export default function Page() {
                     ))}
                   </tbody>
                 </table>
-                {g.matchups.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} />)}
+                {g.matchups.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} onPick={pick} lang={lang} />)}
               </div>
             ))}
           </div>
@@ -570,7 +616,7 @@ export default function Page() {
                   ))}
                 </tbody>
               </table>
-              {state.playoff.matchups.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} />)}
+              {state.playoff.matchups.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} onPick={pick} lang={lang} />)}
             </div>
           </div>
         </>
@@ -604,7 +650,7 @@ export default function Page() {
           {selMatch && (
             <div className="bracket-detail">
               <div className="sectlabel">{T("ko.detail")}</div>
-              <MatchCard m={selMatch} onVote={matchVote} ko lang={lang} />
+              <MatchCard m={selMatch} onVote={matchVote} onPick={pick} ko lang={lang} />
             </div>
           )}
         </>
@@ -618,7 +664,7 @@ export default function Page() {
   );
 }
 
-function MatchCard({ m, onVote, ko, lang, compact }: { m: Match; onVote: (mid: number, cid: number) => void; ko?: boolean; lang: Lang; compact?: boolean }) {
+function MatchCard({ m, onVote, onPick, ko, lang, compact }: { m: Match; onVote: (mid: number, cid: number) => void; onPick: (mid: number, pickId: number | null) => void; ko?: boolean; lang: Lang; compact?: boolean }) {
   const T = (k: string, p?: Record<string, string | number>) => t(lang, k, p);
   const revealed = m.decided;
   const pa = revealed && m.total ? ((m.votesA || 0) / m.total) * 100 : (m.rateA ?? 50);
@@ -654,6 +700,20 @@ function MatchCard({ m, onVote, ko, lang, compact }: { m: Match; onVote: (mid: n
       <div className="match-foot">
         <span className="rate-note">{revealed ? T("match.settled") : live ? T("match.rateNote") : T("match.upcoming")}</span>
       </div>
+      {!m.decided && m.a && m.b && (
+        <div className="pick-row">
+          <span className="pick-label">🔮 {T("pick.pickLabel")}</span>
+          <button type="button" className={"pick-btn" + (m.myPick === m.a.id ? " picked" : "")} onClick={() => m.a && onPick(m.id, m.a.id)}>{m.myPick === m.a.id ? "✓ " : ""}{label(m.a, lang)}</button>
+          <button type="button" className={"pick-btn" + (m.myPick === m.b.id ? " picked" : "")} onClick={() => m.b && onPick(m.id, m.b.id)}>{m.myPick === m.b.id ? "✓ " : ""}{label(m.b, lang)}</button>
+          {m.myPick != null && <button type="button" className="pick-clear" title="✕" onClick={() => onPick(m.id, null)}>✕</button>}
+        </div>
+      )}
+      {m.decided && m.myPick != null && (
+        <div className="pick-row pick-result">
+          <span className="pick-label">🔮 {T("pick.pickLabel")}</span>
+          <span className={m.myPick === m.winnerId ? "pick-ok" : "pick-no"}>{m.myPick === m.winnerId ? "✓ " : "✗ "}{m.myPick === m.winnerId ? T("pick.hit") : T("pick.miss")}</span>
+        </div>
+      )}
       {!compact && m.a && m.b && <Comments matchId={m.id} count={m.commentN} lang={lang} />}
     </div>
   );

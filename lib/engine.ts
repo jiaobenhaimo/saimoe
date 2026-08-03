@@ -1,4 +1,4 @@
-import { readDb, writeDb, commentCounts, type DB, type Competition, type Candidate, type Matchup } from "./db";
+import { readDb, writeDb, commentCounts, pickLeaderboard, pickNameOf, type DB, type Competition, type Candidate, type Matchup } from "./db";
 
 // ── reads ─────────────────────────────────────────────────────
 export function getActiveCompetition(): Competition | null {
@@ -59,6 +59,10 @@ export function getState(voterId: string) {
   const compMatchIds = new Set(ms.map((m) => m.id));
   for (const v of db.matchVotes) if (v.voter_id === voterId && compMatchIds.has(v.matchup_id)) myChoice.set(v.matchup_id, v.choice_id);
 
+  // pick'em: this voter's predictions per matchup
+  const myPicks = db.picks.filter((p) => p.competition_id === comp.id && p.voter_id === voterId);
+  const myPickMap = new Map(myPicks.map((p) => [p.matchup_id, p.pick_id]));
+
   const votesA = (m: Matchup) => counts.get(m.id + ":" + m.a_id) || 0;
   const votesB = (m: Matchup) => counts.get(m.id + ":" + m.b_id) || 0;
   const seedOf = (id: number) => cmap.get(id)?.seed ?? Number.MAX_SAFE_INTEGER;
@@ -79,6 +83,7 @@ export function getState(voterId: string) {
       votesA: revealed ? va : null, votesB: revealed ? vb : null, total: revealed ? total : null,
       rateA: total ? Math.round((va / total) * 100) : null,
       winnerId: liveWinner(m), decided: m.decided, myChoice: myChoice.get(m.id) ?? null,
+      myPick: myPickMap.get(m.id) ?? null,
       commentN: cc[m.id] || 0,
     };
   };
@@ -163,6 +168,23 @@ export function getState(voterId: string) {
     result.knockout = { rounds, champion, finished: comp.phase === "finished" };
   } else if (comp.champion_id) {
     result.knockout = { rounds: [], champion: slim(cmap.get(comp.champion_id)), finished: comp.phase === "finished" };
+  }
+
+  // ── pick'em: prediction leaderboard + this voter's stats ──
+  if (ms.length) {
+    const rows = pickLeaderboard(comp.id, db);
+    let myCorrect = 0, myTotal = 0;
+    for (const p of myPicks) {
+      const m = ms.find((x) => x.id === p.matchup_id);
+      if (m && m.decided && m.winner_id != null) { myTotal++; if (m.winner_id === p.pick_id) myCorrect++; }
+    }
+    const myPoints = myCorrect;
+    const myRank = 1 + rows.filter((r) => r.points > myPoints).length;
+    result.pick = {
+      top: rows.slice(0, 20),
+      me: { name: pickNameOf(voterId, db), points: myPoints, correct: myCorrect, total: myTotal, rank: myRank },
+      openCount: ms.filter((m) => !m.decided).length,
+    };
   }
 
   return result;
@@ -596,6 +618,7 @@ function dropMatchups(db: DB, cid: number, pred: (m: Matchup) => boolean): void 
   const removed = new Set(db.matchups.filter((m) => m.competition_id === cid && pred(m)).map((m) => m.id));
   db.matchups = db.matchups.filter((m) => !(m.competition_id === cid && pred(m)));
   db.matchVotes = db.matchVotes.filter((v) => !removed.has(v.matchup_id));
+  db.picks = db.picks.filter((p) => !removed.has(p.matchup_id));
 }
 
 /** 撤回上一步阶段推进(仅一步):finished→knockout、knockout→上一轮/小组赛、小组赛→提名。 */
