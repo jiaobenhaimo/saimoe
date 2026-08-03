@@ -29,6 +29,8 @@ export async function GET(req: NextRequest) {
 
   // Export the CURRENT phase's results. Order matters: the group block now persists into
   // later phases (for the results-review UI), so check the most-advanced block first.
+  const ROUND_CN: Record<string, string> = { final: "决赛", semi: "半决赛", quarter: "四分之一决赛" };
+  const roundName = (label: string): string => ROUND_CN[label] || (label.startsWith("top:") ? `${label.slice(4)} 强` : label);
   const rows: string[][] = [];
   if (state.knockout && state.knockout.rounds && state.knockout.rounds.length) {
     rows.push(["阶段", "轮", "轮名称", "角色", "结果"]);
@@ -37,7 +39,7 @@ export async function GET(req: NextRequest) {
         for (const side of [m.a, m.b]) {
           const name = side?.nameCn || side?.name || "—";
           const result = m.decided ? (m.winnerId === side?.id ? "晋级" : "淘汰") : "";
-          rows.push(["淘汰赛", String(r.round), r.label, name, result]);
+          rows.push(["淘汰赛", String(r.round), roundName(r.label), name, result]);
         }
       }
     }

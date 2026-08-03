@@ -109,9 +109,15 @@ export function getState(voterId: string) {
     }
     // once the group stage is over every match is decided, so all of them count
     const played = (m: Matchup) => m.decided || (isGroupPhase && (m.matchday ?? curMd) === curMd);
-    // scheduled start of each matchday (null when no pace is set)
+    // scheduled start of each matchday (null when no pace is set). Anchored to the
+    // fixed group_started_at so past matchday dates don't drift as the phase advances.
     const roundMs = (comp.group_round_days || 0) * 86400_000;
-    const mdDate = (d: number): number | null => (!comp.group_round_days || !comp.group_round_ends_at) ? null : comp.group_round_ends_at - (curMd - d + 1) * roundMs;
+    const mdDate = (d: number): number | null => {
+      if (!comp.group_round_days) return null;
+      if (comp.group_started_at != null) return comp.group_started_at + (d - 1) * roundMs;
+      if (comp.group_round_ends_at) return comp.group_round_ends_at - (curMd - d + 1) * roundMs; // 旧数据兜底
+      return null;
+    };
     const groups = [...byGroup.entries()]
       .sort((a, b) => a[0] - b[0])
       .map(([g, list]) => {
@@ -344,6 +350,7 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   comp.groups_count = numGroups;
   comp.advance_per_group = null; // 世界杯式:不再是固定「每组晋级 N」
   comp.ko_target = nextPow2(2 * numGroups); // ≤8 组→16,9-16 组→32,以此类推
+  comp.group_started_at = Date.now(); // 固定锚点,各比赛日的日期不随推进漂移
   comp.nom_ends_at = null;
 
   // 比赛日排程:每组各自 circle method 生成轮次,再全局装箱成「每个比赛日 ≤ DAY_CAP 场」
@@ -618,7 +625,7 @@ export function undoLastTransition(cid: number): string {
     comp.phase = "nomination";
     comp.target_size = null; comp.groups_count = null; comp.advance_per_group = null;
     comp.group_ends_at = null;
-    comp.group_matchday = null; comp.group_matchday_count = null; comp.group_round_ends_at = null;
+    comp.group_matchday = null; comp.group_matchday_count = null; comp.group_round_ends_at = null; comp.group_started_at = null;
     writeDb(db);
     return "已撤回：小组赛 → 回到提名阶段。";
   }
