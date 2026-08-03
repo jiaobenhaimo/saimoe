@@ -27,6 +27,7 @@ export default function Admin() {
   const [nMinVotes, setNMinVotes] = useState(0);
   const [perRound, setPerRound] = useState(0);
   const [roundDays, setRoundDays] = useState(0);
+  const [dayCap, setDayCap] = useState(4);
   const [dlHours, setDlHours] = useState(24);
   const [paceDays, setPaceDays] = useState(1);
   const [paceHours, setPaceHours] = useState(24);
@@ -225,10 +226,11 @@ export default function Admin() {
               <input type="number" min={0} value={perRound} onChange={(e) => setPerRound(+e.target.value)} /></div>
             <div className="field"><label>每比赛日天数（0=手动）</label>
               <input type="number" min={0} value={roundDays} onChange={(e) => setRoundDays(+e.target.value)} /></div>
-            <div className="field"><label>&nbsp;</label><span className="hint">同一角色一轮内不会重复出场</span></div>
+            <div className="field"><label>每比赛日最多对局数</label>
+              <input type="number" min={1} value={dayCap} onChange={(e) => setDayCap(+e.target.value)} /></div>
           </div>
           <button className="btn solid" disabled={busy || size < 4}
-            onClick={() => act("start_groups", { size, perRound, roundDays })}>立即开始(取前 {size} 名 → 约 {estGroups} 组 → {estKo} 强)</button>
+            onClick={() => act("start_groups", { size, perRound, roundDays, dayCap })}>立即开始(取前 {size} 名 → 约 {estGroups} 组 → {estKo} 强)</button>
 
           <hr className="sep" />
           <h3 style={{ fontSize: 15 }}>或：定时自动开赛</h3>
@@ -244,7 +246,7 @@ export default function Admin() {
               <input type="number" value={pDays} onChange={(e) => setPDays(+e.target.value)} /></div>
           </div>
           <button className="btn solid" disabled={busy || size < 4 || !nomLocal}
-            onClick={() => act("schedule", { nomEndsAt: nomLocal ? new Date(nomLocal).getTime() : 0, size, groupHours: gHours, roundHours: rHours, groupPerRound: perRound, groupRoundDays: roundDays, postponeDays: pDays })}>
+            onClick={() => act("schedule", { nomEndsAt: nomLocal ? new Date(nomLocal).getTime() : 0, size, groupHours: gHours, roundHours: rHours, groupPerRound: perRound, groupRoundDays: roundDays, dayCap, postponeDays: pDays })}>
             启动定时赛程
           </button>
           {comp.nomEndsAt && <p className="hint">已定时（截止 {fmtAbs(comp.nomEndsAt)}）。<a onClick={() => act("unschedule")}>取消定时</a></p>}
@@ -269,7 +271,7 @@ export default function Admin() {
       {phase === "group" && (
         <div className="card">
           <h3>③ 小组赛比赛日</h3>
-          <p className="hint">当前：第 <b>{comp.groupMatchday}/{comp.groupMatchdayCount}</b> 比赛日{comp.groupRoundEndsAt ? `（截止 ${fmtAbs(comp.groupRoundEndsAt)}）` : ""}；每组每轮 {comp.groupPerRound || "自动"} 场。</p>
+          <p className="hint">当前：第 <b>{comp.groupMatchday}/{comp.groupMatchdayCount}</b> 比赛日{comp.groupRoundEndsAt ? `（截止 ${fmtAbs(comp.groupRoundEndsAt)}）` : ""}；每组每轮 {comp.groupPerRound || "自动"} 场；每比赛日最多 {comp.groupDayCap || 4} 场。</p>
           <button className="btn solid" disabled={busy} onClick={() => act("advance_group")}>结算本比赛日 → 下一比赛日</button>
           <hr className="sep" />
           <p className="hint">或直接结束整个小组赛（结算所有剩余比赛日并生成淘汰赛）：</p>

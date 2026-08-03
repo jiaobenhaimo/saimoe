@@ -104,7 +104,7 @@ const D: Record<string, Entry> = {
 
   "playoff.title": { zh: "第三名加赛", en: "Third-place playoff", ja: "3位決定プレーオフ" },
   "playoff.desc": { zh: "并列者循环赛,争夺最后 {n} 个晋级名额", en: "Round-robin among tied characters for the last {n} spot(s)", ja: "同点者による総当たり、残り{n}枠を争奪" },
-  "champ.tag": { zh: "本届世萌总冠军", en: "Grand Champion", ja: "優勝" },
+  "champ.tag": { zh: "总冠军", en: "Grand Champion", ja: "優勝" },
   "ko.title": { zh: "淘汰赛 · 单败晋级", en: "Knockout · single elimination", ja: "決勝トーナメント · 一発勝負" },
   "ko.hint": { zh: "点选对阵格查看详情并投票", en: "Tap a match to view details & vote", ja: "対戦をタップして詳細・投票" },
   "ko.detail": { zh: "对战详情", en: "Match detail", ja: "対戦詳細" },
@@ -118,21 +118,14 @@ const D: Record<string, Entry> = {
   "match.rateNote": { zh: "赛中仅显示得票率，结算后公布票数", en: "Only vote share shown during the match; counts revealed after", ja: "試合中は得票率のみ、確定後に票数を公開" },
   "match.settled": { zh: "本场已结算 · 得票已公布", en: "Settled · counts revealed", ja: "確定 · 票数公開済" },
 
-  // pick'em (predictions + leaderboard)
-  "pick.title": { zh: "预测排行榜", en: "Pick'em Leaderboard", ja: "予想ランキング" },
-  "pick.hint": { zh: "预测每场胜者,猜对得 1 分;该场结算后锁定。", en: "Predict each winner — 1 pt per correct pick, locked once the match settles.", ja: "各対戦の勝者を予想、的中で1点。試合確定後にロック。" },
-  "pick.pickLabel": { zh: "预测", en: "Pick", ja: "予想" },
-  "pick.hit": { zh: "命中", en: "hit", ja: "的中" },
-  "pick.miss": { zh: "未中", en: "miss", ja: "外れ" },
-  "pick.name": { zh: "昵称（用于排行榜）", en: "Name (leaderboard)", ja: "ニックネーム（ランキング用）" },
-  "pick.save": { zh: "保存", en: "Save", ja: "保存" },
-  "pick.pts": { zh: "分", en: "pts", ja: "点" },
-  "pick.acc": { zh: "命中率", en: "ACC", ja: "的中率" },
-  "pick.noBoard": { zh: "还没有人参与预测,来押第一注吧!", en: "No picks yet — make the first prediction!", ja: "まだ予想がありません。最初の予想をどうぞ!" },
-  "pick.myStats": { zh: "我的排名 #{r} · {p} 分 · 命中 {c}/{t}", en: "My rank #{r} · {p} pts · {c}/{t} correct", ja: "順位 #{r} · {p}点 · 的中 {c}/{t}" },
-  "pick.myPending": { zh: "已预测 {n} 场,结算后计分", en: "Picked {n} — scored once matches settle", ja: "{n}試合を予想済み — 確定後に集計" },
-  "pick.myNone": { zh: "还没有预测,快去押注吧", en: "No picks yet — go make one!", ja: "まだ予想がありません。予想してみよう!" },
-  "pick.anon": { zh: "匿名", en: "Anonymous", ja: "匿名" },
+  // group results table + next-round preview
+  "th.match": { zh: "对战", en: "Match", ja: "対戦" },
+  "th.date": { zh: "日期", en: "Date", ja: "日時" },
+  "th.result": { zh: "结果", en: "Result", ja: "結果" },
+  "match.won": { zh: "获胜", en: "won", ja: "勝利" },
+  "next.title": { zh: "下一轮预告", en: "Coming up next", ja: "次のラウンド予告" },
+  "next.group": { zh: "下一比赛日预告 · 第 {d}/{n} 比赛日", en: "Next matchday · {d}/{n}", ja: "次の試合日 · 第{d}/{n}" },
+  "next.round": { zh: "下一轮", en: "Next round", ja: "次ラウンド" },
 
   "cmt.collapse": { zh: "收起评论", en: "Hide comments", ja: "コメントを隠す" },
   "cmt.open": { zh: "评论", en: "Comments", ja: "コメント" },

@@ -30,6 +30,7 @@ export interface Competition {
   // ── group stage matchdays (round-robin split into rounds) ──
   group_matchday: number | null; group_matchday_count: number | null;
   group_per_round: number | null; group_round_days: number | null; group_round_ends_at: number | null;
+  group_day_cap: number | null;   // 每比赛日最多对局数(null=默认 4)
   ko_target: number | null;
   ko_seed_ids: number[] | null; playoff_slots: number | null;
 }
@@ -60,16 +61,8 @@ export interface Comment {
   name: string; text: string; created_at: number;
 }
 
-/** A user's prediction (pick'em) of a matchup's winner. Scored once the match is decided. */
-export interface Pick {
-  id: number; competition_id: number; matchup_id: number; voter_id: string;
-  pick_id: number; created_at: number;
-}
-/** Display nickname a voter chose for the pick'em leaderboard (per voter). */
-interface PickName { voter_id: string; name: string; }
-
 export interface DB {
-  seq: { competition: number; candidate: number; matchup: number; comment: number; audit: number; pick: number };
+  seq: { competition: number; candidate: number; matchup: number; comment: number; audit: number };
   competitions: Competition[];
   candidates: Candidate[];
   matchups: Matchup[];
@@ -77,8 +70,6 @@ export interface DB {
   matchVotes: MatchVote[];
   comments: Comment[];
   auditLog: AuditEntry[];
-  picks: Pick[];
-  pickNames: PickName[];
 }
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
@@ -88,7 +79,7 @@ const FILE = path.join(DATA_DIR, "saimoe.json");
 export function dataFilePath(): string { return FILE; }
 
 function blank(): DB {
-  return { seq: { competition: 0, candidate: 0, matchup: 0, comment: 0, audit: 0, pick: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [], comments: [], auditLog: [], picks: [], pickNames: [] };
+  return { seq: { competition: 0, candidate: 0, matchup: 0, comment: 0, audit: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [], comments: [], auditLog: [] };
 }
 function normalize(o: any): DB {
   if (!o || typeof o !== "object") return blank();
@@ -100,7 +91,6 @@ function normalize(o: any): DB {
       matchup: Number(o?.seq?.matchup) || 0,
       comment: Number(o?.seq?.comment) || 0,
       audit: Number(o?.seq?.audit) || 0,
-      pick: Number(o?.seq?.pick) || 0,
     },
     competitions: Array.isArray(o.competitions) ? o.competitions : b.competitions,
     candidates: Array.isArray(o.candidates) ? o.candidates : b.candidates,
@@ -109,8 +99,6 @@ function normalize(o: any): DB {
     matchVotes: Array.isArray(o.matchVotes) ? o.matchVotes : b.matchVotes,
     comments: Array.isArray(o.comments) ? o.comments : b.comments,
     auditLog: Array.isArray(o.auditLog) ? o.auditLog : b.auditLog,
-    picks: Array.isArray(o.picks) ? o.picks : b.picks,
-    pickNames: Array.isArray(o.pickNames) ? o.pickNames : b.pickNames,
   };
 }
 
@@ -158,7 +146,7 @@ export function ensureSchema(): void {
 export function createCompetition(title: string): number {
   const db = readDb();
   const id = ++db.seq.competition;
-  db.competitions.push({ id, title, description: null, phase: "nomination", target_size: null, groups_count: null, advance_per_group: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, auto_groups: null, auto_advance: null, group_hours: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, ko_target: null, ko_seed_ids: null, playoff_slots: null });
+  db.competitions.push({ id, title, description: null, phase: "nomination", target_size: null, groups_count: null, advance_per_group: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, auto_groups: null, auto_advance: null, group_hours: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, ko_target: null, ko_seed_ids: null, playoff_slots: null });
   writeDb(db);
   return id;
 }
@@ -173,7 +161,6 @@ export function deleteCompetition(cid: number): void {
   db.nominationVotes = db.nominationVotes.filter((v) => v.competition_id !== cid && !candIds.has(v.candidate_id));
   db.matchVotes = db.matchVotes.filter((v) => !matchIds.has(v.matchup_id));
   db.comments = db.comments.filter((c) => c.competition_id !== cid);
-  db.picks = db.picks.filter((p) => p.competition_id !== cid);
   writeDb(db);
 }
 
@@ -253,7 +240,6 @@ export function removeCandidate(cid: number, candidateId: number): boolean {
   const ids = new Set(db.matchups.filter((m) => m.competition_id === cid && (m.a_id === candidateId || m.b_id === candidateId)).map((m) => m.id));
   db.matchups = db.matchups.filter((m) => !(m.competition_id === cid && (m.a_id === candidateId || m.b_id === candidateId)));
   db.matchVotes = db.matchVotes.filter((v) => !ids.has(v.matchup_id));
-  db.picks = db.picks.filter((p) => p.pick_id !== candidateId);
   writeDb(db);
   return true;
 }
@@ -381,75 +367,6 @@ export function invalidateVotes(cid: number, by: "bucket" | "ip" | "voter", key:
     return (v as any)[field] !== key;
   });
   removed += mvBefore - db.matchVotes.length;
-  // 作废某「身份」时,连带移除其在本比赛的预测(排行榜不残留作废者)
-  if (by === "voter") {
-    const pkBefore = db.picks.length;
-    db.picks = db.picks.filter((p) => !(p.competition_id === cid && p.voter_id === key));
-    removed += pkBefore - db.picks.length;
-  }
   if (removed) writeDb(db);
   return removed;
-}
-
-// ── pick'em (predictions) ─────────────────────────────────────
-
-/** Set / change / clear a user's prediction for a matchup. Returns null pick = cleared. */
-export function setPick(cid: number, matchupId: number, voterId: string, pickId: number | null): { pick: number | null } | { error: string; status: number } {
-  const db = readDb();
-  const m = db.matchups.find((x) => x.id === matchupId && x.competition_id === cid);
-  if (!m) return { error: "对战不存在。", status: 404 };
-  if (m.decided) return { error: "该场已结束，不能再预测。", status: 400 };
-  if (pickId !== null && pickId !== m.a_id && pickId !== m.b_id) return { error: "无效的预测。", status: 400 };
-  const i = db.picks.findIndex((p) => p.competition_id === cid && p.matchup_id === matchupId && p.voter_id === voterId);
-  if (pickId === null) {
-    if (i >= 0) { db.picks.splice(i, 1); writeDb(db); }
-    return { pick: null };
-  }
-  if (i >= 0) { db.picks[i].pick_id = pickId; db.picks[i].created_at = Date.now(); }
-  else db.picks.push({ id: ++db.seq.pick, competition_id: cid, matchup_id: matchupId, voter_id: voterId, pick_id: pickId, created_at: Date.now() });
-  writeDb(db);
-  return { pick: pickId };
-}
-
-/** Set (or clear, when empty) the display name used on the pick'em leaderboard. */
-export function setPickName(voterId: string, name: string): void {
-  const n = (name || "").trim().slice(0, 24);
-  const db = readDb();
-  const i = db.pickNames.findIndex((p) => p.voter_id === voterId);
-  if (!n) { if (i >= 0) db.pickNames.splice(i, 1); }
-  else if (i >= 0) db.pickNames[i].name = n;
-  else db.pickNames.push({ voter_id: voterId, name: n });
-  writeDb(db);
-}
-
-export function pickNameOf(voterId: string, db?: DB): string {
-  const d = db || readDb();
-  return d.pickNames.find((p) => p.voter_id === voterId)?.name ?? "";
-}
-
-export interface PickRow { name: string; points: number; correct: number; total: number; }
-
-/** Leaderboard for one competition: per voter, count picks on decided matches that
- *  match the winner (1 point each). Sorted by points, then accuracy. Never exposes
- *  voter ids — only the user-chosen nickname (defaults to 匿名). */
-export function pickLeaderboard(cid: number, db?: DB): PickRow[] {
-  const d = db || readDb();
-  const winners = new Map<number, number>();
-  for (const m of d.matchups) if (m.competition_id === cid && m.decided && m.winner_id != null) winners.set(m.id, m.winner_id);
-  const byVoter = new Map<string, { correct: number; total: number }>();
-  for (const p of d.picks) {
-    if (p.competition_id !== cid) continue;
-    const w = winners.get(p.matchup_id);
-    if (w == null) continue; // 未结算的不计分
-    const e = byVoter.get(p.voter_id) || { correct: 0, total: 0 };
-    e.total++;
-    if (p.pick_id === w) e.correct++;
-    byVoter.set(p.voter_id, e);
-  }
-  const rows: PickRow[] = [];
-  for (const [vid, e] of byVoter) {
-    rows.push({ name: pickNameOf(vid, d) || "匿名", points: e.correct, correct: e.correct, total: e.total });
-  }
-  rows.sort((x, y) => y.points - x.points || (x.total ? y.correct / y.total - x.correct / x.total : 0) || x.name.localeCompare(y.name));
-  return rows;
 }
