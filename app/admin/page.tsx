@@ -265,6 +265,14 @@ export default function Admin() {
         </div>
       )}
 
+      {phase === "playoff" && (
+        <div className="card">
+          <h3>③½ 第三名加赛</h3>
+          <p className="hint">{state.playoff?.contenders ?? "?"} 名并列者进行循环赛,争夺最后 <b>{state.playoff?.slots ?? "?"}</b> 个晋级名额{comp.groupRoundEndsAt ? `(截止 ${fmtAbs(comp.groupRoundEndsAt)})` : ""}。</p>
+          <button className="btn solid" disabled={busy} onClick={() => act("resolve_playoff")}>结算加赛 → 生成淘汰赛</button>
+        </div>
+      )}
+
       {phase === "knockout" && (
         <div className="card">
           <h3>④ 推进淘汰赛一轮</h3>

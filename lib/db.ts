@@ -31,6 +31,7 @@ export interface Competition {
   group_matchday: number | null; group_matchday_count: number | null;
   group_per_round: number | null; group_round_days: number | null; group_round_ends_at: number | null;
   ko_target: number | null;
+  ko_seed_ids: number[] | null; playoff_slots: number | null;
 }
 export interface Candidate {
   id: number; competition_id: number; bgm_id: string; name: string; name_cn: string | null;
@@ -38,7 +39,7 @@ export interface Candidate {
   subject_name: string | null; added_by: string | null; name_en: string | null;
 }
 export interface Matchup {
-  id: number; competition_id: number; stage: "group" | "knockout"; round_no: number;
+  id: number; competition_id: number; stage: "group" | "knockout" | "playoff"; round_no: number;
   group_no: number | null; slot: number; a_id: number; b_id: number;
   winner_id: number | null; decided: boolean; matchday?: number | null;
 }
@@ -131,7 +132,7 @@ export function ensureSchema(): void {
 export function createCompetition(title: string): number {
   const db = readDb();
   const id = ++db.seq.competition;
-  db.competitions.push({ id, title, description: null, phase: "nomination", target_size: null, groups_count: null, advance_per_group: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, auto_groups: null, auto_advance: null, group_hours: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, ko_target: null });
+  db.competitions.push({ id, title, description: null, phase: "nomination", target_size: null, groups_count: null, advance_per_group: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, auto_groups: null, auto_advance: null, group_hours: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, ko_target: null, ko_seed_ids: null, playoff_slots: null });
   writeDb(db);
   return id;
 }
@@ -216,6 +217,10 @@ export function castMatchVote(cid: number, matchupId: number, voterId: string, c
     const comp = db.competitions.find((c) => c.id === cid);
     const cur = comp?.group_matchday ?? null;
     if (cur != null && (m.matchday ?? cur) !== cur) return { error: "本场对战当前未开放，请等待对应比赛日。", status: 400 };
+  }
+  if (m.stage === "playoff") {
+    const comp = db.competitions.find((c) => c.id === cid);
+    if (comp?.phase !== "playoff") return { error: "加赛未开放。", status: 400 };
   }
   if (choiceId !== m.a_id && choiceId !== m.b_id) return { error: "无效的选择。", status: 400 };
   const cur = db.matchVotes.find((v) => v.matchup_id === matchupId && v.voter_id === voterId);

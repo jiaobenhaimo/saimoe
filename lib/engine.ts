@@ -116,6 +116,24 @@ export function getState(voterId: string) {
     return { ...base, group: { groups, matchday: curMd, matchdayCount: mdCount } };
   }
 
+  if (comp.phase === "playoff") {
+    const pms = ms.filter((m) => m.stage === "playoff");
+    const bandIds = [...new Set(pms.flatMap((m) => [m.a_id, m.b_id]))];
+    const rows = bandIds.map((id) => {
+      let wins = 0, vf = 0;
+      for (const m of pms) {
+        if (m.a_id === id) vf += votesA(m);
+        if (m.b_id === id) vf += votesB(m);
+        if (liveWinner(m) === id) wins++;
+      }
+      return { id, wins, vf };
+    });
+    rows.sort((x, y) => y.wins - x.wins || y.vf - x.vf);
+    const standings = rows.map((r) => ({ ...slim(cmap.get(r.id))!, wins: r.wins, votesFor: null }));
+    const matchups = pms.map((m) => ({ ...shapeMatch(m), live: !m.decided }));
+    return { ...base, playoff: { standings, matchups, slots: comp.playoff_slots ?? 0, contenders: bandIds.length } };
+  }
+
   // knockout / finished
   const koMs = ms.filter((m) => m.stage === "knockout");
   const roundNos = [...new Set(koMs.map((m) => m.round_no))].sort((a, b) => a - b);
@@ -306,7 +324,134 @@ export function advanceGroupMatchday(cid: number): { done: boolean; message: str
   return { done: true, message: `已结算最后一个比赛日（第 ${cur}/${count}）。现在可以开淘汰赛。` };
 }
 
-/** group → knockout (World Cup style): group winners + runners-up + best remaining → nextPow2(2×组数). */
+/** group → knockout (World Cup): winners + runners-up + best remaining → nextPow2(2×组数).
+ *  若最后填补名额在「小组胜负 + 提名票」上并列,则对并列者开循环赛加赛决定。 */
+export function startKnockout(cid: number) {
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp || comp.phase !== "group") throw new Error("当前不在小组赛阶段。");
+  const numGroups = comp.groups_count as number;
+  const koTarget = comp.ko_target ?? nextPow2(2 * numGroups);
+  const counts = matchCounts(db, cid);
+  const seedOf = seedLookup(db, cid);
+
+  for (const m of db.matchups) if (m.competition_id === cid && m.stage === "group") decide(m, counts, seedOf);
+
+  const nomCount = new Map<number, number>();
+  for (const v of db.nominationVotes) if (v.competition_id === cid) nomCount.set(v.candidate_id, (nomCount.get(v.candidate_id) || 0) + 1);
+
+  type Row = { id: number; wins: number; vf: number; votes: number; groupRank: number };
+  const autoAdv: Row[] = [];
+  const fillPool: Row[] = [];
+  for (let g = 0; g < numGroups; g++) {
+    const gms = db.matchups.filter((m) => m.competition_id === cid && m.stage === "group" && m.group_no === g);
+    const members = db.candidates.filter((cd) => cd.competition_id === cid && cd.group_no === g);
+    const stats: Row[] = members.map((mem) => {
+      let wins = 0, vf = 0;
+      for (const mm of gms) {
+        const va = counts.get(mm.id + ":" + mm.a_id) || 0, vb = counts.get(mm.id + ":" + mm.b_id) || 0;
+        if (mm.a_id === mem.id) vf += va;
+        if (mm.b_id === mem.id) vf += vb;
+        if (mm.winner_id === mem.id) wins++;
+      }
+      return { id: mem.id, wins, vf, votes: nomCount.get(mem.id) || 0, groupRank: 0 };
+    });
+    stats.sort((x, y) => y.wins - x.wins || y.vf - x.vf || seedOf(x.id) - seedOf(y.id));
+    stats.forEach((s2, i) => (s2.groupRank = i));
+    autoAdv.push(...stats.slice(0, 2));
+    fillPool.push(...stats.slice(2));
+  }
+
+  const seedCmp = (x: Row, y: Row) => x.groupRank - y.groupRank || y.wins - x.wins || y.votes - x.votes || seedOf(x.id) - seedOf(y.id);
+  const sameTier = (x: Row, y: Row) => x.groupRank === y.groupRank && x.wins === y.wins && x.votes === y.votes;
+  const fillNeeded = koTarget - autoAdv.length;
+  fillPool.sort(seedCmp);
+
+  // 检测最后名额是否并列 → 需要加赛
+  if (fillNeeded > 0 && fillNeeded < fillPool.length) {
+    const boundary = fillPool[fillNeeded - 1];
+    const bandStart = fillPool.findIndex((r) => sameTier(r, boundary));
+    const band = fillPool.filter((r) => sameTier(r, boundary));
+    const slotsForBand = fillNeeded - bandStart;
+    if (band.length > slotsForBand && slotsForBand >= 1) {
+      const confirmed = [...autoAdv, ...fillPool.slice(0, bandStart)].sort(seedCmp).map((r) => r.id);
+      comp.ko_seed_ids = [...confirmed, ...Array(slotsForBand).fill(null)];
+      comp.playoff_slots = slotsForBand;
+      const keep = new Set<number>([...confirmed, ...band.map((r) => r.id)]);
+      for (const cd of db.candidates) if (cd.competition_id === cid && cd.group_no != null && !keep.has(cd.id)) cd.eliminated = true;
+      const bandIds = band.map((r) => r.id);
+      let slot = 0;
+      for (let i = 0; i < bandIds.length; i++) for (let j = i + 1; j < bandIds.length; j++)
+        db.matchups.push({ id: ++db.seq.matchup, competition_id: cid, stage: "playoff", round_no: 1, group_no: null, slot: slot++, a_id: bandIds[i], b_id: bandIds[j], winner_id: null, decided: false, matchday: 1 });
+      comp.phase = "playoff";
+      comp.group_round_ends_at = comp.round_hours ? Date.now() + comp.round_hours * 3600_000 : null;
+      comp.group_ends_at = null;
+      writeDb(db);
+      return;
+    }
+  }
+
+  const advancers = [...autoAdv, ...(fillNeeded > 0 ? fillPool.slice(0, fillNeeded) : [])].sort(seedCmp);
+  const bySeed = advancers.map((r) => r.id);
+  if (bySeed.length !== koTarget || !isPow2(bySeed.length)) throw new Error(`可晋级人数 ${bySeed.length} 无法凑成 ${koTarget} 强(检查小组与人数)。`);
+  buildKnockout(db, comp, cid, bySeed);
+  writeDb(db);
+}
+
+/** Build the round-1 bracket from an ordered advancer list (index 0 = strongest). */
+function buildKnockout(db: DB, comp: Competition, cid: number, seedIds: number[]) {
+  const advSet = new Set(seedIds);
+  for (const cd of db.candidates) if (cd.competition_id === cid && cd.group_no != null && !advSet.has(cd.id)) cd.eliminated = true;
+  comp.phase = "knockout"; comp.ko_round = 1;
+  comp.group_round_ends_at = null; comp.group_ends_at = null;
+  comp.ko_seed_ids = null; comp.playoff_slots = null;
+  comp.ko_round_ends_at = comp.round_hours ? Date.now() + comp.round_hours * 3600_000 : null;
+  const n = seedIds.length;
+  const order = bracketSeedOrder(n);
+  const placed = order.map((seed) => seedIds[seed - 1]);
+  for (let i = 0; i < placed.length; i += 2) {
+    db.matchups.push({ id: ++db.seq.matchup, competition_id: cid, stage: "knockout", round_no: 1, group_no: null, slot: i / 2, a_id: placed[i], b_id: placed[i + 1], winner_id: null, decided: false });
+    const ca = db.candidates.find((x) => x.id === placed[i]); if (ca) ca.seed = order[i];
+    const cb = db.candidates.find((x) => x.id === placed[i + 1]); if (cb) cb.seed = order[i + 1];
+  }
+}
+
+/** Settle the third-place playoff round-robin, then seed the knockout. */
+export function resolvePlayoff(cid: number) {
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp || comp.phase !== "playoff") throw new Error("当前不在加赛阶段。");
+  const counts = matchCounts(db, cid);
+  const seedOf = seedLookup(db, cid);
+  const pms = db.matchups.filter((m) => m.competition_id === cid && m.stage === "playoff");
+  for (const m of pms) decide(m, counts, seedOf);
+
+  const nomCount = new Map<number, number>();
+  for (const v of db.nominationVotes) if (v.competition_id === cid) nomCount.set(v.candidate_id, (nomCount.get(v.candidate_id) || 0) + 1);
+
+  const bandIds = [...new Set(pms.flatMap((m) => [m.a_id, m.b_id]))];
+  const rows = bandIds.map((id) => {
+    let wins = 0, vf = 0;
+    for (const m of pms) {
+      const va = counts.get(m.id + ":" + m.a_id) || 0, vb = counts.get(m.id + ":" + m.b_id) || 0;
+      if (m.a_id === id) vf += va;
+      if (m.b_id === id) vf += vb;
+      if (m.winner_id === id) wins++;
+    }
+    return { id, wins, vf, votes: nomCount.get(id) || 0 };
+  });
+  rows.sort((x, y) => y.wins - x.wins || y.vf - x.vf || y.votes - x.votes || seedOf(x.id) - seedOf(y.id));
+
+  const slots = comp.playoff_slots ?? 0;
+  for (const r of rows.slice(slots)) { const c = db.candidates.find((x) => x.id === r.id); if (c) c.eliminated = true; }
+  const winners = rows.slice(0, slots).map((r) => r.id);
+  const seedIds = (comp.ko_seed_ids || []).slice();
+  let w = 0;
+  for (let i = 0; i < seedIds.length; i++) if (seedIds[i] == null) seedIds[i] = winners[w++];
+
+  buildKnockout(db, comp, cid, seedIds as number[]);
+  writeDb(db);
+}
 export function startKnockout(cid: number) {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);

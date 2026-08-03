@@ -1,4 +1,4 @@
-import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, postponeNomination, poolSize } from "./engine";
+import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, resolvePlayoff, postponeNomination, poolSize } from "./engine";
 
 let last = 0;
 
@@ -30,6 +30,8 @@ export function runTick(force = false): void {
       if (r.done) startKnockout(comp.id);
     } else if (comp.phase === "group" && comp.group_ends_at && now >= comp.group_ends_at) {
       startKnockout(comp.id); // legacy (comps started before matchday scheduling)
+    } else if (comp.phase === "playoff" && comp.group_round_ends_at && now >= comp.group_round_ends_at) {
+      resolvePlayoff(comp.id);
     } else if (comp.phase === "knockout" && comp.ko_round_ends_at && now >= comp.ko_round_ends_at) {
       advanceKnockout(comp.id);
     }

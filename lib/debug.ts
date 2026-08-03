@@ -1,7 +1,7 @@
 // Debug helpers — gated behind ADMIN_TOKEN + DEBUG_MODE=true (see route).
 // Purpose: exercise the whole tournament flow in seconds without Bangumi or waiting.
 import { readDb, writeDb, createCompetition, addCandidate } from "./db";
-import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday } from "./engine";
+import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, resolvePlayoff } from "./engine";
 
 function activeId(): number {
   const c = getActiveCompetition();
@@ -92,6 +92,12 @@ export function debugSimulate(o: { count?: number; groups?: number; advance?: nu
     const r = advanceGroupMatchday(seeded.id);
     log.push(`比赛日投票(${vr.matches} 场)→ ${r.message}`);
     if (r.done) { startKnockout(seeded.id); log.push("小组赛结束 → 生成淘汰赛"); break; }
+  }
+
+  // 第三名加赛(如触发)
+  {
+    const cp = getActiveCompetition();
+    if (cp && cp.phase === "playoff") { const vr = debugVote(voters); resolvePlayoff(seeded.id); log.push(`加赛投票(${vr.matches} 场)→ 结算 → 生成淘汰赛`); }
   }
 
   guard = 0;
