@@ -29,7 +29,7 @@ export function getState(voterId: string) {
 
   const base = {
     competition: {
-      id: comp.id, title: comp.title, description: comp.description, phase: comp.phase,
+      id: comp.id, title: comp.title, description: comp.description, shortName: comp.short_name ?? "", phase: comp.phase,
       groupsCount: comp.groups_count, advancePerGroup: comp.advance_per_group, championId: comp.champion_id,
       nomEndsAt: comp.nom_ends_at ?? null, groupEndsAt: comp.group_ends_at ?? null, koRoundEndsAt: comp.ko_round_ends_at ?? null,
       postponeDays: comp.postpone_days ?? null,
@@ -284,7 +284,7 @@ function bracketSeedOrder(n: number): number[] {
 }
 
 // ── admin transitions ─────────────────────────────────────────
-export function updateCompetition(cid: number, title: string, description: string | null) {
+export function updateCompetition(cid: number, title: string, description: string | null, shortName = "") {
   const t = (title || "").trim();
   if (!t) throw new Error("标题不能为空。");
   const db = readDb();
@@ -292,6 +292,7 @@ export function updateCompetition(cid: number, title: string, description: strin
   if (!comp) return;
   comp.title = t;
   comp.description = (description || "").trim() || null;
+  comp.short_name = (shortName || "").trim() || null;
   writeDb(db);
 }
 
@@ -348,7 +349,7 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   comp.phase = "group";
   comp.target_size = a;
   comp.groups_count = numGroups;
-  comp.advance_per_group = null; // 世界杯式:不再是固定「每组晋级 N」
+  comp.advance_per_group = null; // 不再是固定「每组晋级 N」
   comp.ko_target = nextPow2(2 * numGroups); // ≤8 组→16,9-16 组→32,以此类推
   comp.group_started_at = Date.now(); // 固定锚点,各比赛日的日期不随推进漂移
   comp.nom_ends_at = null;

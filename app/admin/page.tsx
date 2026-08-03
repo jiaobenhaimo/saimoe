@@ -34,6 +34,7 @@ export default function Admin() {
 
   const [editTitle, setEditTitle] = useState("");
   const [editDesc, setEditDesc] = useState("");
+  const [editShort, setEditShort] = useState("");
 
   // 网络诊断
   const [pinging, setPinging] = useState(false);
@@ -127,7 +128,7 @@ export default function Admin() {
   const phase = comp?.phase;
 
   useEffect(() => {
-    if (comp) { setEditTitle(comp.title || ""); setEditDesc(comp.description || ""); setNUserLimit(comp.nomUserLimit || 0); setNMinVotes(comp.nomMinVotes || 0); }
+    if (comp) { setEditTitle(comp.title || ""); setEditDesc(comp.description || ""); setEditShort(comp.shortName || ""); setNUserLimit(comp.nomUserLimit || 0); setNMinVotes(comp.nomMinVotes || 0); }
   }, [comp?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const estGroups = Math.max(1, Math.floor(size / 4));
@@ -198,8 +199,11 @@ export default function Admin() {
           <div className="field"><label>简介 / 副标题（可选，显示在投票页标题下方）</label>
             <input value={editDesc} onChange={(e) => setEditDesc(e.target.value)}
               placeholder="例如：2026 春季 · 由你决定最萌角色" /></div>
+          <div className="field"><label>比赛简称（可选，用于规则页等文字，代替「世萌」）</label>
+            <input value={editShort} onChange={(e) => setEditShort(e.target.value)}
+              placeholder="例如：B萌、春季杯" /></div>
           <button className="btn solid" disabled={busy || !editTitle.trim()}
-            onClick={() => act("update", { title: editTitle, description: editDesc })}>保存修改</button>
+            onClick={() => act("update", { title: editTitle, description: editDesc, shortName: editShort })}>保存修改</button>
         </div>
       )}
 
@@ -219,7 +223,7 @@ export default function Admin() {
             <div className="field"><label>晋级人数(取前 N,含并列)</label>
               <input type="number" min={4} value={size} onChange={(e) => setSize(+e.target.value)} /></div>
             <div className="field" style={{ gridColumn: "span 2" }}><label>&nbsp;</label>
-              <span className="hint">世界杯式:约 <b>{estGroups}</b> 个 4 人组(并列/余数可成 5 人组),各组前 2 + 最优第三名 → <b>{estKo}</b> 强淘汰赛。</span></div>
+              <span className="hint">约 <b>{estGroups}</b> 个 4 人组(并列/余数可成 5 人组),各组前 2 + 最优第三名 → <b>{estKo}</b> 强淘汰赛。</span></div>
           </div>
           <div className="row3">
             <div className="field"><label>每组每轮场数（0=自动）</label>

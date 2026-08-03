@@ -372,7 +372,7 @@ export default function Page() {
     <main className="wrap">
       <div className="langbar">{LANGS.map((L) => <button key={L.code} type="button" className={"lang" + (lang === L.code ? " on" : "")} onClick={() => setLang(L.code)}>{L.label}</button>)}</div>
       <h1 className="title">{comp?.title || T("title")}</h1>
-      <p className="subtitle">{comp?.description || T("subtitle")}</p>
+      <p className="subtitle">{comp?.shortName ? `${comp.shortName} · ` : ""}{comp?.description || T("subtitle")}</p>
       <div className="phasebar">
         {phases.map(([p, name]) => {
           const enabled = comp && hasView[p];

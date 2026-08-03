@@ -32,8 +32,8 @@ export async function POST(req: NextRequest) {
     if (!comp) return NextResponse.json({ error: "还没有比赛，请先创建。" }, { status: 400 });
 
     if (action === "update") {
-      updateCompetition(comp.id, String(body.title ?? ""), body.description ?? null);
-      rec(`修改标题/简介`);
+      updateCompetition(comp.id, String(body.title ?? ""), body.description ?? null, body.shortName ? String(body.shortName) : "");
+      rec(`修改标题/简介${body.shortName ? " / 简称" : ""}`);
       return NextResponse.json({ ok: true });
     }
     if (action === "schedule") {

@@ -18,7 +18,7 @@ import path from "path";
 export type Phase = "nomination" | "group" | "playoff" | "knockout" | "finished";
 
 export interface Competition {
-  id: number; title: string; description: string | null; phase: Phase;
+  id: number; title: string; description: string | null; short_name: string | null; phase: Phase;
   target_size: number | null; groups_count: number | null; advance_per_group: number | null;
   champion_id: number | null; ko_round: number | null; created_at: number;
   // ── timed schedule (epoch ms; null = not scheduled) ──
@@ -147,7 +147,7 @@ export function ensureSchema(): void {
 export function createCompetition(title: string): number {
   const db = readDb();
   const id = ++db.seq.competition;
-  db.competitions.push({ id, title, description: null, phase: "nomination", target_size: null, groups_count: null, advance_per_group: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, auto_groups: null, auto_advance: null, group_hours: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_started_at: null, ko_target: null, ko_seed_ids: null, playoff_slots: null });
+  db.competitions.push({ id, title, description: null, short_name: null, phase: "nomination", target_size: null, groups_count: null, advance_per_group: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, auto_groups: null, auto_advance: null, group_hours: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_started_at: null, ko_target: null, ko_seed_ids: null, playoff_slots: null });
   writeDb(db);
   return id;
 }
