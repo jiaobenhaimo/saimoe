@@ -309,3 +309,7 @@ body { font-size: 15px; line-height: 1.6; }
 /* debug panel button row */
 .btnrow { display: flex; flex-wrap: wrap; gap: 8px; }
 .btnrow .btn { flex: 1 1 auto; }
+
+/* ghost button (e.g. remove-own-nomination) */
+.btn.ghost { background: transparent; border: 1.5px solid var(--line); color: var(--muted); }
+.btn.ghost:hover { border-color: var(--rose); color: var(--rose-deep); }

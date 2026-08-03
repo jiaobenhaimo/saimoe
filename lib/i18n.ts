@@ -70,6 +70,7 @@ const D: Record<string, Entry> = {
   "nom.voteLabel": { zh: "提名", en: "noms", ja: "推薦" },
   "nom.voted": { zh: "已投", en: "Voted", ja: "投票済" },
   "nom.vote": { zh: "投一票", en: "Vote", ja: "投票" },
+  "nom.remove": { zh: "移除", en: "Remove", ja: "削除" },
 
   "search.fail": { zh: "在线搜索失败（{err}），可手动添加。", en: "Online search failed ({err}); you can add manually.", ja: "オンライン検索に失敗（{err}）。手動追加できます。" },
   "subject.fail": { zh: "作品搜索失败：{err}", en: "Anime search failed: {err}", ja: "作品検索に失敗：{err}" },

@@ -34,6 +34,7 @@ export interface Competition {
 export interface Candidate {
   id: number; competition_id: number; bgm_id: string; name: string; name_cn: string | null;
   image: string | null; group_no: number | null; seed: number | null; eliminated: boolean;
+  subject_name: string | null; added_by: string | null;
 }
 export interface Matchup {
   id: number; competition_id: number; stage: "group" | "knockout"; round_no: number;
@@ -148,13 +149,27 @@ export function deleteCompetition(cid: number): void {
 }
 
 /** Insert a candidate; returns false if (competition, bgm_id) already exists. */
-export function addCandidate(cid: number, bgmId: string, name: string, nameCn: string, image: string): boolean {
+export function addCandidate(cid: number, bgmId: string, name: string, nameCn: string, image: string, subjectName = "", addedBy = ""): boolean {
   const db = readDb();
   if (db.candidates.some((c) => c.competition_id === cid && c.bgm_id === bgmId)) return false;
   const id = ++db.seq.candidate;
-  db.candidates.push({ id, competition_id: cid, bgm_id: bgmId, name, name_cn: nameCn || null, image: image || null, group_no: null, seed: null, eliminated: false });
+  db.candidates.push({ id, competition_id: cid, bgm_id: bgmId, name, name_cn: nameCn || null, image: image || null, group_no: null, seed: null, eliminated: false, subject_name: subjectName || null, added_by: addedBy || null });
   writeDb(db);
   return true;
+}
+
+/** A user removes a character THEY nominated, allowed only while it has zero nomination votes. */
+export function removeOwnCandidate(cid: number, candidateId: number, voterId: string): { ok: true } | { error: string } {
+  const db = readDb();
+  const c = db.candidates.find((x) => x.id === candidateId && x.competition_id === cid);
+  if (!c) return { error: "角色不存在。" };
+  if ((c.added_by || "") !== voterId) return { error: "只能移除你自己提名的角色。" };
+  const votes = db.nominationVotes.filter((v) => v.competition_id === cid && v.candidate_id === candidateId).length;
+  if (votes > 0) return { error: "已经有人投票,无法移除。" };
+  db.candidates = db.candidates.filter((x) => x.id !== candidateId);
+  db.nominationVotes = db.nominationVotes.filter((v) => v.candidate_id !== candidateId);
+  writeDb(db);
+  return { ok: true };
 }
 
 /** Remove a candidate and all its votes (and any matchups referencing it).
