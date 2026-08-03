@@ -591,6 +591,10 @@ export default function Page() {
                     ))}
                   </tbody>
                 </table>
+                {/* full interactive cards — this is where you vote & read/leave comments (the
+                    compact table above is a quick-glance schedule/result overview, not a
+                    substitute: it has no vote or comment affordance) */}
+                {g.matchups.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} />)}
               </div>
             ))}
           </div>

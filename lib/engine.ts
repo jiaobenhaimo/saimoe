@@ -109,13 +109,24 @@ export function getState(voterId: string) {
     }
     // once the group stage is over every match is decided, so all of them count
     const played = (m: Matchup) => m.decided || (isGroupPhase && (m.matchday ?? curMd) === curMd);
-    // scheduled start of each matchday (null when no pace is set). Anchored to the
-    // fixed group_started_at so past matchday dates don't drift as the phase advances.
+    // "Date" shown per matchday. Ground truth: the real moment each matchday actually
+    // opened, recorded in comp.group_matchday_starts the instant it happened (startGroups
+    // for day 1, advanceGroupMatchday for every day after). That value is written once and
+    // never recomputed, so it can't drift when pace changes later or when the admin
+    // advances early/late/manually. A matchday not yet reached has no recorded entry, so
+    // it's ESTIMATED by projecting forward from the latest known matchday using the
+    // CURRENT pace — which is correct, since an estimate for the future should track the
+    // latest pace setting (only history must stay fixed).
+    const gtStarts = (comp.group_matchday_starts || {}) as Record<number, number>;
+    const knownDays = Object.keys(gtStarts).map(Number).filter((n) => Number.isFinite(n));
+    const maxKnownDay = knownDays.length ? Math.max(...knownDays) : 0;
     const roundMs = (comp.group_round_days || 0) * 86400_000;
     const mdDate = (d: number): number | null => {
+      const known = gtStarts[d];
+      if (known != null) return known;
       if (!comp.group_round_days) return null;
-      if (comp.group_started_at != null) return comp.group_started_at + (d - 1) * roundMs;
-      if (comp.group_round_ends_at) return comp.group_round_ends_at - (curMd - d + 1) * roundMs; // 旧数据兜底
+      if (maxKnownDay > 0) return gtStarts[maxKnownDay] + (d - maxKnownDay) * roundMs;
+      if (comp.group_started_at != null) return comp.group_started_at + (d - 1) * roundMs; // legacy 兜底(迁移前的老数据)
       return null;
     };
     const groups = [...byGroup.entries()]
@@ -351,7 +362,8 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   comp.groups_count = numGroups;
   comp.advance_per_group = null; // 不再是固定「每组晋级 N」
   comp.ko_target = nextPow2(2 * numGroups); // ≤8 组→16,9-16 组→32,以此类推
-  comp.group_started_at = Date.now(); // 固定锚点,各比赛日的日期不随推进漂移
+  comp.group_started_at = Date.now(); // legacy 锚点,仅供旧数据兜底
+  comp.group_matchday_starts = { 1: comp.group_started_at }; // 事实来源:第 1 比赛日真实开始的时刻
   comp.nom_ends_at = null;
 
   // 比赛日排程:每组各自 circle method 生成轮次,再全局装箱成「每个比赛日 ≤ DAY_CAP 场」
@@ -386,7 +398,9 @@ export function advanceGroupMatchday(cid: number): { done: boolean; message: str
     if (m.competition_id === cid && m.stage === "group" && (m.matchday ?? 1) === cur) decide(m, counts, seedOf);
   if (cur < count) {
     comp.group_matchday = cur + 1;
-    comp.group_round_ends_at = comp.group_round_days ? Date.now() + comp.group_round_days * 86400_000 : null;
+    const now = Date.now();
+    comp.group_round_ends_at = comp.group_round_days ? now + comp.group_round_days * 86400_000 : null;
+    comp.group_matchday_starts = { ...(comp.group_matchday_starts || {}), [cur + 1]: now }; // 事实来源:真实开始的时刻
     writeDb(db);
     return { done: false, message: `已结算第 ${cur} 个比赛日，进入第 ${cur + 1}/${count} 个比赛日。` };
   }
@@ -626,7 +640,7 @@ export function undoLastTransition(cid: number): string {
     comp.phase = "nomination";
     comp.target_size = null; comp.groups_count = null; comp.advance_per_group = null;
     comp.group_ends_at = null;
-    comp.group_matchday = null; comp.group_matchday_count = null; comp.group_round_ends_at = null; comp.group_started_at = null;
+    comp.group_matchday = null; comp.group_matchday_count = null; comp.group_round_ends_at = null; comp.group_started_at = null; comp.group_matchday_starts = null;
     writeDb(db);
     return "已撤回：小组赛 → 回到提名阶段。";
   }
