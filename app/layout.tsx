@@ -2,7 +2,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Bangumi 世萌大会",
+  title: "Bangumi SML",
   description: "提名、小组赛、淘汰赛——决出你心中的最萌角色。",
 };
 

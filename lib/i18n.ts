@@ -9,7 +9,7 @@ export const LANGS: { code: Lang; label: string }[] = [
 
 type Entry = { zh: string; en: string; ja: string };
 const D: Record<string, Entry> = {
-  "title": { zh: "世萌大会", en: "Saimoe Cup", ja: "世萌大会" },
+  "title": { zh: "SML", en: "SML", ja: "SML" },
   "subtitle": {
     zh: "为你喜爱的角色提名助威，从提名池一路投到总决赛。提名阶段可支持任意多个角色（每个角色一票）；对战阶段每场一票，均可随时改投或撤回。",
     en: "Nominate and cheer for your favorite characters — from the nominee pool all the way to the grand final. In the nomination phase you can back any number of characters (one vote each); in the battle phase it's one vote per match, changeable or retractable anytime.",
@@ -22,7 +22,6 @@ const D: Record<string, Entry> = {
   "phase.nomination": { zh: "预选提名", en: "Nomination", ja: "予選推薦" },
   "phase.group": { zh: "小组赛", en: "Group Stage", ja: "予選リーグ" },
   "phase.knockout": { zh: "淘汰赛", en: "Knockout", ja: "決勝T" },
-  "phase.finished": { zh: "冠军", en: "Champion", ja: "優勝" },
 
   "vote.now.title": { zh: "现在投票", en: "Vote now", ja: "投票受付中" },
   "vote.now.progress": { zh: "本轮 · 已投 {x}/{n} 场", en: "This round · voted {x}/{n}", ja: "今ラウンド · 投票 {x}/{n}" },
@@ -84,15 +83,12 @@ const D: Record<string, Entry> = {
 
   "search.trysubject": { zh: "没搜到角色(或跨域受限)。试试下面的「搜作品名」导入,或手动添加。", en: "No character results (or blocked). Try \u201Csearch anime\u201D below, or add manually.", ja: "キャラが見つかりません。下の「作品名で検索」か手動追加をお試しください。" },
   "search.fail": { zh: "在线搜索失败（{err}），可手动添加。", en: "Online search failed ({err}); you can add manually.", ja: "オンライン検索に失敗（{err}）。手動追加できます。" },
-  "subject.fail": { zh: "作品搜索失败：{err}", en: "Anime search failed: {err}", ja: "作品検索に失敗：{err}" },
   "subject.neterr": { zh: "作品搜索网络错误。", en: "Anime search network error.", ja: "作品検索でネットワークエラー。" },
-  "net.err": { zh: "网络错误，可手动添加。", en: "Network error; add manually.", ja: "ネットワークエラー。手動追加できます。" },
   "import.progress": { zh: "正在导入《{name}》的角色…", en: "Importing characters from \u201C{name}\u201D…", ja: "『{name}』のキャラを取込中…" },
   "import.fail": { zh: "导入失败：{err}", en: "Import failed: {err}", ja: "取込に失敗：{err}" },
   "import.done": { zh: "《{name}》导入完成：新增 {added} / 共 {imported} 个角色", en: "\u201C{name}\u201D imported: {added} new / {imported} total", ja: "『{name}』取込完了：新規 {added} / 全 {imported} 体" },
 
   "group.title": { zh: "小组赛 · 循环对战", en: "Group Stage · round robin", ja: "予選リーグ · 総当たり" },
-  "group.advance": { zh: "每组前 {n} 名晋级", en: "Top {n} per group advance", ja: "各組上位{n}名が進出" },
   "group.wc": { zh: "各组前 2 名 + 最优第三名 → {n} 强", en: "Top 2 per group + best 3rd places → Top {n}", ja: "各組上位2名 + 最優秀3位 → ベスト{n}" },
   "group.matchday": { zh: "第 {d}/{n} 比赛日", en: "Matchday {d}/{n}", ja: "第{d}/{n}試合日" },
   "match.upcoming": { zh: "未开始（等待对应比赛日）", en: "Upcoming (waiting for its matchday)", ja: "未開始（試合日待ち）" },
@@ -114,7 +110,6 @@ const D: Record<string, Entry> = {
   "round.top": { zh: "{n} 强", en: "Top {n}", ja: "ベスト{n}" },
 
   "match.advance": { zh: "晋级", en: "Advance", ja: "進出" },
-  "match.vs": { zh: "VS", en: "VS", ja: "VS" },
   "match.rateNote": { zh: "赛中仅显示得票率，结算后公布票数", en: "Only vote share shown during the match; counts revealed after", ja: "試合中は得票率のみ、確定後に票数を公開" },
   "match.settled": { zh: "本场已结算 · 得票已公布", en: "Settled · counts revealed", ja: "確定 · 票数公開済" },
 

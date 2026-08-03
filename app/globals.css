@@ -127,7 +127,6 @@ a { color: var(--rose-deep); }
 .share { display: flex; height: 6px; }
 .share .a { background: var(--rose); }
 .share .b { background: var(--gold); }
-.decided-tag { font-size: 11px; color: var(--muted); padding: 6px 12px; text-align: center; border-top: 1px solid var(--line); }
 
 /* knockout rounds */
 .rounds { display: flex; gap: 16px; overflow-x: auto; padding-bottom: 8px; }
@@ -163,11 +162,6 @@ a { color: var(--rose-deep); }
 }
 
 /* ─────────── Wave 1 additions (avatars / import / skeleton / polish) ─────────── */
-
-/* import-a-whole-work box (mirrors searchbox) */
-.importbox { position: relative; display: flex; gap: 8px; margin: 10px 0 2px; }
-.importbox input { flex: 1; font-size: 15px; padding: 12px 14px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--surface-2); color: var(--ink); outline: none; }
-.importbox input:focus { border-color: var(--rose); box-shadow: 0 0 0 4px var(--rose-soft); }
 
 /* pool rank number */
 .rankn { width: 26px; text-align: center; color: var(--muted); font-weight: 800; flex: none; }
