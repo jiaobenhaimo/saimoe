@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
-import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline } from "@/lib/engine";
+import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline, setPace } from "@/lib/engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,6 +49,7 @@ export async function POST(req: NextRequest) {
     if (action === "advance") { advanceKnockout(comp.id); return NextResponse.json({ ok: true }); }
     if (action === "advance_group") { const r = advanceGroupMatchday(comp.id); return NextResponse.json({ ok: true, message: r.message, done: r.done }); }
     if (action === "set_deadline") { setPhaseDeadline(comp.id, Number(body.hours) || 0); return NextResponse.json({ ok: true, message: Number(body.hours) > 0 ? "已设定本阶段截止时间。" : "已清除本阶段截止时间。" }); }
+    if (action === "set_pace") { setPace(comp.id, Number(body.groupRoundDays) || 0, Number(body.roundHours) || 0); return NextResponse.json({ ok: true, message: "已更新后续赛程节奏。" }); }
     if (action === "reset") { deleteCompetition(comp.id); return NextResponse.json({ ok: true }); }
     if (action === "remove_candidate") {
       if (comp.phase !== "nomination") return NextResponse.json({ error: "仅在提名阶段可移除角色。" }, { status: 400 });

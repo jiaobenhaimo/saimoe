@@ -170,7 +170,7 @@ export default function Page() {
     const kw = q.trim(); if (!kw) return;
     setSearching(true); setSearchErr(""); setHits(null); setManual(false);
     try {
-      const r = await fetch("https://api.bgm.tv/v0/search/characters?limit=12", {
+      const r = await fetch("https://api.bgm.tv/v0/search/characters?limit=20", {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=UTF-8", Accept: "application/json" },
         body: JSON.stringify({ keyword: kw }),
@@ -178,7 +178,12 @@ export default function Page() {
       if (!r.ok) { setSearchErr(T("search.fail", { err: "HTTP " + r.status })); setHits([]); return; }
       const j = await r.json();
       const arr = Array.isArray(j?.data) ? j.data : Array.isArray(j?.list) ? j.list : [];
-      setHits(arr.map((c: any) => ({ bgmId: "c" + c.id, name: c.name || "", nameCn: "", image: c.images?.grid || c.images?.medium || "" })));
+      const seen = new Set<string>();
+      const items = arr
+        .map((c: any) => ({ bgmId: "c" + c.id, name: c.name || "", nameCn: "", image: c.images?.grid || c.images?.medium || "" }))
+        .filter((c: any) => c.name && !seen.has(c.bgmId) && (seen.add(c.bgmId), true));
+      setHits(items);
+      if (items.length === 0) setSearchErr(T("search.trysubject"));
     } catch { setSearchErr(T("search.fail", { err: "跨域被拦截,请改用搜作品或手动添加" })); setHits([]); }
     finally { setSearching(false); }
   };
@@ -188,12 +193,22 @@ export default function Page() {
     const kw = subQ.trim(); if (!kw) return;
     setSubSearching(true); setImportMsg(""); setSubHits(null);
     try {
-      const r = await fetch(`https://api.bgm.tv/search/subject/${encodeURIComponent(kw)}?type=2&responseGroup=large&max_results=12`, { headers: { Accept: "application/json" } });
+      const r = await fetch(`https://api.bgm.tv/search/subject/${encodeURIComponent(kw)}?type=2&responseGroup=large&max_results=20`, { headers: { Accept: "application/json" } });
       const ct = r.headers.get("content-type") || "";
       if (!r.ok || !ct.includes("json")) { setImportMsg(T("subject.neterr")); setSubHits([]); return; }
       const j = await r.json();
       const list = Array.isArray(j?.list) ? j.list : [];
-      setSubHits(list.map((x: any) => ({ subjectId: String(x.id), name: x.name || "", nameCn: x.name_cn || "", image: x.images?.grid || x.images?.common || "" })));
+      const lc = kw.toLowerCase();
+      const seen = new Set<string>();
+      const score = (x: any) => {
+        const n = String(x.name || "").toLowerCase(), cn = String(x.name_cn || "").toLowerCase();
+        return (n === lc || cn === lc ? 100 : 0) + (n.startsWith(lc) || cn.startsWith(lc) ? 20 : 0) + (n.includes(lc) || cn.includes(lc) ? 5 : 0) + (x.rank ? Math.max(0, 5 - Math.log10(x.rank + 1)) : 0);
+      };
+      const mapped = list
+        .filter((x: any) => x?.id && !seen.has(String(x.id)) && (seen.add(String(x.id)), true))
+        .sort((a: any, b: any) => score(b) - score(a))
+        .map((x: any) => ({ subjectId: String(x.id), name: x.name || "", nameCn: x.name_cn || "", image: x.images?.grid || x.images?.common || "", year: String(x.air_date || "").slice(0, 4) }));
+      setSubHits(mapped);
     } catch { setImportMsg(T("subject.neterr")); setSubHits([]); }
     finally { setSubSearching(false); }
   };
@@ -342,7 +357,7 @@ export default function Page() {
               {subHits.map((s) => (
                 <div className="rrow" key={s.subjectId}>
                   <Avatar c={{ id: 0, name: s.nameCn || s.name, nameCn: null, image: s.image }} />
-                  <div className="meta"><div className="nm">{s.nameCn || s.name}</div><div className="sub">{s.nameCn && s.nameCn !== s.name ? s.name + " · " : ""}{T("nom.subjectTag")} · #{s.subjectId}</div></div>
+                  <div className="meta"><div className="nm">{s.nameCn || s.name}</div><div className="sub">{s.nameCn && s.nameCn !== s.name ? s.name + " · " : ""}{T("nom.subjectTag")}{s.year ? " · " + s.year : ""} · #{s.subjectId}</div></div>
                   <button className="btn" onClick={() => importSubject(s.subjectId, s.nameCn || s.name)}>{T("nom.importAll")}</button>
                 </div>
               ))}
@@ -350,7 +365,7 @@ export default function Page() {
           )}
 
           {searchErr && <div className="hint" style={{ color: "var(--rose-deep)" }}>{searchErr}</div>}
-          {hits && (
+          {hits && hits.length > 0 && (
             <div className="results">
               {hits.length === 0 && <div className="rrow"><span className="hint">{T("nom.noChar")}</span></div>}
               {hits.map((h) => (
@@ -381,7 +396,7 @@ export default function Page() {
           {state.nomination.pool.length === 0 ? (
             <div className="empty">{T("nom.empty")}</div>
           ) : (
-            <div className="results">
+            <div className="results pool">
               {state.nomination.pool.map((p: PoolItem, i: number) => (
                 <div className="prow" key={p.id}>
                   <div className="rankn num">{i + 1}</div>
