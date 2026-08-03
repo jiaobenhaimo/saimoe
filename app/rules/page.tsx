@@ -18,12 +18,17 @@ function useLang(): [Lang, (l: Lang) => void] {
 
 export default function Rules() {
   const [lang, setLang] = useLang();
-  const T = (k: string) => t(lang, k);
+  const [comp, setComp] = useState<any>(null);
+  useEffect(() => {
+    fetch("/api/state", { cache: "no-store" }).then((r) => r.json()).then((d) => setComp(d?.competition ?? null)).catch(() => {});
+  }, []);
+  const T = (k: string, p?: Record<string, string | number>) => t(lang, k, p);
+  const name = comp?.shortName || T("title");
   return (
     <main className="wrap">
       <div className="langbar">{LANGS.map((L) => <button key={L.code} type="button" className={"lang" + (lang === L.code ? " on" : "")} onClick={() => setLang(L.code)}>{L.label}</button>)}</div>
       <h1 className="title" style={{ fontSize: 30 }}>{T("rules.title")}</h1>
-      <p className="subtitle">{T("rules.subtitle")}</p>
+      <p className="subtitle">{T("rules.subtitle", { name })}</p>
 
       <div className="card">
         <h3>{T("rules.s1.h")}</h3>

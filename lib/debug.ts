@@ -82,7 +82,7 @@ export function debugSimulate(o: { count?: number; groups?: number; advance?: nu
   log.push(`灌入提名票(约 ${count * 20} 张)`);
 
   startGroups(seeded.id, count, perRound, 0);
-  log.push(`开小组赛(世界杯式:约 ${Math.max(1, Math.floor(count / 4))} 个 4 人组)`);
+  log.push(`开小组赛(约 ${Math.max(1, Math.floor(count / 4))} 个 4 人组)`);
 
   let guard = 0;
   while (guard++ < 60) {
