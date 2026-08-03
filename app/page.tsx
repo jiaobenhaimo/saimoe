@@ -15,6 +15,8 @@ type Match = {
 
 // ── device fingerprint (sent as x-fp; dedups by device, not by public IP) ──
 let FP = "";
+// ── coarse device bucket (sent as x-db; NON-blocking metadata only, never dedups) ──
+let DB_BUCKET = "";
 async function sha256Hex(s: string): Promise<string> {
   try {
     const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -49,9 +51,28 @@ async function computeFp(): Promise<string> {
   try { localStorage.setItem("saimoe_fp", hash); } catch {}
   return hash;
 }
+// A deliberately COARSE, cross-browser-stable hash. Unlike the fingerprint it omits
+// userAgent / canvas / WebGL (those differ per browser on one device). It's reported
+// as vote metadata so an operator can later FLAG possible same-device multi-browser
+// voting — it is never used to block or de-duplicate a vote. Cross-browser one-vote
+// can't be strongly guaranteed client-side; that needs account login.
+async function computeDeviceBucket(): Promise<string> {
+  try { const c = localStorage.getItem("saimoe_db"); if (c) return c; } catch {}
+  const parts = [
+    screen.width + "x" + screen.height, screen.availWidth + "x" + screen.availHeight,
+    String(screen.colorDepth), Intl.DateTimeFormat().resolvedOptions().timeZone,
+    String(navigator.hardwareConcurrency || 0), String((navigator as any).deviceMemory || 0),
+    (navigator as any).platform || "", String(navigator.maxTouchPoints || 0),
+    String(window.devicePixelRatio || 0),
+  ];
+  const hash = await sha256Hex("db|" + parts.join("|"));
+  try { localStorage.setItem("saimoe_db", hash); } catch {}
+  return hash;
+}
 function api(path: string, opts: RequestInit = {}) {
   const headers = new Headers(opts.headers);
   if (FP) headers.set("x-fp", FP);
+  if (DB_BUCKET) headers.set("x-db", DB_BUCKET);
   return fetch(path, { ...opts, headers, cache: "no-store" });
 }
 
@@ -120,6 +141,7 @@ export default function Page() {
   const [state, setState] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState(false);
+  const [view, setView] = useState<string | null>(null); // which phase's section to show (null = follow current)
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<any[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -157,13 +179,34 @@ export default function Page() {
   }, []);
 
   useEffect(() => {
-    (async () => { FP = await computeFp(); await load(); })();
+    (async () => { FP = await computeFp(); DB_BUCKET = await computeDeviceBucket(); await load(); })();
   }, [load]);
 
   useEffect(() => {
     const t = setInterval(() => { load(); }, 60_000);
     return () => clearInterval(t);
   }, [load]);
+
+  // Instant cleanup of the user's own un-voted (0-vote) nominations when they leave.
+  // Uses a ref so the unload handler always sees the latest pool without re-binding.
+  const orphanRef = useRef(false);
+  useEffect(() => {
+    const pool: PoolItem[] = state?.nomination?.pool ?? [];
+    orphanRef.current = pool.some((p) => p.mine && p.votes === 0);
+  }, [state]);
+  useEffect(() => {
+    const onHide = (e: PageTransitionEvent) => {
+      if (e.persisted) return;          // bfcache: user is likely coming back → keep noms
+      if (!orphanRef.current) return;
+      try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (FP) headers["x-fp"] = FP;   // keepalive fetch preserves headers (sendBeacon can't)
+        fetch("/api/nominate", { method: "POST", keepalive: true, headers, body: JSON.stringify({ sweep: true }) });
+      } catch {}
+    };
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+  }, []);
 
   // 角色搜索:v0 只有 POST /v0/search/characters。把它发成 CORS「简单请求」(text/plain)绕过预检;
   // 能否成功取决于 Bangumi 是否给 POST 附跨域头,失败则回退手动添加。
@@ -287,6 +330,28 @@ export default function Page() {
 
   const phases: [string, string][] = [["nomination", T("phase.nomination")], ["group", T("phase.group")], ["knockout", T("phase.knockout")], ["finished", T("phase.finished")]];
 
+  // ── phase navigation: chips are buttons that switch which phase's results are shown ──
+  const champion = state?.knockout?.champion ?? null;
+  const hasView: Record<string, boolean> = {
+    nomination: !!comp,
+    group: !!state?.group,
+    knockout: !!(state?.playoff || (state?.knockout && state.knockout.rounds?.length)),
+    finished: !!champion,
+  };
+  // map the live phase onto one of the four chips (playoff rides under 淘汰赛)
+  const currentKey = phase === "playoff" ? "knockout" : phase;
+  const viewKey = (view && hasView[view]) ? view : currentKey;
+  const showKey = viewKey === "finished" ? "knockout" : viewKey; // 冠军 chip shows the knockout section (champion + bracket)
+  const viewingPast = viewKey !== currentKey;
+
+  // matches open for voting RIGHT NOW (drives the "现在投票" panel), for the current phase only
+  const openMatches: Match[] =
+    phase === "group" ? (state?.group?.groups ?? []).flatMap((g: any) => g.matchups).filter((m: Match) => m.live && !m.decided && m.a && m.b)
+    : phase === "playoff" ? (state?.playoff?.matchups ?? []).filter((m: Match) => m.live && !m.decided && m.a && m.b)
+    : phase === "knockout" ? (state?.knockout?.rounds ?? []).flatMap((r: any) => r.matchups).filter((m: Match) => !m.decided && m.a && m.b)
+    : [];
+  const openVoted = openMatches.filter((m) => m.myChoice != null).length;
+
   const deadline: number | null =
     phase === "nomination" ? comp?.nomEndsAt ?? null :
     phase === "group" ? comp?.groupRoundEndsAt ?? null :
@@ -304,7 +369,22 @@ export default function Page() {
       <h1 className="title">{comp?.title || T("title")}</h1>
       <p className="subtitle">{comp?.description || T("subtitle")}</p>
       <div className="phasebar">
-        {phases.map(([p, name]) => <span key={p} className={"chip" + (comp && p === phase ? " on" : "")}>{name}</span>)}
+        {phases.map(([p, name]) => {
+          const enabled = comp && hasView[p];
+          const isCurrent = comp && p === currentKey;
+          const isSel = comp && p === viewKey;
+          return (
+            <button
+              key={p}
+              type="button"
+              className={"chip" + (isCurrent ? " on" : "") + (isSel ? " sel" : "")}
+              disabled={!enabled}
+              aria-pressed={isSel}
+              title={enabled ? "" : T("view.locked")}
+              onClick={() => enabled && setView(p)}
+            >{name}{isCurrent ? " ●" : ""}</button>
+          );
+        })}
       </div>
       <div className="hint" style={{ marginTop: 6 }}><a href="/rules">{T("rulesLink")}</a></div>
 
@@ -313,6 +393,18 @@ export default function Page() {
           <span className="dl-label">{deadlineLabel}</span>
           <span className="dl-time">{fmtAbs(deadline, lang)}</span>
           <span className="dl-remain">{deadline > now ? T("dl.remain", { t: fmtRemain(deadline - now, lang) }) : T("dl.over")}</span>
+        </div>
+      )}
+
+      {!loading && comp && openMatches.length > 0 && (
+        <div className="votenow">
+          <div className="votenow-h">
+            <span className="votenow-title">🔴 {T("vote.now.title")}</span>
+            <span className="votenow-prog">{T("vote.now.progress", { x: openVoted, n: openMatches.length })}</span>
+          </div>
+          <div className="votenow-grid">
+            {openMatches.map((m) => <MatchCard key={"vn" + m.id} m={m} onVote={matchVote} lang={lang} compact />)}
+          </div>
         </div>
       )}
 
@@ -341,8 +433,8 @@ export default function Page() {
           <p>{T("nocomp.body")}</p></div>
       )}
 
-      {/* ── NOMINATION ── */}
-      {!loading && comp && phase === "nomination" && (
+      {/* ── NOMINATION (interactive; only during the live nomination phase) ── */}
+      {!loading && comp && showKey === "nomination" && phase === "nomination" && (
         <>
           <div className="sectlabel">{T("nom.section")}</div>
           <div className="searchbox">
@@ -417,9 +509,28 @@ export default function Page() {
         </>
       )}
 
-      {/* ── GROUP ── */}
-      {!loading && comp && phase === "group" && (
+      {/* ── NOMINATION RESULTS (read-only, after the phase has moved on) ── */}
+      {!loading && comp && showKey === "nomination" && phase !== "nomination" && state?.nominationRanking && (
         <>
+          <div className="viewback">{T("view.back")}</div>
+          <div className="sec"><h2>{T("nom.result.title")}</h2><div className="meta2"><b>{state.nominationRanking.length}</b> {T("nom.countSuffix")}</div></div>
+          <div className="results pool">
+            {state.nominationRanking.map((p: any, i: number) => (
+              <div className="prow" key={p.id}>
+                <div className="rankn num">{i + 1}</div>
+                <Avatar c={p} />
+                <div className="meta"><div className="nm">{label(p, lang)}</div><div className="sub">{sub(p, lang)}</div></div>
+                <div className="votecell num"><div className="c">{p.votes}</div><div className="l">{T("nom.voteLabel")}</div></div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* ── GROUP ── */}
+      {!loading && comp && showKey === "group" && state?.group && (
+        <>
+          {viewingPast && <div className="viewback">{T("view.back")}</div>}
           <div className="sec"><h2>{T("group.title")}</h2><div className="meta2">{comp.koTarget ? T("group.wc", { n: comp.koTarget }) : ""}</div></div>
           {state.group.matchdayCount > 1 && <div className="hint">{T("group.matchday", { d: state.group.matchday, n: state.group.matchdayCount })}</div>}
           <div className="groupwrap">
@@ -443,8 +554,8 @@ export default function Page() {
         </>
       )}
 
-      {/* ── THIRD-PLACE PLAYOFF ── */}
-      {!loading && comp && phase === "playoff" && state.playoff && (
+      {/* ── THIRD-PLACE PLAYOFF (shown within the 淘汰赛 view) ── */}
+      {!loading && comp && showKey === "knockout" && state?.playoff && (
         <>
           <div className="sec"><h2>{T("playoff.title")}</h2><div className="meta2">{T("playoff.desc", { n: state.playoff.slots })}</div></div>
           <div className="groupwrap">
@@ -466,8 +577,9 @@ export default function Page() {
       )}
 
       {/* ── KNOCKOUT / FINISHED ── */}
-      {!loading && comp && (phase === "knockout" || phase === "finished") && (
+      {!loading && comp && showKey === "knockout" && state?.knockout && (
         <>
+          {viewingPast && !state.knockout.champion && <div className="viewback">{T("view.back")}</div>}
           {state.knockout.champion && (
             <div className="champ">
               <div className="crown">👑</div>
@@ -506,12 +618,14 @@ export default function Page() {
   );
 }
 
-function MatchCard({ m, onVote, ko, lang }: { m: Match; onVote: (mid: number, cid: number) => void; ko?: boolean; lang: Lang }) {
+function MatchCard({ m, onVote, ko, lang, compact }: { m: Match; onVote: (mid: number, cid: number) => void; ko?: boolean; lang: Lang; compact?: boolean }) {
   const T = (k: string, p?: Record<string, string | number>) => t(lang, k, p);
   const revealed = m.decided;
   const pa = revealed && m.total ? ((m.votesA || 0) / m.total) * 100 : (m.rateA ?? 50);
   const live = m.live ?? true;
   const clickable = live && !m.decided && m.a && m.b;
+  const status: "live" | "upcoming" | "done" = m.decided ? "done" : (clickable ? "live" : "upcoming");
+  const pill = status === "live" ? T("vote.badge.live") : status === "done" ? T("vote.badge.done") : T("vote.badge.upcoming");
   const sideCls = (id: number | undefined) =>
     "side" + (m.myChoice === id ? " picked" : "") + (m.decided && m.winnerId === id ? " win" : "");
   // 赛中只显示得票率;结算后显示绝对票数
@@ -519,7 +633,8 @@ function MatchCard({ m, onVote, ko, lang }: { m: Match; onVote: (mid: number, ci
   const numB = revealed ? String(m.votesB ?? 0) : m.rateA == null ? "—" : `${100 - m.rateA}%`;
 
   return (
-    <div className={"match" + (ko ? " ko" : "")}>
+    <div className={"match match--" + status + (ko ? " ko" : "")}>
+      <div className={"mpill mpill--" + status}>{pill}</div>
       <div className="versus">
         <button type="button" className={sideCls(m.a?.id)} onClick={() => clickable && m.a && onVote(m.id, m.a.id)} disabled={!m.a}>
           <Avatar c={m.a} lg />
@@ -539,7 +654,7 @@ function MatchCard({ m, onVote, ko, lang }: { m: Match; onVote: (mid: number, ci
       <div className="match-foot">
         <span className="rate-note">{revealed ? T("match.settled") : live ? T("match.rateNote") : T("match.upcoming")}</span>
       </div>
-      {m.a && m.b && <Comments matchId={m.id} count={m.commentN} lang={lang} />}
+      {!compact && m.a && m.b && <Comments matchId={m.id} count={m.commentN} lang={lang} />}
     </div>
   );
 }

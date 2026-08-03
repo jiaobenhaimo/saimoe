@@ -29,6 +29,7 @@ export default function Rules() {
         <h3>{T("rules.s1.h")}</h3>
         <p className="rules-p">{T("rules.s1.p1")}</p>
         <p className="rules-p">{T("rules.s1.p2")}</p>
+        <p className="rules-p">{T("rules.s1.p3")}</p>
       </div>
 
       <div className="card">
@@ -45,6 +46,7 @@ export default function Rules() {
       <div className="card">
         <h3>{T("rules.s4.h")}</h3>
         <p className="rules-p">{T("rules.s4.p1")}</p>
+        <p className="rules-p">{T("rules.s4.p3")}</p>
         <p className="rules-p">{T("rules.s4.p2")}</p>
       </div>
 

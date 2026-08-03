@@ -33,7 +33,7 @@ export function debugNominate(votes = 200): { added: number } {
     const cand = cands[idx];
     const voter = `dbgn-${i}`;
     if (!db.nominationVotes.some((v) => v.competition_id === comp.id && v.candidate_id === cand.id && v.voter_id === voter)) {
-      db.nominationVotes.push({ competition_id: comp.id, candidate_id: cand.id, voter_id: voter });
+      db.nominationVotes.push({ competition_id: comp.id, candidate_id: cand.id, voter_id: voter, created_at: Date.now(), device_bucket: `dbg-bkt-${i % 5}`, ip: `10.0.1.${i % 8}` });
       added++;
     }
   }
@@ -63,7 +63,7 @@ export function debugVote(voters = 40): { matches: number; votes: number } {
       const pick = Math.random() < 0.5 ? m.a_id : m.b_id;
       const cur = db.matchVotes.find((x) => x.matchup_id === m.id && x.voter_id === voter);
       if (cur) cur.choice_id = pick;
-      else { db.matchVotes.push({ matchup_id: m.id, voter_id: voter, choice_id: pick }); votes++; }
+      else { db.matchVotes.push({ matchup_id: m.id, voter_id: voter, choice_id: pick, created_at: Date.now(), device_bucket: `dbg-bkt-${v % 5}`, ip: `10.0.0.${v % 8}` }); votes++; }
     }
   }
   writeDb(db);

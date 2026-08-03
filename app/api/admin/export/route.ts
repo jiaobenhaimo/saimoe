@@ -27,18 +27,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ exportedAt: new Date().toISOString(), ...state });
   }
 
-  // CSV:提名阶段给每个角色一行;对战阶段给每个参赛角色一行(标注晋级/淘汰)。
+  // Export the CURRENT phase's results. Order matters: the group block now persists into
+  // later phases (for the results-review UI), so check the most-advanced block first.
   const rows: string[][] = [];
-  if (state.nomination) {
-    rows.push(["阶段", "角色", "提名数"]);
-    for (const p of state.nomination.pool) rows.push(["提名", p.nameCn || p.name, String(p.votes)]);
-  } else if (state.group) {
-    rows.push(["阶段", "组", "名次", "角色", "胜", "得票"]);
-    for (const g of state.group.groups) {
-      g.standings.forEach((s: any, i: number) =>
-        rows.push(["小组赛", String.fromCharCode(65 + g.group), String(i + 1), s.nameCn || s.name, String(s.wins), String(s.votesFor)]));
-    }
-  } else if (state.knockout) {
+  if (state.knockout && state.knockout.rounds && state.knockout.rounds.length) {
     rows.push(["阶段", "轮", "轮名称", "角色", "结果"]);
     for (const r of state.knockout.rounds) {
       for (const m of r.matchups) {
@@ -49,6 +41,15 @@ export async function GET(req: NextRequest) {
         }
       }
     }
+  } else if (state.group) {
+    rows.push(["阶段", "组", "名次", "角色", "胜", "得票"]);
+    for (const g of state.group.groups) {
+      g.standings.forEach((s: any, i: number) =>
+        rows.push(["小组赛", String.fromCharCode(65 + g.group), String(i + 1), s.nameCn || s.name, String(s.wins), String(s.votesFor ?? "")]));
+    }
+  } else if (state.nomination) {
+    rows.push(["阶段", "角色", "提名数"]);
+    for (const p of state.nomination.pool) rows.push(["提名", p.nameCn || p.name, String(p.votes)]);
   }
 
   const csv = "\ufeff" + rows.map((r) => r.map(esc).join(",")).join("\n");

@@ -331,3 +331,47 @@ body { font-size: 15px; line-height: 1.6; }
 .subtitle { max-width: 62ch; }
 .meta .nm { font-size: 15.5px; }
 .sectlabel { margin-top: 28px; }
+
+/* ── phase-nav chips as buttons (current = ●/filled, selected = ring, locked = dim) ── */
+.phasebar .chip { cursor: pointer; font-family: inherit; line-height: 1; transition: background .15s, box-shadow .15s, color .15s, opacity .15s; }
+.phasebar .chip:disabled { cursor: default; opacity: .4; }
+.phasebar .chip.sel { box-shadow: 0 0 0 3px var(--rose-soft); border-color: var(--rose); color: var(--rose-deep); }
+.phasebar .chip.on.sel { color: #fff; }
+
+/* ── "现在投票" panel: the single obvious place to vote for the current round ── */
+.votenow { margin: 14px 0 6px; padding: 14px; border: 2px solid var(--rose); border-radius: 16px; background: var(--deadline-bg); box-shadow: var(--shadow); }
+.votenow-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.votenow-title { font-weight: 800; font-size: 15px; color: var(--rose-deep); letter-spacing: .02em; }
+.votenow-prog { font-size: 13px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+.votenow-grid { display: grid; gap: 12px; }
+.votenow-grid .match { margin-top: 0; }
+@media (min-width: 720px) { .votenow-grid { grid-template-columns: 1fr 1fr; } }
+
+/* ── per-match status pill + live/upcoming/done emphasis ── */
+.match { position: relative; }
+.mpill { position: absolute; top: 8px; right: 8px; z-index: 2; font-size: 10px; font-weight: 800; letter-spacing: .04em; padding: 3px 8px; border-radius: 999px; pointer-events: none; }
+.mpill--live { background: var(--rose); color: #fff; }
+.mpill--upcoming { background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+.mpill--done { background: var(--win-bg); color: var(--bronze); border: 1px solid var(--line); }
+.match--live { border-color: var(--rose); box-shadow: 0 0 0 1px var(--rose) inset; }
+.match--upcoming { opacity: .6; }
+
+/* ── "you're looking at a past phase" banner ── */
+.viewback { margin: 22px 2px 0; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); border: 1px dashed var(--line); color: var(--muted); font-size: 12px; font-weight: 700; }
+
+/* ── admin: anomaly dashboard / audit log / timeline ── */
+.flagtag { flex: none; align-self: center; font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 8px; color: #fff; }
+.flag-device { background: var(--rose-deep); }
+.flag-ip { background: var(--bronze); }
+.flag-burst { background: #b4432e; }
+.flag-coverage { background: #7a5cc0; }
+.timeline { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.timeline li { display: flex; gap: 10px; align-items: baseline; font-size: 13px; padding: 6px 8px; border-left: 2px solid var(--line); }
+.timeline .tl-at { flex: none; width: 108px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.timeline .tl-label { font-weight: 700; color: var(--ink); }
+.timeline .tl-note { color: var(--muted); font-size: 12px; }
+.audit { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; max-height: 340px; overflow: auto; }
+.audit li { display: flex; gap: 10px; align-items: baseline; font-size: 12.5px; padding: 5px 6px; border-bottom: 1px solid var(--line); }
+.audit .au-ts { flex: none; width: 92px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.audit .au-sum { flex: 1; color: var(--ink); }
+.audit .au-phase { flex: none; font-size: 11px; font-weight: 700; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
