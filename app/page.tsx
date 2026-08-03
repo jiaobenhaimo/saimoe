@@ -428,7 +428,7 @@ export default function Page() {
         <div className="card pickboard">
           <div className="pickboard-h">
             <span className="pickboard-title">🏆 {T("pick.title")}</span>
-            <span className="pickboard-mine">{state.pick.me.total > 0 ? T("pick.myStats", { r: state.pick.me.rank, p: state.pick.me.points, c: state.pick.me.correct, t: state.pick.me.total }) : T("pick.myNone")}</span>
+            <span className="pickboard-mine">{state.pick.me.total > 0 ? T("pick.myStats", { r: state.pick.me.rank, p: state.pick.me.points, c: state.pick.me.correct, t: state.pick.me.total }) : state.pick.me.made > 0 ? T("pick.myPending", { n: state.pick.me.made }) : T("pick.myNone")}</span>
           </div>
           <div className="hint">{T("pick.hint")}</div>
           <div className="pick-name-row">

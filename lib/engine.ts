@@ -182,7 +182,7 @@ export function getState(voterId: string) {
     const myRank = 1 + rows.filter((r) => r.points > myPoints).length;
     result.pick = {
       top: rows.slice(0, 20),
-      me: { name: pickNameOf(voterId, db), points: myPoints, correct: myCorrect, total: myTotal, rank: myRank },
+      me: { name: pickNameOf(voterId, db), points: myPoints, correct: myCorrect, total: myTotal, rank: myRank, made: myPicks.length },
       openCount: ms.filter((m) => !m.decided).length,
     };
   }
