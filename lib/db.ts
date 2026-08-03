@@ -30,11 +30,12 @@ export interface Competition {
   // ── group stage matchdays (round-robin split into rounds) ──
   group_matchday: number | null; group_matchday_count: number | null;
   group_per_round: number | null; group_round_days: number | null; group_round_ends_at: number | null;
+  ko_target: number | null;
 }
 export interface Candidate {
   id: number; competition_id: number; bgm_id: string; name: string; name_cn: string | null;
   image: string | null; group_no: number | null; seed: number | null; eliminated: boolean;
-  subject_name: string | null; added_by: string | null;
+  subject_name: string | null; added_by: string | null; name_en: string | null;
 }
 export interface Matchup {
   id: number; competition_id: number; stage: "group" | "knockout"; round_no: number;
@@ -130,7 +131,7 @@ export function ensureSchema(): void {
 export function createCompetition(title: string): number {
   const db = readDb();
   const id = ++db.seq.competition;
-  db.competitions.push({ id, title, description: null, phase: "nomination", target_size: null, groups_count: null, advance_per_group: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, auto_groups: null, auto_advance: null, group_hours: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null });
+  db.competitions.push({ id, title, description: null, phase: "nomination", target_size: null, groups_count: null, advance_per_group: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, auto_groups: null, auto_advance: null, group_hours: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, ko_target: null });
   writeDb(db);
   return id;
 }
@@ -149,11 +150,11 @@ export function deleteCompetition(cid: number): void {
 }
 
 /** Insert a candidate; returns false if (competition, bgm_id) already exists. */
-export function addCandidate(cid: number, bgmId: string, name: string, nameCn: string, image: string, subjectName = "", addedBy = ""): boolean {
+export function addCandidate(cid: number, bgmId: string, name: string, nameCn: string, image: string, subjectName = "", addedBy = "", nameEn = ""): boolean {
   const db = readDb();
   if (db.candidates.some((c) => c.competition_id === cid && c.bgm_id === bgmId)) return false;
   const id = ++db.seq.candidate;
-  db.candidates.push({ id, competition_id: cid, bgm_id: bgmId, name, name_cn: nameCn || null, image: image || null, group_no: null, seed: null, eliminated: false, subject_name: subjectName || null, added_by: addedBy || null });
+  db.candidates.push({ id, competition_id: cid, bgm_id: bgmId, name, name_cn: nameCn || null, image: image || null, group_no: null, seed: null, eliminated: false, subject_name: subjectName || null, added_by: addedBy || null, name_en: nameEn || null });
   writeDb(db);
   return true;
 }

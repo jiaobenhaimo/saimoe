@@ -72,7 +72,7 @@ export function debugVote(voters = 40): { matches: number; votes: number } {
 
 /** One click: seed → nominate → group (all matchdays) → knockout → champion. */
 export function debugSimulate(o: { count?: number; groups?: number; advance?: number; perRound?: number; voters?: number } = {}): { log: string[] } {
-  const count = o.count ?? 8, groups = o.groups ?? 2, advance = o.advance ?? 2;
+  const count = o.count ?? 8;
   const perRound = o.perRound ?? 0, voters = o.voters ?? 30;
   const log: string[] = [];
 
@@ -81,8 +81,8 @@ export function debugSimulate(o: { count?: number; groups?: number; advance?: nu
   debugNominate(count * 20);
   log.push(`灌入提名票(约 ${count * 20} 张)`);
 
-  startGroups(seeded.id, count, groups, advance, perRound, 0);
-  log.push(`开小组赛:${groups} 组,每组晋级 ${advance}`);
+  startGroups(seeded.id, count, perRound, 0);
+  log.push(`开小组赛(世界杯式:约 ${Math.max(1, Math.floor(count / 4))} 个 4 人组)`);
 
   let guard = 0;
   while (guard++ < 60) {
