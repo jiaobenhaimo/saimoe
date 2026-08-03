@@ -1,13 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { t, roundLabelT, LANGS, type Lang } from "@/lib/i18n";
 
 type Slim = { id: number; name: string; nameCn: string | null; image: string | null };
 type PoolItem = Slim & { votes: number; voted: boolean };
 type Match = {
   id: number; stage: string; round: number; group: number | null; slot: number;
-  a: Slim | null; b: Slim | null; votesA: number; votesB: number;
-  winnerId: number | null; decided: boolean; myChoice: number | null;
+  a: Slim | null; b: Slim | null;
+  votesA: number | null; votesB: number | null; total: number | null; rateA: number | null;
+  winnerId: number | null; decided: boolean; myChoice: number | null; commentN: number;
+  live?: boolean; matchday?: number;
 };
 
 // ── device fingerprint (sent as x-fp; dedups by device, not by public IP) ──
@@ -75,20 +78,36 @@ function Avatar({ c, lg }: { c: Slim | null; lg?: boolean }) {
 const label = (c: Slim | null) => (c ? (c.nameCn || c.name) : "—");
 const sub = (c: Slim | null) => (c && c.nameCn && c.nameCn !== c.name ? c.name : "");
 
-function fmtRemain(ms: number): string {
-  if (ms <= 0) return "0 分";
+function fmtRemain(ms: number, lang: Lang): string {
+  const U = (k: string) => t(lang, k);
+  if (ms <= 0) return "0" + U("unit.min");
   const d = Math.floor(ms / 86400000);
   const h = Math.floor((ms % 86400000) / 3600000);
   const m = Math.floor((ms % 3600000) / 60000);
   const s = Math.floor((ms % 60000) / 1000);
-  if (d > 0) return `${d} 天 ${h} 小时 ${m} 分`;
-  if (h > 0) return `${h} 小时 ${m} 分 ${s} 秒`;
-  return `${m} 分 ${s} 秒`;
+  if (d > 0) return `${d}${U("unit.day")} ${h}${U("unit.hour")} ${m}${U("unit.min")}`;
+  if (h > 0) return `${h}${U("unit.hour")} ${m}${U("unit.min")} ${s}${U("unit.sec")}`;
+  return `${m}${U("unit.min")} ${s}${U("unit.sec")}`;
 }
-function fmtAbs(ms: number): string {
+function fmtAbs(ms: number, lang: Lang): string {
+  const loc = lang === "en" ? "en-US" : lang === "ja" ? "ja-JP" : "zh-CN";
   try {
-    return new Date(ms).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    return new Date(ms).toLocaleString(loc, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   } catch { return ""; }
+}
+
+function useLang(): [Lang, (l: Lang) => void] {
+  const [lang, setLang] = useState<Lang>("zh");
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("saimoe_lang") as Lang | null;
+      if (saved === "zh" || saved === "en" || saved === "ja") { setLang(saved); return; }
+      const n = (navigator.language || "").toLowerCase();
+      setLang(n.startsWith("ja") ? "ja" : n.startsWith("zh") ? "zh" : "en");
+    } catch {}
+  }, []);
+  const set = (l: Lang) => { setLang(l); try { localStorage.setItem("saimoe_lang", l); } catch {} };
+  return [lang, set];
 }
 
 export default function Page() {
@@ -108,6 +127,10 @@ export default function Page() {
   const [importMsg, setImportMsg] = useState("");
   const busyRef = useRef(false);
   const [now, setNow] = useState(() => Date.now());
+  const [sel, setSel] = useState<number | null>(null);
+  const [nomErr, setNomErr] = useState("");
+  const [lang, setLang] = useLang();
+  const T = (k: string, p?: Record<string, string | number>) => t(lang, k, p);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -142,9 +165,9 @@ export default function Page() {
     try {
       const r = await api(`/api/bangumi/search?q=${encodeURIComponent(kw)}`);
       const j = await r.json();
-      if (j.error) { setSearchErr(`在线搜索失败（${j.error}），可手动添加。`); setManual(true); setMName(kw); setHits(null); }
+      if (j.error) { setSearchErr(T("search.fail", { err: j.error })); setManual(true); setMName(kw); setHits(null); }
       else setHits(j.hits || []);
-    } catch { setSearchErr("网络错误，可手动添加。"); setManual(true); setMName(kw); setHits(null); }
+    } catch { setSearchErr(T("net.err")); setManual(true); setMName(kw); setHits(null); }
     finally { setSearching(false); }
   };
 
@@ -154,9 +177,9 @@ export default function Page() {
     try {
       const r = await api(`/api/bangumi/subjects?q=${encodeURIComponent(kw)}`);
       const j = await r.json();
-      if (j.error) setImportMsg(`作品搜索失败：${j.error}`);
+      if (j.error) setImportMsg(T("subject.fail", { err: j.error }));
       setSubHits(j.hits || []);
-    } catch { setImportMsg("作品搜索网络错误。"); }
+    } catch { setImportMsg(T("subject.neterr")); }
     finally { setSubSearching(false); }
   };
 
@@ -175,14 +198,17 @@ export default function Page() {
     setMName(""); setMImg(""); setManual(false); setHits(null); await load();
   };
   const importSubject = async (subjectId: string, name: string) => {
-    setImportMsg(`正在导入《${name}》的角色…`);
+    setImportMsg(T("import.progress", { name }));
     const j = await post({ subject: subjectId });
-    setImportMsg(j?.error ? `导入失败：${j.error}` : `《${name}》导入完成：新增 ${j?.added ?? 0} / 共 ${j?.imported ?? 0} 个角色`);
+    setImportMsg(j?.error ? T("import.fail", { err: j.error }) : T("import.done", { name, added: j?.added ?? 0, imported: j?.imported ?? 0 }));
     await load();
   };
 
   const nomVote = async (candidateId: number) => {
-    await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "nominate", candidateId }) });
+    setNomErr("");
+    const r = await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "nominate", candidateId }) });
+    const j = await r.json().catch(() => ({}));
+    if (j?.error) setNomErr(j.error);
     await load();
   };
   const matchVote = async (matchupId: number, choiceId: number) => {
@@ -193,29 +219,33 @@ export default function Page() {
   const comp = state?.competition;
   const phase: string = comp?.phase ?? "nomination";
 
-  const phases = [["nomination", "预选提名"], ["group", "小组赛"], ["knockout", "淘汰赛"], ["finished", "冠军"]] as const;
+  const phases: [string, string][] = [["nomination", T("phase.nomination")], ["group", T("phase.group")], ["knockout", T("phase.knockout")], ["finished", T("phase.finished")]];
 
   const deadline: number | null =
     phase === "nomination" ? comp?.nomEndsAt ?? null :
-    phase === "group" ? comp?.groupEndsAt ?? null :
+    phase === "group" ? comp?.groupRoundEndsAt ?? null :
     phase === "knockout" ? comp?.koRoundEndsAt ?? null : null;
   const deadlineLabel =
-    phase === "nomination" ? "提名截止" : phase === "group" ? "小组赛截止" : phase === "knockout" ? "本轮截止" : "";
+    phase === "nomination" ? T("dl.nomination") : phase === "group" ? T("dl.group") : phase === "knockout" ? T("dl.knockout") : "";
+
+  const koRounds: any[] = state?.knockout?.rounds || [];
+  const selMatch: Match | null = sel != null ? (koRounds.flatMap((r: any) => r.matchups).find((m: Match) => m.id === sel) || null) : null;
 
   return (
     <main className="wrap">
-      <h1 className="title">{comp?.title || "世萌大会"}</h1>
-      <p className="subtitle">{comp?.description || "为你喜爱的角色提名助威，从提名池一路投到总决赛。提名阶段可支持任意多个角色（每个角色一票）；对战阶段每场一票，均可随时改投或撤回。"}</p>
+      <div className="langbar">{LANGS.map((L) => <button key={L.code} type="button" className={"lang" + (lang === L.code ? " on" : "")} onClick={() => setLang(L.code)}>{L.label}</button>)}</div>
+      <h1 className="title">{comp?.title || T("title")}</h1>
+      <p className="subtitle">{comp?.description || T("subtitle")}</p>
       <div className="phasebar">
         {phases.map(([p, name]) => <span key={p} className={"chip" + (comp && p === phase ? " on" : "")}>{name}</span>)}
       </div>
-      <div className="hint" style={{ marginTop: 6 }}><a href="/rules">赛制介绍 →</a></div>
+      <div className="hint" style={{ marginTop: 6 }}><a href="/rules">{T("rulesLink")}</a></div>
 
       {!loading && comp && deadline && phase !== "finished" && (
         <div className="deadline">
           <span className="dl-label">{deadlineLabel}</span>
-          <span className="dl-time">{fmtAbs(deadline)}</span>
-          <span className="dl-remain">{deadline > now ? "剩 " + fmtRemain(deadline - now) : "已到时，正在处理…"}</span>
+          <span className="dl-time">{fmtAbs(deadline, lang)}</span>
+          <span className="dl-remain">{deadline > now ? T("dl.remain", { t: fmtRemain(deadline - now, lang) }) : T("dl.over")}</span>
         </div>
       )}
 
@@ -227,47 +257,47 @@ export default function Page() {
 
       {!loading && loadErr && (
         <div className="empty"><div className="big">📡</div>
-          <p style={{ color: "var(--ink)", fontWeight: 700 }}>网络错误，无法加载赛况</p>
-          <p>请检查云托管服务的网络配置，或稍后重试。</p>
-          <button className="btn solid" onClick={load}>重试</button></div>
+          <p style={{ color: "var(--ink)", fontWeight: 700 }}>{T("err.load.title")}</p>
+          <p>{T("err.load.body")}</p>
+          <button className="btn solid" onClick={load}>{T("common.retry")}</button></div>
       )}
 
       {!loading && !loadErr && state?.disabled && (
         <div className="empty"><div className="big">🚧</div>
-          <p style={{ color: "var(--ink)", fontWeight: 700 }}>服务暂未开放</p>
-          <p>API 当前已禁用。请管理员设置环境变量 <code>API_ENABLED=true</code> 后重新部署。</p></div>
+          <p style={{ color: "var(--ink)", fontWeight: 700 }}>{T("disabled.title")}</p>
+          <p>{T("disabled.body")}</p></div>
       )}
 
       {!loading && !state?.disabled && !comp && (
         <div className="empty"><div className="big">🎬</div>
-          <p style={{ color: "var(--ink)", fontWeight: 700 }}>比赛还没开始</p>
-          <p>比赛尚未开始，敬请期待。</p></div>
+          <p style={{ color: "var(--ink)", fontWeight: 700 }}>{T("nocomp.title")}</p>
+          <p>{T("nocomp.body")}</p></div>
       )}
 
       {/* ── NOMINATION ── */}
       {!loading && comp && phase === "nomination" && (
         <>
-          <div className="sectlabel">提名角色</div>
+          <div className="sectlabel">{T("nom.section")}</div>
           <div className="searchbox">
-            <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder="输入角色名，提名单个角色" />
-            <button onClick={search} disabled={searching || !q.trim()}>{searching ? "搜索中" : "搜角色"}</button>
+            <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder={T("nom.ph.char")} />
+            <button onClick={search} disabled={searching || !q.trim()}>{searching ? T("common.searching") : T("nom.searchChar")}</button>
           </div>
           <div className="searchbox">
-            <input value={subQ} onChange={(e) => setSubQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && searchSubjects()} placeholder="输入作品名，批量导入其全部角色" />
-            <button onClick={searchSubjects} disabled={subSearching || !subQ.trim()}>{subSearching ? "搜索中" : "搜作品"}</button>
+            <input value={subQ} onChange={(e) => setSubQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && searchSubjects()} placeholder={T("nom.ph.subject")} />
+            <button onClick={searchSubjects} disabled={subSearching || !subQ.trim()}>{subSearching ? T("common.searching") : T("nom.searchSubject")}</button>
           </div>
           {importMsg && <div className="hint">{importMsg}</div>}
-          <div className="hint">没有找到？<a onClick={() => { setManual(true); setHits(null); }}>手动添加角色</a></div>
+          <div className="hint">{T("nom.notFoundQ")}<a onClick={() => { setManual(true); setHits(null); }}>{T("nom.manualAdd")}</a></div>
           {searchErr && <div className="hint" style={{ color: "var(--rose-deep)" }}>{searchErr}</div>}
 
           {subHits && (
             <div className="results">
-              {subHits.length === 0 && <div className="rrow"><span className="hint">没搜到作品，换个关键词。</span></div>}
+              {subHits.length === 0 && <div className="rrow"><span className="hint">{T("nom.noSubject")}</span></div>}
               {subHits.map((s) => (
                 <div className="rrow" key={s.subjectId}>
                   <Avatar c={{ id: 0, name: s.nameCn || s.name, nameCn: null, image: s.image }} />
-                  <div className="meta"><div className="nm">{s.nameCn || s.name}</div><div className="sub">{s.nameCn && s.nameCn !== s.name ? s.name + " · " : ""}作品 · #{s.subjectId}</div></div>
-                  <button className="btn" onClick={() => importSubject(s.subjectId, s.nameCn || s.name)}>导入全体角色</button>
+                  <div className="meta"><div className="nm">{s.nameCn || s.name}</div><div className="sub">{s.nameCn && s.nameCn !== s.name ? s.name + " · " : ""}{T("nom.subjectTag")} · #{s.subjectId}</div></div>
+                  <button className="btn" onClick={() => importSubject(s.subjectId, s.nameCn || s.name)}>{T("nom.importAll")}</button>
                 </div>
               ))}
             </div>
@@ -275,12 +305,12 @@ export default function Page() {
 
           {hits && (
             <div className="results">
-              {hits.length === 0 && <div className="rrow"><span className="hint">没搜到角色，换个词或手动添加。</span></div>}
+              {hits.length === 0 && <div className="rrow"><span className="hint">{T("nom.noChar")}</span></div>}
               {hits.map((h) => (
                 <div className="rrow" key={h.bgmId}>
                   <Avatar c={{ id: 0, name: h.name, nameCn: null, image: h.image }} />
-                  <div className="meta"><div className="nm">{h.name}</div><div className="sub">角色 · #{h.bgmId}</div></div>
-                  <button className="btn" onClick={() => nominate(h.bgmId)}>＋ 提名</button>
+                  <div className="meta"><div className="nm">{h.name}</div><div className="sub">{T("nom.charTag")} · #{h.bgmId}</div></div>
+                  <button className="btn" onClick={() => nominate(h.bgmId)}>{T("nom.plus")}</button>
                 </div>
               ))}
             </div>
@@ -288,16 +318,21 @@ export default function Page() {
 
           {manual && (
             <div className="card" style={{ marginTop: 14 }}>
-              <h3>手动添加角色</h3>
-              <div className="field"><label>角色名（必填）</label><input value={mName} onChange={(e) => setMName(e.target.value)} /></div>
-              <div className="field"><label>图片链接（可选）</label><input value={mImg} onChange={(e) => setMImg(e.target.value)} /></div>
-              <button className="btn solid" onClick={nominateManual} disabled={!mName.trim()}>加入提名池</button>
+              <h3>{T("nom.manualTitle")}</h3>
+              <div className="field"><label>{T("nom.nameRequired")}</label><input value={mName} onChange={(e) => setMName(e.target.value)} /></div>
+              <div className="field"><label>{T("nom.imgOptional")}</label><input value={mImg} onChange={(e) => setMImg(e.target.value)} /></div>
+              <button className="btn solid" onClick={nominateManual} disabled={!mName.trim()}>{T("nom.addToPool")}</button>
             </div>
           )}
 
-          <div className="sec"><h2>提名池 · 人气预选</h2><div className="meta2"><b>{state.nomination.pool.length}</b> 个角色</div></div>
+          <div className="sec"><h2>{T("nom.poolTitle")}</h2><div className="meta2"><b>{state.nomination.pool.length}</b> {T("nom.countSuffix")}</div></div>
+          <div className="hint">
+            {state.nomination.userLimit > 0 ? T("nom.limitOn", { n: state.nomination.userLimit, x: state.nomination.myCount }) : T("nom.limitOff")}
+            {state.nomination.minVotes > 0 ? T("nom.minVotes", { n: state.nomination.minVotes }) : ""}
+          </div>
+          {nomErr && <div className="hint" style={{ color: "var(--rose-deep)" }}>{nomErr}</div>}
           {state.nomination.pool.length === 0 ? (
-            <div className="empty">还没有提名，添加一个角色开个头吧。</div>
+            <div className="empty">{T("nom.empty")}</div>
           ) : (
             <div className="results">
               {state.nomination.pool.map((p: PoolItem, i: number) => (
@@ -305,8 +340,8 @@ export default function Page() {
                   <div className="rankn num">{i + 1}</div>
                   <Avatar c={p} />
                   <div className="meta"><div className="nm">{label(p)}</div><div className="sub">{sub(p)}</div></div>
-                  <div className="votecell num"><div className="c">{p.votes}</div><div className="l">提名</div></div>
-                  <button className={"btn" + (p.voted ? " solid" : "")} onClick={() => nomVote(p.id)}>{p.voted ? "已投" : "投一票"}</button>
+                  <div className="votecell num"><div className="c">{p.votes}</div><div className="l">{T("nom.voteLabel")}</div></div>
+                  <button className={"btn" + (p.voted ? " solid" : "")} onClick={() => nomVote(p.id)}>{p.voted ? T("nom.voted") : T("nom.vote")}</button>
                 </div>
               ))}
             </div>
@@ -317,22 +352,23 @@ export default function Page() {
       {/* ── GROUP ── */}
       {!loading && comp && phase === "group" && (
         <>
-          <div className="sec"><h2>小组赛 · 循环对战</h2><div className="meta2">每组前 <b>{comp.advancePerGroup}</b> 名晋级</div></div>
+          <div className="sec"><h2>{T("group.title")}</h2><div className="meta2">{T("group.advance", { n: comp.advancePerGroup })}</div></div>
+          {state.group.matchdayCount > 1 && <div className="hint">{T("group.matchday", { d: state.group.matchday, n: state.group.matchdayCount })}</div>}
           <div className="groupwrap">
             {state.group.groups.map((g: any) => (
               <div className="group" key={g.group}>
-                <h3>{String.fromCharCode(65 + g.group)} 组</h3>
+                <h3>{T("group.letter", { L: String.fromCharCode(65 + g.group) })}</h3>
                 <table className="stand">
-                  <thead><tr><th>#</th><th>角色</th><th style={{ textAlign: "right" }}>胜</th><th style={{ textAlign: "right" }}>得票</th></tr></thead>
+                  <thead><tr><th>{T("th.rank")}</th><th>{T("th.char")}</th><th style={{ textAlign: "right" }}>{T("th.win")}</th><th style={{ textAlign: "right" }}>{T("th.votes")}</th></tr></thead>
                   <tbody>
                     {g.standings.map((s: any, i: number) => (
                       <tr key={s.id} className={i < comp.advancePerGroup ? "adv" : ""}>
-                        <td>{i + 1}</td><td>{label(s)}</td><td className="n num">{s.wins}</td><td className="n num">{s.votesFor}</td>
+                        <td>{i + 1}</td><td>{label(s)}</td><td className="n num">{s.wins}</td><td className="n num">{s.votesFor ?? "—"}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                {g.matchups.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} />)}
+                {g.matchups.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} />)}
               </div>
             ))}
           </div>
@@ -347,54 +383,145 @@ export default function Page() {
               <div className="crown">👑</div>
               <div className="who">{label(state.knockout.champion)}</div>
               {sub(state.knockout.champion) && <div className="cn">{sub(state.knockout.champion)}</div>}
-              <div className="champ-tag">本届世萌总冠军</div>
+              <div className="champ-tag">{T("champ.tag")}</div>
             </div>
           )}
-          <div className="sec"><h2>淘汰赛 · 单败晋级</h2><div className="meta2">点角色投票 · 一场一票</div></div>
-          <div className="rounds">
+          <div className="sec"><h2>{T("ko.title")}</h2><div className="meta2">{T("ko.hint")}</div></div>
+          <div className="bracket">
             {state.knockout.rounds.map((r: any) => (
-              <div className="round" key={r.round}>
-                <h3>{r.label}</h3>
-                {r.matchups.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} ko />)}
+              <div className="bcol" key={r.round}>
+                <div className="bcol-h">{roundLabelT(lang, r.label)}</div>
+                <div className="bcol-cells">
+                  {r.matchups.map((m: Match) => (
+                    <BracketCell key={m.id} m={m} active={sel === m.id} onOpen={() => setSel(sel === m.id ? null : m.id)} />
+                  ))}
+                </div>
               </div>
             ))}
           </div>
+          {selMatch && (
+            <div className="bracket-detail">
+              <div className="sectlabel">{T("ko.detail")}</div>
+              <MatchCard m={selMatch} onVote={matchVote} ko lang={lang} />
+            </div>
+          )}
         </>
       )}
 
       <div className="foot">
-        数据来自 Bangumi<br />
-        <a href="/rules">赛制介绍</a>
+        {T("dataFrom")}<br />
+        <a href="/rules">{T("rules")}</a>
       </div>
     </main>
   );
 }
 
-function MatchCard({ m, onVote, ko }: { m: Match; onVote: (mid: number, cid: number) => void; ko?: boolean }) {
-  const total = m.votesA + m.votesB;
-  const pa = total ? (m.votesA / total) * 100 : 50;
-  const clickable = !m.decided && m.a && m.b;
+function MatchCard({ m, onVote, ko, lang }: { m: Match; onVote: (mid: number, cid: number) => void; ko?: boolean; lang: Lang }) {
+  const T = (k: string, p?: Record<string, string | number>) => t(lang, k, p);
+  const revealed = m.decided;
+  const pa = revealed && m.total ? ((m.votesA || 0) / m.total) * 100 : (m.rateA ?? 50);
+  const live = m.live ?? true;
+  const clickable = live && !m.decided && m.a && m.b;
   const sideCls = (id: number | undefined) =>
     "side" + (m.myChoice === id ? " picked" : "") + (m.decided && m.winnerId === id ? " win" : "");
+  // 赛中只显示得票率;结算后显示绝对票数
+  const numA = revealed ? String(m.votesA ?? 0) : m.rateA == null ? "—" : `${m.rateA}%`;
+  const numB = revealed ? String(m.votesB ?? 0) : m.rateA == null ? "—" : `${100 - m.rateA}%`;
+
   return (
     <div className={"match" + (ko ? " ko" : "")}>
       <div className="versus">
         <button type="button" className={sideCls(m.a?.id)} onClick={() => clickable && m.a && onVote(m.id, m.a.id)} disabled={!m.a}>
           <Avatar c={m.a} lg />
           <span className="nm">{label(m.a)}</span>{sub(m.a) && <span className="cn">{sub(m.a)}</span>}
-          <span className="v num">{m.votesA}</span>
-          {m.decided && m.winnerId === m.a?.id && <span className="adv-tag">晋级</span>}
+          <span className="v num">{numA}</span>
+          {m.decided && m.winnerId === m.a?.id && <span className="adv-tag">{T("match.advance")}</span>}
         </button>
         <div className="vs">VS</div>
         <button type="button" className={sideCls(m.b?.id)} onClick={() => clickable && m.b && onVote(m.id, m.b.id)} disabled={!m.b}>
           <Avatar c={m.b} lg />
           <span className="nm">{label(m.b)}</span>{sub(m.b) && <span className="cn">{sub(m.b)}</span>}
-          <span className="v num">{m.votesB}</span>
-          {m.decided && m.winnerId === m.b?.id && <span className="adv-tag">晋级</span>}
+          <span className="v num">{numB}</span>
+          {m.decided && m.winnerId === m.b?.id && <span className="adv-tag">{T("match.advance")}</span>}
         </button>
       </div>
       <div className="share"><div className="a" style={{ width: pa + "%" }} /><div className="b" style={{ width: 100 - pa + "%" }} /></div>
-      {m.decided && <div className="decided-tag">本场已结算</div>}
+      <div className="match-foot">
+        <span className="rate-note">{revealed ? T("match.settled") : live ? T("match.rateNote") : T("match.upcoming")}</span>
+      </div>
+      {m.a && m.b && <Comments matchId={m.id} count={m.commentN} lang={lang} />}
     </div>
+  );
+}
+
+function Comments({ matchId, count, lang }: { matchId: number; count: number; lang: Lang }) {
+  const T = (k: string, p?: Record<string, string | number>) => t(lang, k, p);
+  const [open, setOpen] = useState(false);
+  const [list, setList] = useState<any[] | null>(null);
+  const [text, setText] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const fetchList = async () => {
+    try { const r = await api(`/api/comments?matchupId=${matchId}`); const j = await r.json(); setList(j.comments || []); }
+    catch { setList([]); }
+  };
+  const toggle = () => { const nx = !open; setOpen(nx); if (nx && list === null) fetchList(); };
+  const send = async () => {
+    const t = text.trim(); if (!t || busy) return;
+    setBusy(true); setErr("");
+    try {
+      const r = await api("/api/comments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ matchupId: matchId, text: t, name: name.trim() }) });
+      const j = await r.json();
+      if (j.error) setErr(j.error);
+      else { setText(""); await fetchList(); }
+    } catch { setErr(T("cmt.sendFail")); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="cmts">
+      <button type="button" className="cmt-toggle" onClick={toggle}>💬 {open ? T("cmt.collapse") : T("cmt.open") + (count ? " " + count : "")}</button>
+      {open && (
+        <div className="cmt-body">
+          <div className="cmt-post">
+            <input className="cmt-name" value={name} onChange={(e) => setName(e.target.value)} placeholder={T("cmt.name")} maxLength={24} />
+            <div className="cmt-row">
+              <input className="cmt-text" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder={T("cmt.text")} maxLength={300} />
+              <button className="btn solid" onClick={send} disabled={busy || !text.trim()}>{T("cmt.send")}</button>
+            </div>
+            {err && <div className="hint" style={{ color: "var(--rose-deep)" }}>{err}</div>}
+          </div>
+          {list === null ? <div className="hint">{T("cmt.loading")}</div>
+            : list.length === 0 ? <div className="hint">{T("cmt.empty")}</div>
+            : <ul className="cmt-list">{list.map((c) => (
+                <li key={c.id}><span className="cmt-who">{c.name || T("cmt.anon")}</span><span className="cmt-t">{c.text}</span></li>
+              ))}</ul>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BracketCell({ m, active, onOpen }: { m: Match; active: boolean; onOpen: () => void }) {
+  const revealed = m.decided;
+  const cell = (c: Slim | null, id: number | undefined, right: boolean) => {
+    const num = revealed ? (right ? m.votesB ?? 0 : m.votesA ?? 0) : m.rateA == null ? "" : (right ? 100 - m.rateA : m.rateA) + "%";
+    const win = m.decided && m.winnerId === id;
+    const pick = m.myChoice === id;
+    return (
+      <div className={"bside" + (win ? " win" : "") + (pick ? " picked" : "")}>
+        <Avatar c={c} />
+        <span className="bnm">{label(c)}</span>
+        <span className="bnum num">{num}</span>
+      </div>
+    );
+  };
+  return (
+    <button type="button" className={"bcell" + (active ? " active" : "")} onClick={onOpen}>
+      {cell(m.a, m.a?.id, false)}
+      {cell(m.b, m.b?.id, true)}
+    </button>
   );
 }

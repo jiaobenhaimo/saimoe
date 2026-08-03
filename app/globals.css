@@ -269,3 +269,43 @@ body { font-size: 15px; line-height: 1.6; }
 .ping-result { margin: 10px 0 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); color: var(--ink); font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; overflow: auto; }
 .pool-admin { margin-top: 4px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .pool-admin .prow { padding: 8px 12px; }
+
+/* ─────────── bracket / comments / vote-rate (this pass) ─────────── */
+.bracket { display: flex; gap: 14px; overflow-x: auto; padding: 6px 2px 14px; -webkit-overflow-scrolling: touch; }
+.bcol { min-width: 190px; flex: 0 0 auto; display: flex; flex-direction: column; }
+.bcol-h { font-size: 12px; font-weight: 800; color: var(--rose-deep); margin: 0 0 8px; text-align: center; }
+.bcol-cells { display: flex; flex-direction: column; justify-content: space-around; gap: 10px; flex: 1; }
+.bcell { display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left; background: #fff; border: 1.5px solid var(--line); border-radius: 12px; padding: 6px; cursor: pointer; transition: border-color .12s, box-shadow .12s; }
+.bcell.active { border-color: var(--rose); box-shadow: 0 0 0 3px var(--rose-soft); }
+.bside { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 8px; min-width: 0; }
+.bside .av, .bside .av-ph { width: 26px; height: 26px; font-size: 11px; flex: 0 0 auto; }
+.bside .bnm { flex: 1; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bside .bnum { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bside.win { background: var(--rose-soft); }
+.bside.win .bnm { color: var(--rose-deep); font-weight: 800; }
+.bside.picked { outline: 2px solid var(--gold); outline-offset: -2px; }
+.bracket-detail { margin-top: 8px; }
+
+.match-foot { margin-top: 6px; }
+.rate-note { font-size: 11px; color: var(--muted); }
+
+.cmts { margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 8px; }
+.cmt-toggle { background: transparent; border: none; color: var(--rose-deep); font-weight: 700; font-size: 13px; cursor: pointer; padding: 0; }
+.cmt-body { margin-top: 8px; }
+.cmt-post { display: flex; flex-direction: column; gap: 6px; }
+.cmt-name { padding: 8px 10px; border: 1.5px solid var(--line); border-radius: 8px; font-size: 13px; }
+.cmt-row { display: flex; gap: 6px; }
+.cmt-text { flex: 1; padding: 8px 10px; border: 1.5px solid var(--line); border-radius: 8px; font-size: 14px; min-width: 0; }
+.cmt-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.cmt-list li { font-size: 14px; line-height: 1.55; }
+.cmt-who { font-weight: 700; color: var(--ink); margin-right: 6px; }
+.cmt-t { color: var(--ink); overflow-wrap: anywhere; }
+
+/* language switcher */
+.langbar { display: flex; gap: 6px; justify-content: flex-end; margin-bottom: 4px; }
+.lang { border: 1.5px solid var(--line); background: #fff; color: var(--muted); border-radius: 999px; padding: 3px 11px; font-size: 12px; font-weight: 700; cursor: pointer; line-height: 1.6; }
+.lang.on { background: var(--rose); border-color: var(--rose); color: #fff; }
+
+/* debug panel button row */
+.btnrow { display: flex; flex-wrap: wrap; gap: 8px; }
+.btnrow .btn { flex: 1 1 auto; }

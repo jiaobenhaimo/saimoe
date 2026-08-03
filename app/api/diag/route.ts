@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import dns from "node:dns/promises";
 import { apiEnabled } from "@/lib/flags";
-import { netResolve4, netFetch } from "@/lib/net";
+import { netResolve4, netFetch, netProbeEach } from "@/lib/net";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,7 +35,7 @@ export async function GET() {
   }
 
   // 2) HTTPS 探测:/v0/me 返回 401 即代表连通(我们没有传 token,不会真登录)
-  //    走与业务相同的 netFetch(可信 DNS / 固定 IP),反映修复后的真实路径。
+  //    走与业务相同的 netFetch(可信 DNS / 固定 IP / 多 IP 故障转移),反映修复后的真实路径。
   const started = Date.now();
   try {
     const r = await netFetch("https://api.bgm.tv/v0/me", {
@@ -51,6 +51,14 @@ export async function GET() {
       detail: e?.cause?.message || e?.message || "",
       ms: Date.now() - started,
     };
+  }
+
+  // 3) 逐个候选 IP 探测:看清到底哪个 IP 能连通(status 401=通)、哪些被 reset。
+  //    若所有 IP(含非 Cloudflare 源站)都失败,基本可判定为按 SNI 封锁,需配置 BGM_PROXY。
+  try {
+    out.probe = await netProbeEach("api.bgm.tv");
+  } catch (e: any) {
+    out.probe = [{ error: e?.message || String(e) }];
   }
 
   return NextResponse.json(out);

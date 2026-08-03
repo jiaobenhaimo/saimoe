@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema, createCompetition, deleteCompetition, removeCandidate } from "@/lib/db";
+import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
-import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound } from "@/lib/engine";
+import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline } from "@/lib/engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,14 +35,20 @@ export async function POST(req: NextRequest) {
         autoSize: Number(body.size), autoGroups: Number(body.groups), autoAdvance: Number(body.advance),
         groupHours: body.groupHours ? Number(body.groupHours) : null,
         roundHours: body.roundHours ? Number(body.roundHours) : null,
+        groupPerRound: Number(body.groupPerRound) || 0,
+        groupRoundDays: Number(body.groupRoundDays) || 0,
         postponeDays: Number(body.postponeDays) || 1,
       });
       return NextResponse.json({ ok: true });
     }
     if (action === "unschedule") { clearSchedule(comp.id); return NextResponse.json({ ok: true }); }
-    if (action === "start_groups") { startGroups(comp.id, Number(body.size), Number(body.groups), Number(body.advance)); return NextResponse.json({ ok: true }); }
+    if (action === "nom_rules") { setNominationRules(comp.id, Number(body.userLimit) || 0, Number(body.minVotes) || 0); return NextResponse.json({ ok: true, message: "已更新提名约束。" }); }
+    if (action === "delete_comment") { deleteComment(comp.id, Number(body.commentId)); return NextResponse.json({ ok: true }); }
+    if (action === "start_groups") { startGroups(comp.id, Number(body.size), Number(body.groups), Number(body.advance), Number(body.perRound) || 0, Number(body.roundDays) || 0); return NextResponse.json({ ok: true }); }
     if (action === "start_knockout") { startKnockout(comp.id); return NextResponse.json({ ok: true }); }
     if (action === "advance") { advanceKnockout(comp.id); return NextResponse.json({ ok: true }); }
+    if (action === "advance_group") { const r = advanceGroupMatchday(comp.id); return NextResponse.json({ ok: true, message: r.message, done: r.done }); }
+    if (action === "set_deadline") { setPhaseDeadline(comp.id, Number(body.hours) || 0); return NextResponse.json({ ok: true, message: Number(body.hours) > 0 ? "已设定本阶段截止时间。" : "已清除本阶段截止时间。" }); }
     if (action === "reset") { deleteCompetition(comp.id); return NextResponse.json({ ok: true }); }
     if (action === "remove_candidate") {
       if (comp.phase !== "nomination") return NextResponse.json({ error: "仅在提名阶段可移除角色。" }, { status: 400 });

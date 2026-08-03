@@ -24,7 +24,7 @@ async function bgmFetch(url: string, init: RequestInit, what: string): Promise<a
   } catch (e: any) {
     // surface the real cause (ENOTFOUND = DNS 解析失败, ECONNREFUSED/超时 = 出网被拦截)
     const code = e?.cause?.code || e?.code || e?.name || "";
-    throw new Error(`${what}：网络请求失败（${code || "无法访问 api.bgm.tv"}）。请检查云托管服务是否开启「公网访问」，或容器 DNS/出网是否正常。`);
+    throw new Error(`${what}：网络请求失败（${code || "无法访问 api.bgm.tv"}）。已尝试全部候选 IP 仍失败——可能是按 SNI 封锁，请在环境变量设置 BGM_PROXY（正向代理）或 BGM_API_IP（固定可用 IP）；详情见 /api/diag。`);
   }
   if (!res.ok) {
     let body = "";
