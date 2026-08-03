@@ -3,7 +3,6 @@ import { ensureSchema, addCandidate, removeOwnCandidate, sweepOwnOrphans } from 
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition } from "@/lib/engine";
 import { getVoterId } from "@/lib/voter";
-import { getCharacter, getSubjectCharacters, parseSubjectId, type BgmHit } from "@/lib/bangumi";
 import { rateLimited } from "@/lib/ratelimit";
 
 function clientIp(req: NextRequest): string {
@@ -53,22 +52,6 @@ export async function POST(req: NextRequest) {
         if (addCandidate(comp.id, bgmId, name, nameCn, image, subjectName, vid, nameEn)) added++;
       }
       return NextResponse.json({ ok: true, added, imported: body.batch.length });
-    }
-
-    // ── batch: import a whole subject's cast ──
-    if (body.subject) {
-      const sid = parseSubjectId(String(body.subject));
-      if (!sid) return NextResponse.json({ error: "无法识别作品 ID / 链接。" }, { status: 400 });
-      const cast: BgmHit[] = await getSubjectCharacters(sid);
-      let added = 0;
-      for (const c of cast) if (addCandidate(comp.id, c.bgmId, c.name, "", c.image)) added++;
-      return NextResponse.json({ ok: true, imported: cast.length, added });
-    }
-
-    // ── single from Bangumi id ──
-    if (body.bgmId) {
-      const d = await getCharacter(String(body.bgmId));
-      return NextResponse.json({ ok: true, added: addCandidate(comp.id, d.bgmId, d.name, d.nameCn, d.image) });
     }
 
     // ── manual add ──

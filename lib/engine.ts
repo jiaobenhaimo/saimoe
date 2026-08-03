@@ -30,7 +30,7 @@ export function getState(voterId: string) {
   const base = {
     competition: {
       id: comp.id, title: comp.title, description: comp.description, shortName: comp.short_name ?? "", phase: comp.phase,
-      groupsCount: comp.groups_count, advancePerGroup: comp.advance_per_group, championId: comp.champion_id,
+      groupsCount: comp.groups_count, championId: comp.champion_id,
       nomEndsAt: comp.nom_ends_at ?? null, groupEndsAt: comp.group_ends_at ?? null, koRoundEndsAt: comp.ko_round_ends_at ?? null,
       postponeDays: comp.postpone_days ?? null,
       nomUserLimit: comp.nom_user_limit ?? 0, nomMinVotes: comp.nom_min_votes ?? 0,
@@ -360,7 +360,6 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   comp.phase = "group";
   comp.target_size = a;
   comp.groups_count = numGroups;
-  comp.advance_per_group = null; // 不再是固定「每组晋级 N」
   comp.ko_target = nextPow2(2 * numGroups); // ≤8 组→16,9-16 组→32,以此类推
   comp.group_started_at = Date.now(); // legacy 锚点,仅供旧数据兜底
   comp.group_matchday_starts = { 1: comp.group_started_at }; // 事实来源:第 1 比赛日真实开始的时刻
@@ -573,8 +572,7 @@ export function advanceKnockout(cid: number) {
 // ── scheduling ────────────────────────────────────────────────
 export interface ScheduleOpts {
   nomEndsAt: number | null;      // epoch ms when nomination auto-closes
-  autoSize: number; autoGroups?: number; autoAdvance?: number;
-  groupHours: number | null;     // (legacy) whole group-stage duration
+  autoSize: number;
   roundHours: number | null;     // per knockout-round duration
   postponeDays: number;          // days to push back if the pool is short at the deadline
   groupPerRound?: number;        // matches per matchday per group (0 = auto)
@@ -587,8 +585,8 @@ export function scheduleCompetition(cid: number, o: ScheduleOpts) {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
   if (!comp) return;
-  comp.auto_size = o.autoSize; comp.auto_groups = o.autoGroups ?? null; comp.auto_advance = o.autoAdvance ?? null;
-  comp.group_hours = o.groupHours; comp.round_hours = o.roundHours;
+  comp.auto_size = o.autoSize;
+  comp.round_hours = o.roundHours;
   comp.group_per_round = o.groupPerRound && o.groupPerRound > 0 ? o.groupPerRound : null;
   comp.group_round_days = o.groupRoundDays && o.groupRoundDays > 0 ? o.groupRoundDays : null;
   comp.postpone_days = o.postponeDays > 0 ? o.postponeDays : 1;
@@ -638,7 +636,7 @@ export function undoLastTransition(cid: number): string {
     dropMatchups(db, cid, (m) => m.stage === "group");
     for (const c of db.candidates) if (c.competition_id === cid) { c.group_no = null; c.seed = null; c.eliminated = false; }
     comp.phase = "nomination";
-    comp.target_size = null; comp.groups_count = null; comp.advance_per_group = null;
+    comp.target_size = null; comp.groups_count = null;
     comp.group_ends_at = null;
     comp.group_matchday = null; comp.group_matchday_count = null; comp.group_round_ends_at = null; comp.group_started_at = null; comp.group_matchday_starts = null;
     writeDb(db);

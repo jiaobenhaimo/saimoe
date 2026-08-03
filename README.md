@@ -1,8 +1,8 @@
-# Bangumi 世萌大会
+# Bangumi SML
 
 基于 Bangumi 角色的三阶段人气竞赛:**预选提名 → 小组循环赛 → 单败淘汰赛**,决出总冠军。
 
-- 角色数据由后端调用 Bangumi API(无 CORS),提名时自动抓取**简体中文名**;头像走后端代理绕过防盗链。
+- 角色数据在**浏览器端**直接调用 Bangumi API(CORS 直连),提名时抓取中文名;服务端只负责存储、结算与调度,**零出站 HTTP**。
 - 匿名投票:以**设备指纹**去重(不靠公网 IP,同一 NAT 下不同设备可各投一票),每场一票、可改可撤。
 - Next.js(App Router)。**数据存本地 JSON 文件,无需任何外部数据库**。
 
@@ -32,7 +32,6 @@ npm run dev                  # http://localhost:3000
 | `DATA_DIR` | 数据文件目录。默认容器内 `./.data`(**临时**,重新部署会清空);指到持久化挂载目录可长期保留 |
 | `BACKUP_DIR` | 数据快照目录。默认 `/mnt/sml-data`;每 30 分钟把数据快照写到这里,建议指到持久化挂载盘 |
 | `BACKUP_KEEP` | 保留的快照份数,默认 48(≈ 最近 24 小时) |
-| `BGM_USER_AGENT` | 调 Bangumi API 的 UA,可选 |
 
 ## 怎么玩
 
@@ -66,7 +65,6 @@ app/
   page.tsx            投票主页(按阶段渲染)
   admin/page.tsx      管理台
   api/state           GET  当前赛况(含本人投票)
-  api/bangumi/search  GET  角色搜索(服务端代理)
   api/nominate        POST 提名 / 整部作品导入
   api/vote            POST 提名投票 / 对战投票
   api/admin/action    POST 赛程推进 + 编辑信息(需令牌)
@@ -75,7 +73,6 @@ app/
 lib/
   db.ts               本地 JSON 存储(读改写 + 原子落盘)
   engine.ts           赛制引擎:分组、种子、结算、状态
-  bangumi.ts          Bangumi 搜索 / 详情 / 整部作品角色
   voter.ts            设备指纹 / cookie 投票身份
   flags.ts            服务 API 开关
   schedule.ts         定时赛程推进

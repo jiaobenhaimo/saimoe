@@ -3,12 +3,6 @@
 import { readDb, writeDb, createCompetition, addCandidate } from "./db";
 import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, resolvePlayoff } from "./engine";
 
-function activeId(): number {
-  const c = getActiveCompetition();
-  if (!c) throw new Error("没有比赛。请先『造测试角色』。");
-  return c.id;
-}
-
 /** Create a fresh competition + N fake candidates (no Bangumi needed). */
 export function debugSeed(count = 16, title = "调试赛 · Debug"): { id: number; added: number } {
   const id = createCompetition(title);

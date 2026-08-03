@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     const rec = (summary: string) => { try { logAudit(action, summary, getActiveCompetition()?.phase ?? null); } catch {} };
 
     if (action === "create") {
-      const title = String(body.title || "Bangumi 世萌大会").trim();
+      const title = String(body.title || "SML").trim();
       const id = createCompetition(title);
       rec(`创建比赛《${title}》(#${id})`);
       return NextResponse.json({ ok: true, id });
@@ -40,8 +40,7 @@ export async function POST(req: NextRequest) {
       if (body.dayCap !== undefined) setGroupDayCap(comp.id, Number(body.dayCap));
       scheduleCompetition(comp.id, {
         nomEndsAt: Number(body.nomEndsAt) || null,
-        autoSize: Number(body.size), autoGroups: Number(body.groups), autoAdvance: Number(body.advance),
-        groupHours: body.groupHours ? Number(body.groupHours) : null,
+        autoSize: Number(body.size),
         roundHours: body.roundHours ? Number(body.roundHours) : null,
         groupPerRound: Number(body.groupPerRound) || 0,
         groupRoundDays: Number(body.groupRoundDays) || 0,

@@ -19,12 +19,12 @@ export type Phase = "nomination" | "group" | "playoff" | "knockout" | "finished"
 
 export interface Competition {
   id: number; title: string; description: string | null; short_name: string | null; phase: Phase;
-  target_size: number | null; groups_count: number | null; advance_per_group: number | null;
+  target_size: number | null; groups_count: number | null;
   champion_id: number | null; ko_round: number | null; created_at: number;
   // ── timed schedule (epoch ms; null = not scheduled) ──
   nom_ends_at: number | null; group_ends_at: number | null; ko_round_ends_at: number | null;
-  auto_size: number | null; auto_groups: number | null; auto_advance: number | null;
-  group_hours: number | null; round_hours: number | null; postpone_days: number | null;
+  auto_size: number | null;
+  round_hours: number | null; postpone_days: number | null;
   // ── nomination constraints (null/0 = unlimited) ──
   nom_user_limit: number | null; nom_min_votes: number | null;
   // ── group stage matchdays (round-robin split into rounds) ──
@@ -152,7 +152,7 @@ export function ensureSchema(): void {
 export function createCompetition(title: string): number {
   const db = readDb();
   const id = ++db.seq.competition;
-  db.competitions.push({ id, title, description: null, short_name: null, phase: "nomination", target_size: null, groups_count: null, advance_per_group: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, auto_groups: null, auto_advance: null, group_hours: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_started_at: null, group_matchday_starts: null, ko_target: null, ko_seed_ids: null, playoff_slots: null });
+  db.competitions.push({ id, title, description: null, short_name: null, phase: "nomination", target_size: null, groups_count: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_started_at: null, group_matchday_starts: null, ko_target: null, ko_seed_ids: null, playoff_slots: null });
   writeDb(db);
   return id;
 }

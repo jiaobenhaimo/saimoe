@@ -15,12 +15,11 @@ export default function Admin() {
   const [busy, setBusy] = useState(false);
   const [obs, setObs] = useState<any>(null);
 
-  const [title, setTitle] = useState("Bangumi 世萌大会 2026");
+  const [title, setTitle] = useState("SML 2026");
   const [size, setSize] = useState(16);
 
   // schedule inputs
   const [nomLocal, setNomLocal] = useState("");
-  const [gHours, setGHours] = useState(48);
   const [rHours, setRHours] = useState(24);
   const [pDays, setPDays] = useState(2);
   const [nUserLimit, setNUserLimit] = useState(0);
@@ -185,9 +184,9 @@ export default function Admin() {
       )}
 
       <div className="card">
-        <h3>网络诊断（Ping）</h3>
-        <p className="hint">检查容器能否解析并连通 Bangumi API（DNS + HTTPS）。若在线搜索失败，先在这里看 <code>api.reachable</code> 和 <code>dns</code> 的结果。</p>
-        <button className="btn solid" disabled={busy || pinging} onClick={ping}>{pinging ? "检查中…" : "检查网络连接"}</button>
+        <h3>服务端诊断</h3>
+        <p className="hint">查看服务端环境:Node 版本、数据/备份目录、以及对 <code>api.bgm.tv</code> 的系统 DNS 解析(仅解析,不发起连接)。搜索/导入已改为浏览器端直连 Bangumi,服务端不再访问 Bangumi;若在线搜索失败,请在浏览器控制台排查前端请求。</p>
+        <button className="btn solid" disabled={busy || pinging} onClick={ping}>{pinging ? "检查中…" : "运行诊断"}</button>
         {pingResult && <pre className="ping-result">{JSON.stringify(pingResult, null, 2)}</pre>}
       </div>
 
@@ -199,7 +198,7 @@ export default function Admin() {
           <div className="field"><label>简介 / 副标题（可选，显示在投票页标题下方）</label>
             <input value={editDesc} onChange={(e) => setEditDesc(e.target.value)}
               placeholder="例如：2026 春季 · 由你决定最萌角色" /></div>
-          <div className="field"><label>比赛简称（可选，用于规则页等文字，代替「世萌」）</label>
+          <div className="field"><label>比赛简称（可选，用于规则页等文字，代替「SML」）</label>
             <input value={editShort} onChange={(e) => setEditShort(e.target.value)}
               placeholder="例如：B萌、春季杯" /></div>
           <button className="btn solid" disabled={busy || !editTitle.trim()}
@@ -242,15 +241,13 @@ export default function Admin() {
           <div className="field"><label>提名截止时间</label>
             <input type="datetime-local" value={nomLocal} onChange={(e) => setNomLocal(e.target.value)} /></div>
           <div className="row3">
-            <div className="field"><label>小组赛时长（小时）</label>
-              <input type="number" value={gHours} onChange={(e) => setGHours(+e.target.value)} /></div>
             <div className="field"><label>每轮淘汰赛（小时）</label>
               <input type="number" value={rHours} onChange={(e) => setRHours(+e.target.value)} /></div>
             <div className="field"><label>人数不足顺延（天）</label>
               <input type="number" value={pDays} onChange={(e) => setPDays(+e.target.value)} /></div>
           </div>
           <button className="btn solid" disabled={busy || size < 4 || !nomLocal}
-            onClick={() => act("schedule", { nomEndsAt: nomLocal ? new Date(nomLocal).getTime() : 0, size, groupHours: gHours, roundHours: rHours, groupPerRound: perRound, groupRoundDays: roundDays, dayCap, postponeDays: pDays })}>
+            onClick={() => act("schedule", { nomEndsAt: nomLocal ? new Date(nomLocal).getTime() : 0, size, roundHours: rHours, groupPerRound: perRound, groupRoundDays: roundDays, dayCap, postponeDays: pDays })}>
             启动定时赛程
           </button>
           {comp.nomEndsAt && <p className="hint">已定时（截止 {fmtAbs(comp.nomEndsAt)}）。<a onClick={() => act("unschedule")}>取消定时</a></p>}
