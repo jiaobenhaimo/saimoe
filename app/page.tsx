@@ -15,6 +15,8 @@ type Match = {
 
 // ── device fingerprint (sent as x-fp; dedups by device, not by public IP) ──
 let FP = "";
+// ── coarse device bucket (sent as x-db; NON-blocking metadata only, never dedups) ──
+let DB_BUCKET = "";
 async function sha256Hex(s: string): Promise<string> {
   try {
     const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -49,9 +51,28 @@ async function computeFp(): Promise<string> {
   try { localStorage.setItem("saimoe_fp", hash); } catch {}
   return hash;
 }
+// A deliberately COARSE, cross-browser-stable hash. Unlike the fingerprint it omits
+// userAgent / canvas / WebGL (those differ per browser on one device). It's reported
+// as vote metadata so an operator can later FLAG possible same-device multi-browser
+// voting — it is never used to block or de-duplicate a vote. Cross-browser one-vote
+// can't be strongly guaranteed client-side; that needs account login.
+async function computeDeviceBucket(): Promise<string> {
+  try { const c = localStorage.getItem("saimoe_db"); if (c) return c; } catch {}
+  const parts = [
+    screen.width + "x" + screen.height, screen.availWidth + "x" + screen.availHeight,
+    String(screen.colorDepth), Intl.DateTimeFormat().resolvedOptions().timeZone,
+    String(navigator.hardwareConcurrency || 0), String((navigator as any).deviceMemory || 0),
+    (navigator as any).platform || "", String(navigator.maxTouchPoints || 0),
+    String(window.devicePixelRatio || 0),
+  ];
+  const hash = await sha256Hex("db|" + parts.join("|"));
+  try { localStorage.setItem("saimoe_db", hash); } catch {}
+  return hash;
+}
 function api(path: string, opts: RequestInit = {}) {
   const headers = new Headers(opts.headers);
   if (FP) headers.set("x-fp", FP);
+  if (DB_BUCKET) headers.set("x-db", DB_BUCKET);
   return fetch(path, { ...opts, headers, cache: "no-store" });
 }
 
@@ -157,13 +178,34 @@ export default function Page() {
   }, []);
 
   useEffect(() => {
-    (async () => { FP = await computeFp(); await load(); })();
+    (async () => { FP = await computeFp(); DB_BUCKET = await computeDeviceBucket(); await load(); })();
   }, [load]);
 
   useEffect(() => {
     const t = setInterval(() => { load(); }, 60_000);
     return () => clearInterval(t);
   }, [load]);
+
+  // Instant cleanup of the user's own un-voted (0-vote) nominations when they leave.
+  // Uses a ref so the unload handler always sees the latest pool without re-binding.
+  const orphanRef = useRef(false);
+  useEffect(() => {
+    const pool: PoolItem[] = state?.nomination?.pool ?? [];
+    orphanRef.current = pool.some((p) => p.mine && p.votes === 0);
+  }, [state]);
+  useEffect(() => {
+    const onHide = (e: PageTransitionEvent) => {
+      if (e.persisted) return;          // bfcache: user is likely coming back → keep noms
+      if (!orphanRef.current) return;
+      try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (FP) headers["x-fp"] = FP;   // keepalive fetch preserves headers (sendBeacon can't)
+        fetch("/api/nominate", { method: "POST", keepalive: true, headers, body: JSON.stringify({ sweep: true }) });
+      } catch {}
+    };
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+  }, []);
 
   // 角色搜索:v0 只有 POST /v0/search/characters。把它发成 CORS「简单请求」(text/plain)绕过预检;
   // 能否成功取决于 Bangumi 是否给 POST 附跨域头,失败则回退手动添加。

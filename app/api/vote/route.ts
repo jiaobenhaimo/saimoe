@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ensureSchema, toggleNomination, castMatchVote } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
-import { getVoterId } from "@/lib/voter";
+import { getVoterId, getDeviceBucket } from "@/lib/voter";
 import { getActiveCompetition } from "@/lib/engine";
 import { rateLimited } from "@/lib/ratelimit";
 
@@ -19,6 +19,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "投票太频繁，请稍后再试。" }, { status: 429 });
     ensureSchema();
     const vid = await getVoterId();
+    const bucket = await getDeviceBucket();
     const comp = getActiveCompetition();
     if (!comp) return NextResponse.json({ error: "没有进行中的比赛。" }, { status: 400 });
 
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
     // ── nomination upvote (toggle) ──
     if (body.type === "nominate") {
       if (comp.phase !== "nomination") return NextResponse.json({ error: "提名投票已结束。" }, { status: 400 });
-      const r = toggleNomination(comp.id, Number(body.candidateId), vid);
+      const r = toggleNomination(comp.id, Number(body.candidateId), vid, { bucket });
       if (!r) return NextResponse.json({ error: "角色不存在。" }, { status: 404 });
       if ("error" in r) return NextResponse.json({ error: r.error }, { status: 400 });
       return NextResponse.json({ ok: true, voted: r.voted });
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
     // ── matchup vote (group or knockout) ──
     if (body.type === "match") {
       if (comp.phase !== "group" && comp.phase !== "knockout" && comp.phase !== "playoff") return NextResponse.json({ error: "当前没有开放的对战。" }, { status: 400 });
-      const r = castMatchVote(comp.id, Number(body.matchupId), vid, Number(body.choiceId));
+      const r = castMatchVote(comp.id, Number(body.matchupId), vid, Number(body.choiceId), { bucket });
       if ("error" in r) return NextResponse.json({ error: r.error }, { status: r.status });
       return NextResponse.json({ ok: true, choice: r.choice });
     }
