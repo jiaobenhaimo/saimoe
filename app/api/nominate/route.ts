@@ -43,7 +43,8 @@ export async function POST(req: NextRequest) {
         const nameCn = String(c?.nameCn || "").trim();
         const image = String(c?.image || "").trim();
         const subjectName = String(c?.subjectName || "").trim();
-        if (addCandidate(comp.id, bgmId, name, nameCn, image, subjectName, vid)) added++;
+        const nameEn = String(c?.nameEn || "").trim();
+        if (addCandidate(comp.id, bgmId, name, nameCn, image, subjectName, vid, nameEn)) added++;
       }
       return NextResponse.json({ ok: true, added, imported: body.batch.length });
     }

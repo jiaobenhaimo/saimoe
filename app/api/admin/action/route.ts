@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     if (action === "unschedule") { clearSchedule(comp.id); return NextResponse.json({ ok: true }); }
     if (action === "nom_rules") { setNominationRules(comp.id, Number(body.userLimit) || 0, Number(body.minVotes) || 0); return NextResponse.json({ ok: true, message: "已更新提名约束。" }); }
     if (action === "delete_comment") { deleteComment(comp.id, Number(body.commentId)); return NextResponse.json({ ok: true }); }
-    if (action === "start_groups") { startGroups(comp.id, Number(body.size), Number(body.groups), Number(body.advance), Number(body.perRound) || 0, Number(body.roundDays) || 0); return NextResponse.json({ ok: true }); }
+    if (action === "start_groups") { startGroups(comp.id, Number(body.size), Number(body.perRound) || 0, Number(body.roundDays) || 0); return NextResponse.json({ ok: true }); }
     if (action === "start_knockout") { startKnockout(comp.id); return NextResponse.json({ ok: true }); }
     if (action === "advance") { advanceKnockout(comp.id); return NextResponse.json({ ok: true }); }
     if (action === "advance_group") { const r = advanceGroupMatchday(comp.id); return NextResponse.json({ ok: true, message: r.message, done: r.done }); }

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { t, roundLabelT, LANGS, type Lang } from "@/lib/i18n";
 
-type Slim = { id: number; name: string; nameCn: string | null; image: string | null; subjectName?: string | null };
+type Slim = { id: number; name: string; nameCn: string | null; nameEn?: string | null; image: string | null; subjectName?: string | null };
 type PoolItem = Slim & { votes: number; voted: boolean; mine: boolean };
 type Match = {
   id: number; stage: string; round: number; group: number | null; slot: number;
@@ -71,12 +71,13 @@ function Avatar({ c, lg }: { c: Slim | null; lg?: boolean }) {
   return <img className={"av" + (lg ? " lg" : "")} src={src} alt={c.name} referrerPolicy="no-referrer" loading="lazy" onError={() => setBroke(true)} />;
 }
 
-// 主名按 UI 语言:中文→中文名,日文/英文→原名(通常即日文名;Bangumi 无英文名时回退原名)。
-const label = (c: Slim | null, lang: Lang) => (c ? (lang === "zh" ? (c.nameCn || c.name) : c.name) : "—");
+// 主名按 UI 语言:中文→中文名,英文→英文名,日文→原名;缺失时回退原(日文)名。
+const primaryName = (c: Slim, lang: Lang) => lang === "zh" ? (c.nameCn || c.name) : lang === "en" ? (c.nameEn || c.name) : c.name;
+const label = (c: Slim | null, lang: Lang) => (c ? primaryName(c, lang) : "—");
 // 副行:非日文 UI 时补显日文(原)名(若与主名不同),并附作品名。
 const sub = (c: Slim | null, lang: Lang) => {
   if (!c) return "";
-  const primary = lang === "zh" ? (c.nameCn || c.name) : c.name;
+  const primary = primaryName(c, lang);
   const parts: string[] = [];
   if (lang !== "ja" && c.name && c.name !== primary) parts.push(c.name);
   if (c.subjectName) parts.push(c.subjectName);
@@ -168,7 +169,7 @@ export default function Page() {
   // 能否成功取决于 Bangumi 是否给 POST 附跨域头,失败则回退手动添加。
   const search = async () => {
     const kw = q.trim(); if (!kw) return;
-    setSearching(true); setSearchErr(""); setHits(null); setManual(false);
+    setSearching(true); setSearchErr(""); setHits(null); setManual(false); setSubHits(null); setImportMsg("");
     try {
       const r = await fetch("https://api.bgm.tv/v0/search/characters?limit=20", {
         method: "POST",
@@ -180,8 +181,9 @@ export default function Page() {
       const arr = Array.isArray(j?.data) ? j.data : Array.isArray(j?.list) ? j.list : [];
       const seen = new Set<string>();
       const items = arr
-        .map((c: any) => ({ bgmId: "c" + c.id, name: c.name || "", nameCn: "", image: c.images?.grid || c.images?.medium || "" }))
-        .filter((c: any) => c.name && !seen.has(c.bgmId) && (seen.add(c.bgmId), true));
+        .filter((c: any) => c && c.name && (c.type == null || c.type === 1)) // 只留真正的角色(排除机体/舰船/组织团体)
+        .map((c: any) => ({ bgmId: "c" + c.id, name: c.name, nameCn: "", nameEn: "", image: c.images?.grid || c.images?.medium || "" }))
+        .filter((c: any) => !seen.has(c.bgmId) && (seen.add(c.bgmId), true));
       setHits(items);
       if (items.length === 0) setSearchErr(T("search.trysubject"));
     } catch { setSearchErr(T("search.fail", { err: "跨域被拦截,请改用搜作品或手动添加" })); setHits([]); }
@@ -191,7 +193,7 @@ export default function Page() {
   // 浏览器直接调 Bangumi 老接口 GET /search/subject(GET 支持跨域,无需代理/服务端)
   const searchSubjects = async () => {
     const kw = subQ.trim(); if (!kw) return;
-    setSubSearching(true); setImportMsg(""); setSubHits(null);
+    setSubSearching(true); setImportMsg(""); setSubHits(null); setHits(null); setSearchErr("");
     try {
       const r = await fetch(`https://api.bgm.tv/search/subject/${encodeURIComponent(kw)}?type=2&responseGroup=large&max_results=20`, { headers: { Accept: "application/json" } });
       const ct = r.headers.get("content-type") || "";
@@ -235,8 +237,8 @@ export default function Page() {
       if (!r.ok) { setImportMsg(T("import.fail", { err: "HTTP " + r.status })); return; }
       const arr = await r.json();
       const chars = (Array.isArray(arr) ? arr : [])
-        .map((c: any) => ({ rawId: c.id, bgmId: "c" + c.id, name: c.name || "", nameCn: "", image: c.images?.grid || c.images?.medium || "", subjectName }))
-        .filter((c: any) => c.name)
+        .filter((c: any) => c && c.name && (c.type == null || c.type === 1)) // 只留真正的角色
+        .map((c: any) => ({ rawId: c.id, bgmId: "c" + c.id, name: c.name, nameCn: "", nameEn: "", image: c.images?.grid || c.images?.medium || "", subjectName }))
         .slice(0, 60);
       if (!chars.length) { setImportMsg(T("import.fail", { err: "no characters" })); return; }
       // 补中文名:逐个取角色详情 infobox 的「简体中文名」(小并发,尽力而为)
@@ -248,10 +250,12 @@ export default function Page() {
             const box = Array.isArray(d?.infobox) ? d.infobox : [];
             const it = box.find((x: any) => typeof x?.key === "string" && (x.key.includes("简体中文名") || x.key === "中文名"));
             if (it && typeof it.value === "string") ch.nameCn = it.value;
+            const en = box.find((x: any) => typeof x?.key === "string" && x.key.includes("英文名"));
+            if (en && typeof en.value === "string") ch.nameEn = en.value;
           } catch {}
         }));
       }
-      const batch = chars.map((c: any) => ({ bgmId: c.bgmId, name: c.name, nameCn: c.nameCn, image: c.image, subjectName: c.subjectName }));
+      const batch = chars.map((c: any) => ({ bgmId: c.bgmId, name: c.name, nameCn: c.nameCn, nameEn: c.nameEn || "", image: c.image, subjectName: c.subjectName }));
       const j = await post({ batch });
       setImportMsg(j?.error ? T("import.fail", { err: j.error }) : T("import.done", { name: subjectName, added: j?.added ?? 0, imported: chars.length }));
       await load();
@@ -415,7 +419,7 @@ export default function Page() {
       {/* ── GROUP ── */}
       {!loading && comp && phase === "group" && (
         <>
-          <div className="sec"><h2>{T("group.title")}</h2><div className="meta2">{T("group.advance", { n: comp.advancePerGroup })}</div></div>
+          <div className="sec"><h2>{T("group.title")}</h2><div className="meta2">{comp.koTarget ? T("group.wc", { n: comp.koTarget }) : ""}</div></div>
           {state.group.matchdayCount > 1 && <div className="hint">{T("group.matchday", { d: state.group.matchday, n: state.group.matchdayCount })}</div>}
           <div className="groupwrap">
             {state.group.groups.map((g: any) => (

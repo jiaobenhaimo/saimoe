@@ -19,7 +19,7 @@ export function runTick(force = false): void {
     if (comp.phase === "nomination" && comp.nom_ends_at && now >= comp.nom_ends_at) {
       const size = comp.auto_size || 0;
       if (size > 0 && poolSize(comp.id) >= size) {
-        startGroups(comp.id, size, comp.auto_groups || 1, comp.auto_advance || 1);
+        startGroups(comp.id, size);
       } else {
         // pool too small → push the deadline back and try again later
         postponeNomination(comp.id);

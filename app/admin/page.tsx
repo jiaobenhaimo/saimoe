@@ -16,8 +16,6 @@ export default function Admin() {
 
   const [title, setTitle] = useState("Bangumi 世萌大会 2026");
   const [size, setSize] = useState(16);
-  const [groups, setGroups] = useState(4);
-  const [advance, setAdvance] = useState(2);
 
   // schedule inputs
   const [nomLocal, setNomLocal] = useState("");
@@ -119,8 +117,8 @@ export default function Admin() {
     if (comp) { setEditTitle(comp.title || ""); setEditDesc(comp.description || ""); setNUserLimit(comp.nomUserLimit || 0); setNMinVotes(comp.nomMinVotes || 0); }
   }, [comp?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const qualifiers = groups * advance;
-  const pow2 = qualifiers >= 2 && (qualifiers & (qualifiers - 1)) === 0;
+  const estGroups = Math.max(1, Math.floor(size / 4));
+  const estKo = (() => { let p = 1; const t = 2 * estGroups; while (p < t) p <<= 1; return Math.max(2, p); })();
 
   return (
     <main className="wrap admin">
@@ -140,7 +138,7 @@ export default function Admin() {
           <>
             <p style={{ margin: 0 }}>
               《{comp.title}》— 阶段：<b>{phase}</b>
-              {comp.groupsCount ? ` · ${comp.groupsCount} 组，每组取 ${comp.advancePerGroup}` : ""}
+              {comp.groupsCount ? ` · ${comp.groupsCount} 组 → ${comp.koTarget} 强` : ""}
             </p>
             {phase === "nomination" && comp.nomEndsAt && <p className="hint" style={{ marginBottom: 0 }}>已定时：提名将于 <b>{fmtAbs(comp.nomEndsAt)}</b> 截止；人数不足顺延 {comp.postponeDays} 天。</p>}
             {phase === "group" && comp.groupRoundEndsAt && <p className="hint" style={{ marginBottom: 0 }}>小组赛第 <b>{comp.groupMatchday}/{comp.groupMatchdayCount}</b> 比赛日将于 <b>{fmtAbs(comp.groupRoundEndsAt)}</b> 自动结算。</p>}
@@ -205,12 +203,10 @@ export default function Admin() {
         <div className="card">
           <h3>② 结束提名 → 小组赛</h3>
           <div className="row3">
-            <div className="field"><label>参赛人数</label>
-              <input type="number" value={size} onChange={(e) => setSize(+e.target.value)} /></div>
-            <div className="field"><label>小组数</label>
-              <input type="number" value={groups} onChange={(e) => setGroups(+e.target.value)} /></div>
-            <div className="field"><label>每组晋级</label>
-              <input type="number" value={advance} onChange={(e) => setAdvance(+e.target.value)} /></div>
+            <div className="field"><label>晋级人数(取前 N,含并列)</label>
+              <input type="number" min={4} value={size} onChange={(e) => setSize(+e.target.value)} /></div>
+            <div className="field" style={{ gridColumn: "span 2" }}><label>&nbsp;</label>
+              <span className="hint">世界杯式:约 <b>{estGroups}</b> 个 4 人组(并列/余数可成 5 人组),各组前 2 + 最优第三名 → <b>{estKo}</b> 强淘汰赛。</span></div>
           </div>
           <div className="row3">
             <div className="field"><label>每组每轮场数（0=自动）</label>
@@ -219,10 +215,8 @@ export default function Admin() {
               <input type="number" min={0} value={roundDays} onChange={(e) => setRoundDays(+e.target.value)} /></div>
             <div className="field"><label>&nbsp;</label><span className="hint">同一角色一轮内不会重复出场</span></div>
           </div>
-          {!pow2 && <p className="hint" style={{ color: "var(--rose-deep)" }}>晋级总数 {qualifiers} 需为 2 的幂（如 4 / 8 / 16）。</p>}
-
-          <button className="btn solid" disabled={busy || !pow2}
-            onClick={() => act("start_groups", { size, groups, advance, perRound, roundDays })}>立即开始（取前 {size} 名，分 {groups} 组）</button>
+          <button className="btn solid" disabled={busy || size < 4}
+            onClick={() => act("start_groups", { size, perRound, roundDays })}>立即开始(取前 {size} 名 → 约 {estGroups} 组 → {estKo} 强)</button>
 
           <hr className="sep" />
           <h3 style={{ fontSize: 15 }}>或：定时自动开赛</h3>
@@ -237,8 +231,8 @@ export default function Admin() {
             <div className="field"><label>人数不足顺延（天）</label>
               <input type="number" value={pDays} onChange={(e) => setPDays(+e.target.value)} /></div>
           </div>
-          <button className="btn solid" disabled={busy || !pow2 || !nomLocal}
-            onClick={() => act("schedule", { nomEndsAt: nomLocal ? new Date(nomLocal).getTime() : 0, size, groups, advance, groupHours: gHours, roundHours: rHours, groupPerRound: perRound, groupRoundDays: roundDays, postponeDays: pDays })}>
+          <button className="btn solid" disabled={busy || size < 4 || !nomLocal}
+            onClick={() => act("schedule", { nomEndsAt: nomLocal ? new Date(nomLocal).getTime() : 0, size, groupHours: gHours, roundHours: rHours, groupPerRound: perRound, groupRoundDays: roundDays, postponeDays: pDays })}>
             启动定时赛程
           </button>
           {comp.nomEndsAt && <p className="hint">已定时（截止 {fmtAbs(comp.nomEndsAt)}）。<a onClick={() => act("unschedule")}>取消定时</a></p>}
