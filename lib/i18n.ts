@@ -26,6 +26,7 @@ const D: Record<string, Entry> = {
 
   "dl.nomination": { zh: "提名截止", en: "Nomination ends", ja: "推薦締切" },
   "dl.group": { zh: "小组赛截止", en: "Group stage ends", ja: "リーグ締切" },
+  "dl.playoff": { zh: "加赛截止", en: "Playoff ends", ja: "プレーオフ締切" },
   "dl.knockout": { zh: "本轮截止", en: "Round ends", ja: "本ラウンド締切" },
   "dl.remain": { zh: "剩 {t}", en: "{t} left", ja: "残り {t}" },
   "dl.over": { zh: "已到时，正在处理…", en: "Time's up, processing…", ja: "締切、処理中…" },
@@ -92,6 +93,8 @@ const D: Record<string, Entry> = {
   "th.win": { zh: "胜", en: "W", ja: "勝" },
   "th.votes": { zh: "得票", en: "Votes", ja: "得票" },
 
+  "playoff.title": { zh: "第三名加赛", en: "Third-place playoff", ja: "3位決定プレーオフ" },
+  "playoff.desc": { zh: "并列者循环赛,争夺最后 {n} 个晋级名额", en: "Round-robin among tied characters for the last {n} spot(s)", ja: "同点者による総当たり、残り{n}枠を争奪" },
   "champ.tag": { zh: "本届世萌总冠军", en: "Grand Champion", ja: "優勝" },
   "ko.title": { zh: "淘汰赛 · 单败晋级", en: "Knockout · single elimination", ja: "決勝トーナメント · 一発勝負" },
   "ko.hint": { zh: "点选对阵格查看详情并投票", en: "Tap a match to view details & vote", ja: "対戦をタップして詳細・投票" },

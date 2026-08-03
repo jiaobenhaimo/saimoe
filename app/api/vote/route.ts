@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
 
     // ── matchup vote (group or knockout) ──
     if (body.type === "match") {
-      if (comp.phase !== "group" && comp.phase !== "knockout") return NextResponse.json({ error: "当前没有开放的对战。" }, { status: 400 });
+      if (comp.phase !== "group" && comp.phase !== "knockout" && comp.phase !== "playoff") return NextResponse.json({ error: "当前没有开放的对战。" }, { status: 400 });
       const r = castMatchVote(comp.id, Number(body.matchupId), vid, Number(body.choiceId));
       if ("error" in r) return NextResponse.json({ error: r.error }, { status: r.status });
       return NextResponse.json({ ok: true, choice: r.choice });

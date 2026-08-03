@@ -290,9 +290,10 @@ export default function Page() {
   const deadline: number | null =
     phase === "nomination" ? comp?.nomEndsAt ?? null :
     phase === "group" ? comp?.groupRoundEndsAt ?? null :
+    phase === "playoff" ? comp?.groupRoundEndsAt ?? null :
     phase === "knockout" ? comp?.koRoundEndsAt ?? null : null;
   const deadlineLabel =
-    phase === "nomination" ? T("dl.nomination") : phase === "group" ? T("dl.group") : phase === "knockout" ? T("dl.knockout") : "";
+    phase === "nomination" ? T("dl.nomination") : phase === "group" ? T("dl.group") : phase === "playoff" ? T("dl.playoff") : phase === "knockout" ? T("dl.knockout") : "";
 
   const koRounds: any[] = state?.knockout?.rounds || [];
   const selMatch: Match | null = sel != null ? (koRounds.flatMap((r: any) => r.matchups).find((m: Match) => m.id === sel) || null) : null;
@@ -429,7 +430,7 @@ export default function Page() {
                   <thead><tr><th>{T("th.rank")}</th><th>{T("th.char")}</th><th style={{ textAlign: "right" }}>{T("th.win")}</th><th style={{ textAlign: "right" }}>{T("th.votes")}</th></tr></thead>
                   <tbody>
                     {g.standings.map((s: any, i: number) => (
-                      <tr key={s.id} className={i < comp.advancePerGroup ? "adv" : ""}>
+                      <tr key={s.id} className={i < 2 ? "adv" : ""}>
                         <td>{i + 1}</td><td>{label(s, lang)}</td><td className="n num">{s.wins}</td><td className="n num">{s.votesFor ?? "—"}</td>
                       </tr>
                     ))}
@@ -438,6 +439,28 @@ export default function Page() {
                 {g.matchups.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} />)}
               </div>
             ))}
+          </div>
+        </>
+      )}
+
+      {/* ── THIRD-PLACE PLAYOFF ── */}
+      {!loading && comp && phase === "playoff" && state.playoff && (
+        <>
+          <div className="sec"><h2>{T("playoff.title")}</h2><div className="meta2">{T("playoff.desc", { n: state.playoff.slots })}</div></div>
+          <div className="groupwrap">
+            <div className="group">
+              <table className="stand">
+                <thead><tr><th>{T("th.rank")}</th><th>{T("th.char")}</th><th style={{ textAlign: "right" }}>{T("th.win")}</th></tr></thead>
+                <tbody>
+                  {state.playoff.standings.map((s: any, i: number) => (
+                    <tr key={s.id} className={i < state.playoff.slots ? "adv" : ""}>
+                      <td>{i + 1}</td><td>{label(s, lang)}</td><td className="n num">{s.wins}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {state.playoff.matchups.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} />)}
+            </div>
           </div>
         </>
       )}
