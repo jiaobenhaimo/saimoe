@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { t, roundLabelT, LANGS, type Lang } from "@/lib/i18n";
 
-type Slim = { id: number; name: string; nameCn: string | null; image: string | null };
-type PoolItem = Slim & { votes: number; voted: boolean };
+type Slim = { id: number; name: string; nameCn: string | null; image: string | null; subjectName?: string | null };
+type PoolItem = Slim & { votes: number; voted: boolean; mine: boolean };
 type Match = {
   id: number; stage: string; round: number; group: number | null; slot: number;
   a: Slim | null; b: Slim | null;
@@ -71,8 +71,17 @@ function Avatar({ c, lg }: { c: Slim | null; lg?: boolean }) {
   return <img className={"av" + (lg ? " lg" : "")} src={src} alt={c.name} referrerPolicy="no-referrer" loading="lazy" onError={() => setBroke(true)} />;
 }
 
-const label = (c: Slim | null) => (c ? (c.nameCn || c.name) : "—");
-const sub = (c: Slim | null) => (c && c.nameCn && c.nameCn !== c.name ? c.name : "");
+// 主名按 UI 语言:中文→中文名,日文/英文→原名(通常即日文名;Bangumi 无英文名时回退原名)。
+const label = (c: Slim | null, lang: Lang) => (c ? (lang === "zh" ? (c.nameCn || c.name) : c.name) : "—");
+// 副行:非日文 UI 时补显日文(原)名(若与主名不同),并附作品名。
+const sub = (c: Slim | null, lang: Lang) => {
+  if (!c) return "";
+  const primary = lang === "zh" ? (c.nameCn || c.name) : c.name;
+  const parts: string[] = [];
+  if (lang !== "ja" && c.name && c.name !== primary) parts.push(c.name);
+  if (c.subjectName) parts.push(c.subjectName);
+  return parts.join(" · ");
+};
 
 function fmtRemain(ms: number, lang: Lang): string {
   const U = (k: string) => t(lang, k);
@@ -110,6 +119,10 @@ export default function Page() {
   const [state, setState] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState(false);
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState<any[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchErr, setSearchErr] = useState("");
   const [manual, setManual] = useState(false);
   const [mName, setMName] = useState("");
   const [mImg, setMImg] = useState("");
@@ -151,6 +164,25 @@ export default function Page() {
     return () => clearInterval(t);
   }, [load]);
 
+  // 角色搜索:v0 只有 POST /v0/search/characters。把它发成 CORS「简单请求」(text/plain)绕过预检;
+  // 能否成功取决于 Bangumi 是否给 POST 附跨域头,失败则回退手动添加。
+  const search = async () => {
+    const kw = q.trim(); if (!kw) return;
+    setSearching(true); setSearchErr(""); setHits(null); setManual(false);
+    try {
+      const r = await fetch("https://api.bgm.tv/v0/search/characters?limit=12", {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=UTF-8", Accept: "application/json" },
+        body: JSON.stringify({ keyword: kw }),
+      });
+      if (!r.ok) { setSearchErr(T("search.fail", { err: "HTTP " + r.status })); setHits([]); return; }
+      const j = await r.json();
+      const arr = Array.isArray(j?.data) ? j.data : Array.isArray(j?.list) ? j.list : [];
+      setHits(arr.map((c: any) => ({ bgmId: "c" + c.id, name: c.name || "", nameCn: "", image: c.images?.grid || c.images?.medium || "" })));
+    } catch { setSearchErr(T("search.fail", { err: "跨域被拦截,请改用搜作品或手动添加" })); setHits([]); }
+    finally { setSearching(false); }
+  };
+
   // 浏览器直接调 Bangumi 老接口 GET /search/subject(GET 支持跨域,无需代理/服务端)
   const searchSubjects = async () => {
     const kw = subQ.trim(); if (!kw) return;
@@ -174,24 +206,39 @@ export default function Page() {
       return await r.json();
     } finally { busyRef.current = false; }
   };
+  const nominate = async (h: any) => { await post({ batch: [{ bgmId: h.bgmId, name: h.name, nameCn: h.nameCn, image: h.image }] }); await load(); };
   const nominateManual = async () => {
     if (!mName.trim()) return;
     await post({ manual: { name: mName.trim(), image: mImg.trim() } });
     setMName(""); setMImg(""); setManual(false); await load();
   };
-  // 浏览器直接调 GET /v0/subjects/{id}/characters(GET 支持跨域),再把结果交给服务端存储
-  const importSubject = async (subjectId: string, name: string) => {
-    setImportMsg(T("import.progress", { name }));
+  // 浏览器直接调 GET(取角色列表 + 逐个补中文名),再交服务端存储;顺带记录作品名。
+  const importSubject = async (subjectId: string, subjectName: string) => {
+    setImportMsg(T("import.progress", { name: subjectName }));
     try {
       const r = await fetch(`https://api.bgm.tv/v0/subjects/${encodeURIComponent(subjectId)}/characters`, { headers: { Accept: "application/json" } });
       if (!r.ok) { setImportMsg(T("import.fail", { err: "HTTP " + r.status })); return; }
       const arr = await r.json();
       const chars = (Array.isArray(arr) ? arr : [])
-        .map((c: any) => ({ bgmId: "c" + c.id, name: c.name || "", nameCn: "", image: c.images?.grid || c.images?.medium || "" }))
-        .filter((c: any) => c.name);
+        .map((c: any) => ({ rawId: c.id, bgmId: "c" + c.id, name: c.name || "", nameCn: "", image: c.images?.grid || c.images?.medium || "", subjectName }))
+        .filter((c: any) => c.name)
+        .slice(0, 60);
       if (!chars.length) { setImportMsg(T("import.fail", { err: "no characters" })); return; }
-      const j = await post({ batch: chars });
-      setImportMsg(j?.error ? T("import.fail", { err: j.error }) : T("import.done", { name, added: j?.added ?? 0, imported: chars.length }));
+      // 补中文名:逐个取角色详情 infobox 的「简体中文名」(小并发,尽力而为)
+      for (let i = 0; i < chars.length; i += 6) {
+        setImportMsg(T("import.progress", { name: `${subjectName}（${i}/${chars.length}）` }));
+        await Promise.all(chars.slice(i, i + 6).map(async (ch: any) => {
+          try {
+            const d = await (await fetch(`https://api.bgm.tv/v0/characters/${ch.rawId}`, { headers: { Accept: "application/json" } })).json();
+            const box = Array.isArray(d?.infobox) ? d.infobox : [];
+            const it = box.find((x: any) => typeof x?.key === "string" && (x.key.includes("简体中文名") || x.key === "中文名"));
+            if (it && typeof it.value === "string") ch.nameCn = it.value;
+          } catch {}
+        }));
+      }
+      const batch = chars.map((c: any) => ({ bgmId: c.bgmId, name: c.name, nameCn: c.nameCn, image: c.image, subjectName: c.subjectName }));
+      const j = await post({ batch });
+      setImportMsg(j?.error ? T("import.fail", { err: j.error }) : T("import.done", { name: subjectName, added: j?.added ?? 0, imported: chars.length }));
       await load();
     } catch (e: any) {
       setImportMsg(T("import.fail", { err: e?.message || "network" }));
@@ -202,6 +249,12 @@ export default function Page() {
     setNomErr("");
     const r = await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "nominate", candidateId }) });
     const j = await r.json().catch(() => ({}));
+    if (j?.error) setNomErr(j.error);
+    await load();
+  };
+  const nomRemove = async (candidateId: number) => {
+    setNomErr("");
+    const j = await post({ remove: candidateId });
     if (j?.error) setNomErr(j.error);
     await load();
   };
@@ -273,6 +326,10 @@ export default function Page() {
         <>
           <div className="sectlabel">{T("nom.section")}</div>
           <div className="searchbox">
+            <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder={T("nom.ph.char")} />
+            <button onClick={search} disabled={searching || !q.trim()}>{searching ? T("common.searching") : T("nom.searchChar")}</button>
+          </div>
+          <div className="searchbox">
             <input value={subQ} onChange={(e) => setSubQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && searchSubjects()} placeholder={T("nom.ph.subject")} />
             <button onClick={searchSubjects} disabled={subSearching || !subQ.trim()}>{subSearching ? T("common.searching") : T("nom.searchSubject")}</button>
           </div>
@@ -287,6 +344,20 @@ export default function Page() {
                   <Avatar c={{ id: 0, name: s.nameCn || s.name, nameCn: null, image: s.image }} />
                   <div className="meta"><div className="nm">{s.nameCn || s.name}</div><div className="sub">{s.nameCn && s.nameCn !== s.name ? s.name + " · " : ""}{T("nom.subjectTag")} · #{s.subjectId}</div></div>
                   <button className="btn" onClick={() => importSubject(s.subjectId, s.nameCn || s.name)}>{T("nom.importAll")}</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {searchErr && <div className="hint" style={{ color: "var(--rose-deep)" }}>{searchErr}</div>}
+          {hits && (
+            <div className="results">
+              {hits.length === 0 && <div className="rrow"><span className="hint">{T("nom.noChar")}</span></div>}
+              {hits.map((h) => (
+                <div className="rrow" key={h.bgmId}>
+                  <Avatar c={{ id: 0, name: h.name, nameCn: null, image: h.image }} />
+                  <div className="meta"><div className="nm">{h.name}</div><div className="sub">{T("nom.charTag")} · #{h.bgmId}</div></div>
+                  <button className="btn" onClick={() => nominate(h)}>{T("nom.plus")}</button>
                 </div>
               ))}
             </div>
@@ -315,9 +386,10 @@ export default function Page() {
                 <div className="prow" key={p.id}>
                   <div className="rankn num">{i + 1}</div>
                   <Avatar c={p} />
-                  <div className="meta"><div className="nm">{label(p)}</div><div className="sub">{sub(p)}</div></div>
+                  <div className="meta"><div className="nm">{label(p, lang)}</div><div className="sub">{sub(p, lang)}</div></div>
                   <div className="votecell num"><div className="c">{p.votes}</div><div className="l">{T("nom.voteLabel")}</div></div>
                   <button className={"btn" + (p.voted ? " solid" : "")} onClick={() => nomVote(p.id)}>{p.voted ? T("nom.voted") : T("nom.vote")}</button>
+                  {p.mine && p.votes === 0 && <button className="btn ghost" onClick={() => nomRemove(p.id)}>{T("nom.remove")}</button>}
                 </div>
               ))}
             </div>
@@ -339,7 +411,7 @@ export default function Page() {
                   <tbody>
                     {g.standings.map((s: any, i: number) => (
                       <tr key={s.id} className={i < comp.advancePerGroup ? "adv" : ""}>
-                        <td>{i + 1}</td><td>{label(s)}</td><td className="n num">{s.wins}</td><td className="n num">{s.votesFor ?? "—"}</td>
+                        <td>{i + 1}</td><td>{label(s, lang)}</td><td className="n num">{s.wins}</td><td className="n num">{s.votesFor ?? "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -357,8 +429,8 @@ export default function Page() {
           {state.knockout.champion && (
             <div className="champ">
               <div className="crown">👑</div>
-              <div className="who">{label(state.knockout.champion)}</div>
-              {sub(state.knockout.champion) && <div className="cn">{sub(state.knockout.champion)}</div>}
+              <div className="who">{label(state.knockout.champion, lang)}</div>
+              {sub(state.knockout.champion, lang) && <div className="cn">{sub(state.knockout.champion, lang)}</div>}
               <div className="champ-tag">{T("champ.tag")}</div>
             </div>
           )}
@@ -369,7 +441,7 @@ export default function Page() {
                 <div className="bcol-h">{roundLabelT(lang, r.label)}</div>
                 <div className="bcol-cells">
                   {r.matchups.map((m: Match) => (
-                    <BracketCell key={m.id} m={m} active={sel === m.id} onOpen={() => setSel(sel === m.id ? null : m.id)} />
+                    <BracketCell key={m.id} m={m} active={sel === m.id} onOpen={() => setSel(sel === m.id ? null : m.id)} lang={lang} />
                   ))}
                 </div>
               </div>
@@ -409,14 +481,14 @@ function MatchCard({ m, onVote, ko, lang }: { m: Match; onVote: (mid: number, ci
       <div className="versus">
         <button type="button" className={sideCls(m.a?.id)} onClick={() => clickable && m.a && onVote(m.id, m.a.id)} disabled={!m.a}>
           <Avatar c={m.a} lg />
-          <span className="nm">{label(m.a)}</span>{sub(m.a) && <span className="cn">{sub(m.a)}</span>}
+          <span className="nm">{label(m.a, lang)}</span>{sub(m.a, lang) && <span className="cn">{sub(m.a, lang)}</span>}
           <span className="v num">{numA}</span>
           {m.decided && m.winnerId === m.a?.id && <span className="adv-tag">{T("match.advance")}</span>}
         </button>
         <div className="vs">VS</div>
         <button type="button" className={sideCls(m.b?.id)} onClick={() => clickable && m.b && onVote(m.id, m.b.id)} disabled={!m.b}>
           <Avatar c={m.b} lg />
-          <span className="nm">{label(m.b)}</span>{sub(m.b) && <span className="cn">{sub(m.b)}</span>}
+          <span className="nm">{label(m.b, lang)}</span>{sub(m.b, lang) && <span className="cn">{sub(m.b, lang)}</span>}
           <span className="v num">{numB}</span>
           {m.decided && m.winnerId === m.b?.id && <span className="adv-tag">{T("match.advance")}</span>}
         </button>
@@ -480,7 +552,7 @@ function Comments({ matchId, count, lang }: { matchId: number; count: number; la
   );
 }
 
-function BracketCell({ m, active, onOpen }: { m: Match; active: boolean; onOpen: () => void }) {
+function BracketCell({ m, active, onOpen, lang }: { m: Match; active: boolean; onOpen: () => void; lang: Lang }) {
   const revealed = m.decided;
   const cell = (c: Slim | null, id: number | undefined, right: boolean) => {
     const num = revealed ? (right ? m.votesB ?? 0 : m.votesA ?? 0) : m.rateA == null ? "" : (right ? 100 - m.rateA : m.rateA) + "%";
@@ -489,7 +561,7 @@ function BracketCell({ m, active, onOpen }: { m: Match; active: boolean; onOpen:
     return (
       <div className={"bside" + (win ? " win" : "") + (pick ? " picked" : "")}>
         <Avatar c={c} />
-        <span className="bnm">{label(c)}</span>
+        <span className="bnm">{label(c, lang)}</span>
         <span className="bnum num">{num}</span>
       </div>
     );

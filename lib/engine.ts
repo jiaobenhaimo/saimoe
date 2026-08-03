@@ -25,7 +25,7 @@ export function getState(voterId: string) {
 
   const cands = db.candidates.filter((c) => c.competition_id === comp.id).sort((a, b) => a.id - b.id);
   const slim = (c: Candidate | undefined) =>
-    c ? { id: c.id, name: c.name, nameCn: c.name_cn, image: c.image } : null;
+    c ? { id: c.id, name: c.name, nameCn: c.name_cn, image: c.image, subjectName: c.subject_name ?? null } : null;
 
   const base = {
     competition: {
@@ -45,7 +45,7 @@ export function getState(voterId: string) {
     for (const v of db.nominationVotes) if (v.competition_id === comp.id) nomCount.set(v.candidate_id, (nomCount.get(v.candidate_id) || 0) + 1);
     const myNomSet = new Set(db.nominationVotes.filter((v) => v.competition_id === comp.id && v.voter_id === voterId).map((v) => v.candidate_id));
     const pool = cands
-      .map((c) => ({ ...slim(c)!, votes: nomCount.get(c.id) || 0, voted: myNomSet.has(c.id) }))
+      .map((c) => ({ ...slim(c)!, votes: nomCount.get(c.id) || 0, voted: myNomSet.has(c.id), mine: (c.added_by || "") === voterId }))
       .sort((x, y) => y.votes - x.votes || x.name.localeCompare(y.name));
     return { ...base, nomination: { pool, userLimit: comp.nom_user_limit ?? 0, minVotes: comp.nom_min_votes ?? 0, myCount: myNomSet.size } };
   }

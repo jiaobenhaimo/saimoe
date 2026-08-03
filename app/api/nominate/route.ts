@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema, addCandidate } from "@/lib/db";
+import { ensureSchema, addCandidate, removeOwnCandidate } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition } from "@/lib/engine";
+import { getVoterId } from "@/lib/voter";
 import { getCharacter, getSubjectCharacters, parseSubjectId, type BgmHit } from "@/lib/bangumi";
 import { rateLimited } from "@/lib/ratelimit";
 
@@ -22,7 +23,15 @@ export async function POST(req: NextRequest) {
     if (!comp) return NextResponse.json({ error: "还没有进行中的比赛。" }, { status: 400 });
     if (comp.phase !== "nomination") return NextResponse.json({ error: "提名阶段已结束。" }, { status: 400 });
 
+    const vid = await getVoterId();
     const body = await req.json();
+
+    // ── remove a character the current user nominated (only if it has 0 votes) ──
+    if (body.remove != null) {
+      const r = removeOwnCandidate(comp.id, Number(body.remove), vid);
+      if ("error" in r) return NextResponse.json({ error: r.error }, { status: 400 });
+      return NextResponse.json({ ok: true });
+    }
 
     // ── client-resolved batch: store pre-fetched candidates (browser did the Bangumi GET; server never touches Bangumi) ──
     if (Array.isArray(body.batch)) {
@@ -33,7 +42,8 @@ export async function POST(req: NextRequest) {
         const bgmId = String(c?.bgmId || "m_" + Math.random().toString(36).slice(2, 8));
         const nameCn = String(c?.nameCn || "").trim();
         const image = String(c?.image || "").trim();
-        if (addCandidate(comp.id, bgmId, name, nameCn, image)) added++;
+        const subjectName = String(c?.subjectName || "").trim();
+        if (addCandidate(comp.id, bgmId, name, nameCn, image, subjectName, vid)) added++;
       }
       return NextResponse.json({ ok: true, added, imported: body.batch.length });
     }
@@ -60,7 +70,7 @@ export async function POST(req: NextRequest) {
       const nameCn = String(body.manual.nameCn || "").trim();
       const image = String(body.manual.image || "").trim();
       const bgmId = "m_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-      return NextResponse.json({ ok: true, added: addCandidate(comp.id, bgmId, name, nameCn, image) });
+      return NextResponse.json({ ok: true, added: addCandidate(comp.id, bgmId, name, nameCn, image, "", vid) });
     }
 
     return NextResponse.json({ error: "缺少角色信息。" }, { status: 400 });
