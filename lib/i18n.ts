@@ -130,6 +130,7 @@ const D: Record<string, Entry> = {
   "pick.acc": { zh: "命中率", en: "ACC", ja: "的中率" },
   "pick.noBoard": { zh: "还没有人参与预测,来押第一注吧!", en: "No picks yet — make the first prediction!", ja: "まだ予想がありません。最初の予想をどうぞ!" },
   "pick.myStats": { zh: "我的排名 #{r} · {p} 分 · 命中 {c}/{t}", en: "My rank #{r} · {p} pts · {c}/{t} correct", ja: "順位 #{r} · {p}点 · 的中 {c}/{t}" },
+  "pick.myPending": { zh: "已预测 {n} 场,结算后计分", en: "Picked {n} — scored once matches settle", ja: "{n}試合を予想済み — 確定後に集計" },
   "pick.myNone": { zh: "还没有预测,快去押注吧", en: "No picks yet — go make one!", ja: "まだ予想がありません。予想してみよう!" },
   "pick.anon": { zh: "匿名", en: "Anonymous", ja: "匿名" },
 
