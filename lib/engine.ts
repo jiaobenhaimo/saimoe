@@ -1,4 +1,4 @@
-import { readDb, writeDb, type DB, type Competition, type Candidate, type Matchup } from "./db";
+import { readDb, writeDb, commentCounts, type DB, type Competition, type Candidate, type Matchup } from "./db";
 
 // ── reads ─────────────────────────────────────────────────────
 export function getActiveCompetition(): Competition | null {
@@ -33,6 +33,10 @@ export function getState(voterId: string) {
       groupsCount: comp.groups_count, advancePerGroup: comp.advance_per_group, championId: comp.champion_id,
       nomEndsAt: comp.nom_ends_at ?? null, groupEndsAt: comp.group_ends_at ?? null, koRoundEndsAt: comp.ko_round_ends_at ?? null,
       postponeDays: comp.postpone_days ?? null,
+      nomUserLimit: comp.nom_user_limit ?? 0, nomMinVotes: comp.nom_min_votes ?? 0,
+      groupMatchday: comp.group_matchday ?? null, groupMatchdayCount: comp.group_matchday_count ?? null,
+      groupRoundEndsAt: comp.group_round_ends_at ?? null,
+      groupPerRound: comp.group_per_round ?? 0, groupRoundDays: comp.group_round_days ?? 0,
     },
   };
 
@@ -43,32 +47,44 @@ export function getState(voterId: string) {
     const pool = cands
       .map((c) => ({ ...slim(c)!, votes: nomCount.get(c.id) || 0, voted: myNomSet.has(c.id) }))
       .sort((x, y) => y.votes - x.votes || x.name.localeCompare(y.name));
-    return { ...base, nomination: { pool } };
+    return { ...base, nomination: { pool, userLimit: comp.nom_user_limit ?? 0, minVotes: comp.nom_min_votes ?? 0, myCount: myNomSet.size } };
   }
 
   const ms = db.matchups.filter((m) => m.competition_id === comp.id);
   const cmap = new Map(cands.map((c) => [c.id, c]));
   const counts = matchCounts(db, comp.id);
+  const cc = commentCounts(comp.id);
   const myChoice = new Map<number, number>();
   const compMatchIds = new Set(ms.map((m) => m.id));
   for (const v of db.matchVotes) if (v.voter_id === voterId && compMatchIds.has(v.matchup_id)) myChoice.set(v.matchup_id, v.choice_id);
 
   const votesA = (m: Matchup) => counts.get(m.id + ":" + m.a_id) || 0;
   const votesB = (m: Matchup) => counts.get(m.id + ":" + m.b_id) || 0;
+  const seedOf = (id: number) => cmap.get(id)?.seed ?? Number.MAX_SAFE_INTEGER;
   const liveWinner = (m: Matchup): number | null => {
     if (m.decided) return m.winner_id;
     const a = votesA(m), b = votesB(m);
-    // 与结算规则 decide() 一致:平票判 A 方,避免「实时排名」与「结算排名」不一致
-    return a === b ? m.a_id : a > b ? m.a_id : m.b_id;
+    // 与 decide() 一致:平票判种子高者,种子相同判 A 方
+    if (a !== b) return a > b ? m.a_id : m.b_id;
+    return seedOf(m.a_id) <= seedOf(m.b_id) ? m.a_id : m.b_id;
   };
-  const shapeMatch = (m: Matchup) => ({
-    id: m.id, stage: m.stage, round: m.round_no, group: m.group_no, slot: m.slot,
-    a: slim(cmap.get(m.a_id)), b: slim(cmap.get(m.b_id)),
-    votesA: votesA(m), votesB: votesB(m),
-    winnerId: liveWinner(m), decided: m.decided, myChoice: myChoice.get(m.id) ?? null,
-  });
+  // 赛中只公布「得票率」;结算后(decided)才公布绝对票数。
+  const shapeMatch = (m: Matchup) => {
+    const va = votesA(m), vb = votesB(m), total = va + vb;
+    const revealed = m.decided;
+    return {
+      id: m.id, stage: m.stage, round: m.round_no, group: m.group_no, slot: m.slot,
+      a: slim(cmap.get(m.a_id)), b: slim(cmap.get(m.b_id)),
+      votesA: revealed ? va : null, votesB: revealed ? vb : null, total: revealed ? total : null,
+      rateA: total ? Math.round((va / total) * 100) : null,
+      winnerId: liveWinner(m), decided: m.decided, myChoice: myChoice.get(m.id) ?? null,
+      commentN: cc[m.id] || 0,
+    };
+  };
 
   if (comp.phase === "group") {
+    const curMd = comp.group_matchday ?? 1;
+    const mdCount = comp.group_matchday_count ?? 1;
     const groupMs = ms.filter((m) => m.stage === "group");
     const byGroup = new Map<number, Matchup[]>();
     for (const m of groupMs) {
@@ -76,14 +92,16 @@ export function getState(voterId: string) {
       if (!byGroup.has(g)) byGroup.set(g, []);
       byGroup.get(g)!.push(m);
     }
+    const played = (m: Matchup) => m.decided || ((m.matchday ?? curMd) === curMd);
     const groups = [...byGroup.entries()]
       .sort((a, b) => a[0] - b[0])
       .map(([g, list]) => {
-        list.sort((a, b) => a.slot - b.slot);
+        list.sort((a, b) => (a.matchday ?? 1) - (b.matchday ?? 1) || a.slot - b.slot);
         const members = cands.filter((c) => c.group_no === g);
         const stand = members.map((c) => {
           let wins = 0, vf = 0;
           for (const m of list) {
+            if (!played(m)) continue; // 未开始的比赛日不计入
             if (m.a_id === c.id) vf += votesA(m);
             if (m.b_id === c.id) vf += votesB(m);
             if (liveWinner(m) === c.id) wins++;
@@ -91,9 +109,10 @@ export function getState(voterId: string) {
           return { ...slim(c)!, wins, votesFor: vf };
         });
         stand.sort((x, y) => y.wins - x.wins || y.votesFor - x.votesFor);
-        return { group: g, standings: stand, matchups: list.map(shapeMatch) };
+        const matchups = list.map((m) => ({ ...shapeMatch(m), matchday: m.matchday ?? 1, live: ((m.matchday ?? curMd) === curMd) && !m.decided }));
+        return { group: g, standings: stand.map((s) => ({ ...s, votesFor: null })), matchups };
       });
-    return { ...base, group: { groups } };
+    return { ...base, group: { groups, matchday: curMd, matchdayCount: mdCount } };
   }
 
   // knockout / finished
@@ -108,20 +127,56 @@ export function getState(voterId: string) {
 }
 
 function roundLabel(contestants: number): string {
-  if (contestants <= 2) return "决赛";
-  if (contestants === 4) return "半决赛";
-  if (contestants === 8) return "四分之一决赛";
-  return `${contestants} 强`;
+  if (contestants <= 2) return "final";
+  if (contestants === 4) return "semi";
+  if (contestants === 8) return "quarter";
+  return "top:" + contestants;
 }
 
 // ── helpers ───────────────────────────────────────────────────
 function isPow2(n: number) { return n >= 2 && (n & (n - 1)) === 0; }
 
-function decide(m: Matchup, counts: Map<string, number>) {
+/** Round-robin schedule split into matchdays (circle method / 1-factorization).
+ *  Each matchday is a set of DISJOINT pairs (no character appears twice in a
+ *  matchday). `perRound` caps matches per matchday per group (0 = auto = ⌊n/2⌋). */
+function groupMatchdays(ids: number[], perRound: number): [number, number][][] {
+  const arr = ids.slice();
+  const BYE = -1;
+  if (arr.length % 2 === 1) arr.push(BYE);
+  const n = arr.length;
+  const rounds: [number, number][][] = [];
+  if (n >= 2) {
+    const fixed = arr[0];
+    let rot = arr.slice(1);
+    for (let r = 0; r < n - 1; r++) {
+      const row = [fixed, ...rot];
+      const pairs: [number, number][] = [];
+      for (let i = 0; i < n / 2; i++) {
+        const a = row[i], b = row[n - 1 - i];
+        if (a !== BYE && b !== BYE) pairs.push([a, b]);
+      }
+      if (pairs.length) rounds.push(pairs);
+      rot.unshift(rot.pop() as number); // rotate
+    }
+  }
+  const K = perRound && perRound > 0 ? perRound : Math.max(1, Math.floor(ids.length / 2));
+  const days: [number, number][][] = [];
+  for (const rd of rounds) for (let i = 0; i < rd.length; i += K) days.push(rd.slice(i, i + K));
+  return days;
+}
+
+function seedLookup(db: DB, cid: number): (id: number) => number {
+  const m = new Map<number, number>();
+  for (const c of db.candidates) if (c.competition_id === cid) m.set(c.id, c.seed ?? Number.MAX_SAFE_INTEGER);
+  return (id) => m.get(id) ?? Number.MAX_SAFE_INTEGER;
+}
+
+function decide(m: Matchup, counts: Map<string, number>, seedOf: (id: number) => number) {
   const a = counts.get(m.id + ":" + m.a_id) || 0;
   const b = counts.get(m.id + ":" + m.b_id) || 0;
-  // tie / zero-vote matchups resolve deterministically to the A side
-  m.winner_id = a === b ? m.a_id : a > b ? m.a_id : m.b_id;
+  // 平票 / 零票:判给种子更高者(seed 序号更小);种子相同则判 A 方。
+  if (a !== b) m.winner_id = a > b ? m.a_id : m.b_id;
+  else m.winner_id = seedOf(m.a_id) <= seedOf(m.b_id) ? m.a_id : m.b_id;
   m.decided = true;
 }
 
@@ -150,7 +205,7 @@ export function updateCompetition(cid: number, title: string, description: strin
 }
 
 /** nomination → group: keep top `size` candidates, split into groups, build round-robin. */
-export function startGroups(cid: number, size: number, groupsCount: number, advancePerGroup: number) {
+export function startGroups(cid: number, size: number, groupsCount: number, advancePerGroup: number, perRound = 0, roundDays = 0) {
   const qualifiers = groupsCount * advancePerGroup;
   if (!isPow2(qualifiers)) throw new Error(`晋级总数 ${qualifiers}（小组数×每组晋级）必须是 2 的幂，淘汰赛才不会有轮空。当前不是。`);
   if (size < groupsCount * 2) throw new Error("参赛人数太少，无法组成每组至少 2 人的小组。");
@@ -164,15 +219,18 @@ export function startGroups(cid: number, size: number, groupsCount: number, adva
   const nomCount = new Map<number, number>();
   for (const v of db.nominationVotes) if (v.competition_id === cid) nomCount.set(v.candidate_id, (nomCount.get(v.candidate_id) || 0) + 1);
   const compCands = db.candidates.filter((c) => c.competition_id === cid);
+  const minVotes = comp.nom_min_votes ?? 0;
   const ranked = compCands
     .map((c) => ({ id: c.id, votes: nomCount.get(c.id) || 0 }))
+    .filter((r) => r.votes >= minVotes)
     .sort((a, b) => b.votes - a.votes || a.id - b.id)
     .slice(0, size);
-  if (ranked.length < size) throw new Error(`提名池只有 ${ranked.length} 个角色，不足 ${size} 个。`);
+  if (ranked.length < size) throw new Error(minVotes > 0
+    ? `达到最低提名票(${minVotes})的角色只有 ${ranked.length} 个，不足 ${size} 个。`
+    : `提名池只有 ${ranked.length} 个角色，不足 ${size} 个。`);
 
   comp.phase = "group"; comp.target_size = size; comp.groups_count = groupsCount; comp.advance_per_group = advancePerGroup;
   comp.nom_ends_at = null;
-  comp.group_ends_at = comp.group_hours ? Date.now() + comp.group_hours * 3600_000 : null;
 
   const chosen = new Set(ranked.map((r) => r.id));
   for (const c of compCands) if (!chosen.has(c.id)) { c.group_no = null; c.eliminated = true; }
@@ -183,14 +241,47 @@ export function startGroups(cid: number, size: number, groupsCount: number, adva
 
   const grp: number[][] = Array.from({ length: groupsCount }, () => []);
   ranked.forEach((r, i) => grp[i % groupsCount].push(r.id));
+
+  // matchday scheduling (resolve per-round / round-days, falling back to any scheduled values)
+  const K = perRound > 0 ? perRound : (comp.group_per_round ?? 0);
+  const RD = roundDays > 0 ? roundDays : (comp.group_round_days ?? 0);
+  let mdCount = 0;
   for (let g = 0; g < groupsCount; g++) {
-    let slot = 0;
-    const arr = grp[g];
-    for (let i = 0; i < arr.length; i++)
-      for (let j = i + 1; j < arr.length; j++)
-        db.matchups.push({ id: ++db.seq.matchup, competition_id: cid, stage: "group", round_no: 1, group_no: g, slot: slot++, a_id: arr[i], b_id: arr[j], winner_id: null, decided: false });
+    const days = groupMatchdays(grp[g], K);
+    mdCount = Math.max(mdCount, days.length);
+    days.forEach((day, di) => day.forEach(([a, b], si) => {
+      db.matchups.push({ id: ++db.seq.matchup, competition_id: cid, stage: "group", round_no: 1, group_no: g, slot: si, a_id: a, b_id: b, winner_id: null, decided: false, matchday: di + 1 });
+    }));
   }
+  comp.group_matchday = 1;
+  comp.group_matchday_count = Math.max(1, mdCount);
+  comp.group_per_round = K || null;
+  comp.group_round_days = RD || null;
+  comp.group_round_ends_at = RD > 0 ? Date.now() + RD * 86400_000 : null;
+  comp.group_ends_at = null; // superseded by per-matchday deadlines
   writeDb(db);
+}
+
+/** Settle the current group matchday; open the next one, or report done. */
+export function advanceGroupMatchday(cid: number): { done: boolean; message: string } {
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp || comp.phase !== "group") throw new Error("当前不在小组赛阶段。");
+  const cur = comp.group_matchday ?? 1;
+  const count = comp.group_matchday_count ?? 1;
+  const counts = matchCounts(db, cid);
+  const seedOf = seedLookup(db, cid);
+  for (const m of db.matchups)
+    if (m.competition_id === cid && m.stage === "group" && (m.matchday ?? 1) === cur) decide(m, counts, seedOf);
+  if (cur < count) {
+    comp.group_matchday = cur + 1;
+    comp.group_round_ends_at = comp.group_round_days ? Date.now() + comp.group_round_days * 86400_000 : null;
+    writeDb(db);
+    return { done: false, message: `已结算第 ${cur} 个比赛日，进入第 ${cur + 1}/${count} 个比赛日。` };
+  }
+  comp.group_round_ends_at = null;
+  writeDb(db);
+  return { done: true, message: `已结算最后一个比赛日（第 ${cur}/${count}）。现在可以开淘汰赛。` };
 }
 
 /** group → knockout: lock group results, take top N per group, seed the bracket. */
@@ -201,9 +292,10 @@ export function startKnockout(cid: number) {
   const advance = comp.advance_per_group as number;
   const groupsCount = comp.groups_count as number;
   const counts = matchCounts(db, cid);
+  const seedOf = seedLookup(db, cid);
 
   // lock all group matchups (deterministic → safe to re-run)
-  for (const m of db.matchups) if (m.competition_id === cid && m.stage === "group") decide(m, counts);
+  for (const m of db.matchups) if (m.competition_id === cid && m.stage === "group") decide(m, counts, seedOf);
 
   // standings per group; compute + validate BEFORE mutating phase (no stuck state)
   const perGroupOrdered: number[][] = [];
@@ -260,7 +352,8 @@ export function advanceKnockout(cid: number) {
   const counts = matchCounts(db, cid);
 
   const cur = koMs.filter((m) => m.round_no === round).sort((a, b) => a.slot - b.slot);
-  for (const m of cur) decide(m, counts);
+  const seedOf = seedLookup(db, cid);
+  for (const m of cur) decide(m, counts, seedOf);
   const winners = cur.map((m) => m.winner_id!).filter((x) => x != null) as number[];
 
   for (const m of cur) {
@@ -286,9 +379,11 @@ export function advanceKnockout(cid: number) {
 export interface ScheduleOpts {
   nomEndsAt: number | null;      // epoch ms when nomination auto-closes
   autoSize: number; autoGroups: number; autoAdvance: number;
-  groupHours: number | null;     // group-stage duration
+  groupHours: number | null;     // (legacy) whole group-stage duration
   roundHours: number | null;     // per knockout-round duration
   postponeDays: number;          // days to push back if the pool is short at the deadline
+  groupPerRound?: number;        // matches per matchday per group (0 = auto)
+  groupRoundDays?: number;       // days per group matchday
 }
 
 /** Arm the automatic schedule (only meaningful in the nomination phase). */
@@ -303,6 +398,8 @@ export function scheduleCompetition(cid: number, o: ScheduleOpts) {
   if (!comp) return;
   comp.auto_size = o.autoSize; comp.auto_groups = o.autoGroups; comp.auto_advance = o.autoAdvance;
   comp.group_hours = o.groupHours; comp.round_hours = o.roundHours;
+  comp.group_per_round = o.groupPerRound && o.groupPerRound > 0 ? o.groupPerRound : null;
+  comp.group_round_days = o.groupRoundDays && o.groupRoundDays > 0 ? o.groupRoundDays : null;
   comp.postpone_days = o.postponeDays > 0 ? o.postponeDays : 1;
   comp.nom_ends_at = o.nomEndsAt && o.nomEndsAt > Date.now() ? o.nomEndsAt : null;
   writeDb(db);
@@ -313,7 +410,7 @@ export function clearSchedule(cid: number) {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
   if (!comp) return;
-  comp.nom_ends_at = null; comp.group_ends_at = null; comp.ko_round_ends_at = null;
+  comp.nom_ends_at = null; comp.group_ends_at = null; comp.ko_round_ends_at = null; comp.group_round_ends_at = null;
   writeDb(db);
 }
 
@@ -352,6 +449,7 @@ export function undoLastTransition(cid: number): string {
     comp.phase = "nomination";
     comp.target_size = null; comp.groups_count = null; comp.advance_per_group = null;
     comp.group_ends_at = null;
+    comp.group_matchday = null; comp.group_matchday_count = null; comp.group_round_ends_at = null;
     writeDb(db);
     return "已撤回：小组赛 → 回到提名阶段。";
   }
@@ -374,6 +472,7 @@ export function undoLastTransition(cid: number): string {
     for (const m of db.matchups) if (m.competition_id === cid && m.stage === "group") { m.decided = false; m.winner_id = null; }
     for (const c of db.candidates) if (c.competition_id === cid && c.group_no !== null) c.eliminated = false;
     comp.phase = "group"; comp.ko_round = null; comp.ko_round_ends_at = null;
+    comp.group_matchday = comp.group_matchday_count ?? 1; comp.group_round_ends_at = null;
     writeDb(db);
     return "已撤回：淘汰赛 → 回到小组赛。";
   }
@@ -400,24 +499,50 @@ export function resettleCurrentRound(cid: number): string {
   const counts = matchCounts(db, cid);
 
   if (comp.phase === "group") {
-    for (const m of db.matchups) if (m.competition_id === cid && m.stage === "group") decide(m, counts);
+    const cur = comp.group_matchday ?? 1;
+    const seedOf = seedLookup(db, cid);
+    for (const m of db.matchups) if (m.competition_id === cid && m.stage === "group" && (m.matchday ?? 1) === cur) decide(m, counts, seedOf);
     writeDb(db);
-    return "已重算：小组赛全部对战按当前票数结算。";
+    return `已重算：第 ${cur} 个比赛日按当前票数结算。`;
   }
   if (comp.phase === "knockout") {
     const round = comp.ko_round as number;
-    for (const m of db.matchups) if (m.competition_id === cid && m.stage === "knockout" && m.round_no === round) decide(m, counts);
+    const seedOf = seedLookup(db, cid);
+    for (const m of db.matchups) if (m.competition_id === cid && m.stage === "knockout" && m.round_no === round) decide(m, counts, seedOf);
     writeDb(db);
     return `已重算：第 ${round} 轮按当前票数结算。`;
   }
   if (comp.phase === "finished") {
     const last = (comp.ko_round as number) - 1;
     const ms = db.matchups.filter((m) => m.competition_id === cid && m.stage === "knockout" && m.round_no === last);
-    for (const m of ms) decide(m, counts);
+    const seedOf = seedLookup(db, cid);
+    for (const m of ms) decide(m, counts, seedOf);
     const winners = ms.map((m) => m.winner_id!).filter((x) => x != null);
     comp.champion_id = winners[0] ?? null;
     writeDb(db);
     return "已重算：决赛按当前票数结算。";
   }
   throw new Error("当前阶段无需重算。");
+}
+
+/** 设置提名约束:每人提名上限(userLimit,0=不限)、进入小组赛的最低提名票(minVotes,0=不限)。 */
+export function setNominationRules(cid: number, userLimit: number, minVotes: number) {
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp) return;
+  comp.nom_user_limit = Number.isFinite(userLimit) && userLimit > 0 ? Math.floor(userLimit) : 0;
+  comp.nom_min_votes = Number.isFinite(minVotes) && minVotes > 0 ? Math.floor(minVotes) : 0;
+  writeDb(db);
+}
+
+/** 直接设定/延长/清除当前阶段的截止时间(hours<=0 表示清除)。用于运营手动调度控制。 */
+export function setPhaseDeadline(cid: number, hours: number) {
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp) return;
+  const at = hours > 0 ? Date.now() + Math.round(hours * 3600_000) : null;
+  if (comp.phase === "nomination") comp.nom_ends_at = at;
+  else if (comp.phase === "group") comp.group_round_ends_at = at;
+  else if (comp.phase === "knockout") comp.ko_round_ends_at = at;
+  writeDb(db);
 }

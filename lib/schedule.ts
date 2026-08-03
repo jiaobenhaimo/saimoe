@@ -1,4 +1,4 @@
-import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, postponeNomination, poolSize } from "./engine";
+import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, postponeNomination, poolSize } from "./engine";
 
 let last = 0;
 
@@ -24,8 +24,12 @@ export function runTick(force = false): void {
         // pool too small → push the deadline back and try again later
         postponeNomination(comp.id);
       }
+    } else if (comp.phase === "group" && comp.group_round_ends_at && now >= comp.group_round_ends_at) {
+      // per-matchday advance; when the last matchday settles, roll into knockout
+      const r = advanceGroupMatchday(comp.id);
+      if (r.done) startKnockout(comp.id);
     } else if (comp.phase === "group" && comp.group_ends_at && now >= comp.group_ends_at) {
-      startKnockout(comp.id);
+      startKnockout(comp.id); // legacy (comps started before matchday scheduling)
     } else if (comp.phase === "knockout" && comp.ko_round_ends_at && now >= comp.ko_round_ends_at) {
       advanceKnockout(comp.id);
     }

@@ -25,6 +25,11 @@ export interface Competition {
   nom_ends_at: number | null; group_ends_at: number | null; ko_round_ends_at: number | null;
   auto_size: number | null; auto_groups: number | null; auto_advance: number | null;
   group_hours: number | null; round_hours: number | null; postpone_days: number | null;
+  // ── nomination constraints (null/0 = unlimited) ──
+  nom_user_limit: number | null; nom_min_votes: number | null;
+  // ── group stage matchdays (round-robin split into rounds) ──
+  group_matchday: number | null; group_matchday_count: number | null;
+  group_per_round: number | null; group_round_days: number | null; group_round_ends_at: number | null;
 }
 export interface Candidate {
   id: number; competition_id: number; bgm_id: string; name: string; name_cn: string | null;
@@ -33,18 +38,23 @@ export interface Candidate {
 export interface Matchup {
   id: number; competition_id: number; stage: "group" | "knockout"; round_no: number;
   group_no: number | null; slot: number; a_id: number; b_id: number;
-  winner_id: number | null; decided: boolean;
+  winner_id: number | null; decided: boolean; matchday?: number | null;
 }
 interface NominationVote { competition_id: number; candidate_id: number; voter_id: string; }
 interface MatchVote { matchup_id: number; voter_id: string; choice_id: number; }
+export interface Comment {
+  id: number; competition_id: number; matchup_id: number; voter_id: string;
+  name: string; text: string; created_at: number;
+}
 
 export interface DB {
-  seq: { competition: number; candidate: number; matchup: number };
+  seq: { competition: number; candidate: number; matchup: number; comment: number };
   competitions: Competition[];
   candidates: Candidate[];
   matchups: Matchup[];
   nominationVotes: NominationVote[];
   matchVotes: MatchVote[];
+  comments: Comment[];
 }
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
@@ -54,7 +64,7 @@ const FILE = path.join(DATA_DIR, "saimoe.json");
 export function dataFilePath(): string { return FILE; }
 
 function blank(): DB {
-  return { seq: { competition: 0, candidate: 0, matchup: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [] };
+  return { seq: { competition: 0, candidate: 0, matchup: 0, comment: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [], comments: [] };
 }
 function normalize(o: any): DB {
   if (!o || typeof o !== "object") return blank();
@@ -64,12 +74,14 @@ function normalize(o: any): DB {
       competition: Number(o?.seq?.competition) || 0,
       candidate: Number(o?.seq?.candidate) || 0,
       matchup: Number(o?.seq?.matchup) || 0,
+      comment: Number(o?.seq?.comment) || 0,
     },
     competitions: Array.isArray(o.competitions) ? o.competitions : b.competitions,
     candidates: Array.isArray(o.candidates) ? o.candidates : b.candidates,
     matchups: Array.isArray(o.matchups) ? o.matchups : b.matchups,
     nominationVotes: Array.isArray(o.nominationVotes) ? o.nominationVotes : b.nominationVotes,
     matchVotes: Array.isArray(o.matchVotes) ? o.matchVotes : b.matchVotes,
+    comments: Array.isArray(o.comments) ? o.comments : b.comments,
   };
 }
 
@@ -117,7 +129,7 @@ export function ensureSchema(): void {
 export function createCompetition(title: string): number {
   const db = readDb();
   const id = ++db.seq.competition;
-  db.competitions.push({ id, title, description: null, phase: "nomination", target_size: null, groups_count: null, advance_per_group: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, auto_groups: null, auto_advance: null, group_hours: null, round_hours: null, postpone_days: null });
+  db.competitions.push({ id, title, description: null, phase: "nomination", target_size: null, groups_count: null, advance_per_group: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, auto_groups: null, auto_advance: null, group_hours: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null });
   writeDb(db);
   return id;
 }
@@ -131,6 +143,7 @@ export function deleteCompetition(cid: number): void {
   db.matchups = db.matchups.filter((m) => m.competition_id !== cid);
   db.nominationVotes = db.nominationVotes.filter((v) => v.competition_id !== cid && !candIds.has(v.candidate_id));
   db.matchVotes = db.matchVotes.filter((v) => !matchIds.has(v.matchup_id));
+  db.comments = db.comments.filter((c) => c.competition_id !== cid);
   writeDb(db);
 }
 
@@ -159,12 +172,18 @@ export function removeCandidate(cid: number, candidateId: number): boolean {
 }
 
 /** Toggle a nomination vote. Returns null if the candidate doesn't exist. */
-export function toggleNomination(cid: number, candidateId: number, voterId: string): { voted: boolean } | null {
+export function toggleNomination(cid: number, candidateId: number, voterId: string): { voted: boolean } | { error: string } | null {
   const db = readDb();
   const cand = db.candidates.find((c) => c.id === candidateId && c.competition_id === cid);
   if (!cand) return null;
   const i = db.nominationVotes.findIndex((v) => v.competition_id === cid && v.voter_id === voterId && v.candidate_id === candidateId);
-  if (i >= 0) { db.nominationVotes.splice(i, 1); writeDb(db); return { voted: false }; }
+  if (i >= 0) { db.nominationVotes.splice(i, 1); writeDb(db); return { voted: false }; } // 撤回总是允许
+  const comp = db.competitions.find((c) => c.id === cid);
+  const limit = comp?.nom_user_limit ?? 0;
+  if (limit > 0) {
+    const cnt = db.nominationVotes.filter((v) => v.competition_id === cid && v.voter_id === voterId).length;
+    if (cnt >= limit) return { error: `每人最多提名 ${limit} 个角色，请先撤回一个再提名其他角色。` };
+  }
   db.nominationVotes.push({ competition_id: cid, candidate_id: candidateId, voter_id: voterId });
   writeDb(db);
   return { voted: true };
@@ -176,6 +195,12 @@ export function castMatchVote(cid: number, matchupId: number, voterId: string, c
   const m = db.matchups.find((x) => x.id === matchupId && x.competition_id === cid);
   if (!m) return { error: "对战不存在。", status: 404 };
   if (m.decided) return { error: "该场已结束，不能再投票。", status: 400 };
+  // 小组赛分轮:只有「当前比赛日」的对战可投票
+  if (m.stage === "group") {
+    const comp = db.competitions.find((c) => c.id === cid);
+    const cur = comp?.group_matchday ?? null;
+    if (cur != null && (m.matchday ?? cur) !== cur) return { error: "本场对战当前未开放，请等待对应比赛日。", status: 400 };
+  }
   if (choiceId !== m.a_id && choiceId !== m.b_id) return { error: "无效的选择。", status: 400 };
   const cur = db.matchVotes.find((v) => v.matchup_id === matchupId && v.voter_id === voterId);
   if (cur && cur.choice_id === choiceId) {
@@ -187,4 +212,40 @@ export function castMatchVote(cid: number, matchupId: number, voterId: string, c
   else db.matchVotes.push({ matchup_id: matchupId, voter_id: voterId, choice_id: choiceId });
   writeDb(db);
   return { choice: choiceId };
+}
+
+// ── comments (per-match discussion) ──
+const COMMENT_MAX = 300;
+export function addComment(cid: number, matchupId: number, voterId: string, name: string, text: string): { ok: true; comment: Comment } | { error: string } {
+  const t = (text || "").trim();
+  if (!t) return { error: "评论不能为空。" };
+  if (t.length > COMMENT_MAX) return { error: `评论过长(最多 ${COMMENT_MAX} 字)。` };
+  const db = readDb();
+  if (matchupId) {
+    const m = db.matchups.find((x) => x.id === matchupId && x.competition_id === cid);
+    if (!m) return { error: "对战不存在。" };
+  }
+  const nm = (name || "").trim().slice(0, 24);
+  const c: Comment = { id: ++db.seq.comment, competition_id: cid, matchup_id: matchupId || 0, voter_id: voterId, name: nm, text: t, created_at: Date.now() };
+  db.comments.push(c);
+  writeDb(db);
+  return { ok: true, comment: c };
+}
+export function listComments(cid: number, matchupId: number, limit = 100): Comment[] {
+  const db = readDb();
+  return db.comments
+    .filter((c) => c.competition_id === cid && c.matchup_id === (matchupId || 0))
+    .sort((a, b) => b.created_at - a.created_at)
+    .slice(0, limit);
+}
+export function deleteComment(cid: number, commentId: number): void {
+  const db = readDb();
+  db.comments = db.comments.filter((c) => !(c.competition_id === cid && c.id === commentId));
+  writeDb(db);
+}
+export function commentCounts(cid: number): Record<number, number> {
+  const db = readDb();
+  const out: Record<number, number> = {};
+  for (const c of db.comments) if (c.competition_id === cid) out[c.matchup_id] = (out[c.matchup_id] || 0) + 1;
+  return out;
 }

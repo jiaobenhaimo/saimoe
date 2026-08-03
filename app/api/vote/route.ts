@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
       if (comp.phase !== "nomination") return NextResponse.json({ error: "提名投票已结束。" }, { status: 400 });
       const r = toggleNomination(comp.id, Number(body.candidateId), vid);
       if (!r) return NextResponse.json({ error: "角色不存在。" }, { status: 404 });
+      if ("error" in r) return NextResponse.json({ error: r.error }, { status: 400 });
       return NextResponse.json({ ok: true, voted: r.voted });
     }
 
