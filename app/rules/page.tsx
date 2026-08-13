@@ -19,6 +19,14 @@ function useLang(): [Lang, (l: Lang) => void] {
 type Side = { id: number; name: string; nameCn: string | null } | null;
 type SMatch = { a: Side; b: Side; decided: boolean; winnerId: number | null };
 
+// The three sponsor / community QR codes. Drop the images into /public and set src to show
+// them; until then each renders a labelled placeholder. (kind is just for the caption key.)
+const QRS: { src: string | null; cap: string }[] = [
+  { src: null, cap: "rules.ack.qr.host" },
+  { src: null, cap: "rules.ack.qr.group" },
+  { src: null, cap: "rules.ack.qr.bar" },
+];
+
 export default function Rules() {
   const [lang, setLang] = useLang();
   const [comp, setComp] = useState<any>(null);
@@ -35,18 +43,26 @@ export default function Rules() {
     s && e ? `${f(s)} → ${f(e)}` : e ? `→ ${f(e)}` : s ? `${f(s)} →` : T("sched.tbd");
   const side = (s: Side): string => (s ? (lang === "zh" ? (s.nameCn || s.name) : s.name) : "?");
   const winner = (m: SMatch): Side => (m.winnerId == null ? null : m.a?.id === m.winnerId ? m.a : m.b?.id === m.winnerId ? m.b : null);
-
   const known = !!sched?.known;
 
-  return (
-    <main className="wrap">
-      <div className="langbar">{LANGS.map((L) => <button key={L.code} type="button" className={"lang" + (lang === L.code ? " on" : "")} onClick={() => setLang(L.code)}>{L.label}</button>)}</div>
-      <h1 className="title" style={{ fontSize: 30 }}>{T("rules.title")}</h1>
-      <p className="subtitle">{T("rules.subtitle", { name })}</p>
+  const pairs = (matches: SMatch[]) => matches.map((m, i) => (
+    <span key={i} className={"pair" + (m.decided ? " done" : "")}>
+      {side(m.a)} <i>{T("sched.vs")}</i> {side(m.b)}{m.decided && winner(m) ? <b> · {side(winner(m))} {T("sched.won")}</b> : null}
+    </span>
+  ));
 
-      {/* live schedule preview — synced with what the admin has configured */}
-      <div className="card">
-        <h3>{T("sched.h")}</h3>
+  return (
+    <main className="wrap rules">
+      <div className="langbar">{LANGS.map((L) => <button key={L.code} type="button" className={"lang" + (lang === L.code ? " on" : "")} onClick={() => setLang(L.code)}>{L.label}</button>)}</div>
+
+      <header className="rules-hero">
+        <h1 className="rules-title">{T("rules.title")}</h1>
+        <p className="rules-lede">{T("rules.subtitle", { name })}</p>
+      </header>
+
+      {/* ── schedule preview (auto-synced with the admin-configured schedule) ── */}
+      <section className="rules-sec">
+        <h2 className="rules-h">{T("sched.h")}</h2>
         {sched?.planned ? (
           <>
             <p className="rules-p"><b>{T("sched.bracketG", { n: sched.targetSize ?? "?", g: sched.groups ?? "?", s: sched.groupSize ?? "?", k: sched.koTarget ?? "?" })}</b></p>
@@ -55,102 +71,94 @@ export default function Rules() {
               <li><div className="sched-when">{T("sched.cadGroup")}<span className="sched-time">{sched.plan?.groupRoundDays ? T("sched.cadGroupVal", { d: sched.plan.groupRoundDays, c: sched.plan.dayCap || 4 }) : T("sched.cadManual")}</span></div></li>
               <li><div className="sched-when">{T("sched.cadKo")}<span className="sched-time">{sched.plan?.roundHours ? T("sched.cadKoVal", { h: sched.plan.roundHours }) : T("sched.cadManual")}</span></div></li>
             </ul>
-            <p className="rules-p" style={{ color: "var(--muted)" }}>{T("sched.plannedNote")}</p>
+            <p className="rules-note">{T("sched.plannedNote")}</p>
           </>
         ) : !known ? (
-          <p className="rules-p" style={{ color: "var(--muted)" }}>{T("sched.pending")}</p>
+          <p className="rules-note">{T("sched.pending")}</p>
         ) : (
           <>
-            <p className="rules-p">
-              <b>{T("sched.bracket", { n: sched.targetSize ?? "?", g: sched.groups ?? "?", k: sched.koTarget ?? "?" })}</b><br />
-              {T("sched.advanceRule")}
-            </p>
-
-            {sched.group?.length > 0 && (
-              <>
-                <h4 className="sched-h">{T("sched.group.h")}</h4>
-                <ul className="sched-list">
-                  {sched.group.map((d: any) => (
-                    <li key={"g" + d.matchday} className={d.current ? "cur" : ""}>
-                      <div className="sched-when">{T("sched.md", { d: d.matchday, n: d.matchdayCount })}{d.current ? ` · ${T("sched.now")}` : ""}<span className="sched-time">{fmtRange(d.start, d.end)}</span></div>
-                      <div className="sched-pairs">
-                        {sched.mode === "approval"
-                          ? (d.groups || []).map((g: any, i: number) => (
-                            <span key={i} className="pair">{T("group.letter", { L: String.fromCharCode(65 + g.groupNo) })}: {g.members.join("、")}</span>
-                          ))
-                          : d.matches.map((m: SMatch, i: number) => (
-                            <span key={i} className={"pair" + (m.decided ? " done" : "")}>
-                              {side(m.a)} <i>{T("sched.vs")}</i> {side(m.b)}
-                              {m.decided && winner(m) ? <b> · {side(winner(m))} {T("sched.won")}</b> : null}
-                            </span>
-                          ))}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-
-            {sched.knockout?.length > 0 && (
-              <>
-                <h4 className="sched-h">{T("sched.ko.h")}</h4>
-                <ul className="sched-list">
-                  {sched.knockout.map((r: any, i: number) => (
-                    <li key={"k" + i}>
-                      <div className="sched-when">{roundLabelT(lang, r.label)}<span className="sched-time">{fmtRange(r.start, r.end)}</span></div>
-                      <div className="sched-pairs">
-                        {r.pending ? (
-                          <span className="tbd">{T("sched.pairTbd")}</span>
-                        ) : (
-                          r.matches.map((m: SMatch, j: number) => (
-                            <span key={j} className={"pair" + (m.decided ? " done" : "")}>
-                              {side(m.a)} <i>{T("sched.vs")}</i> {side(m.b)}
-                              {m.decided && winner(m) ? <b> · {side(winner(m))} {T("sched.won")}</b> : null}
-                            </span>
-                          ))
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
+            <p className="rules-p"><b>{T("sched.bracket", { n: sched.targetSize ?? "?", g: sched.groups ?? "?", k: sched.koTarget ?? "?" })}</b><br />{T("sched.advanceRule")}</p>
+            {sched.group?.length > 0 && (<>
+              <h3 className="sched-h">{T("sched.group.h")}</h3>
+              <ul className="sched-list">
+                {sched.group.map((d: any) => (
+                  <li key={"g" + d.matchday} className={d.current ? "cur" : ""}>
+                    <div className="sched-when">{T("sched.md", { d: d.matchday, n: d.matchdayCount })}{d.current ? ` · ${T("sched.now")}` : ""}<span className="sched-time">{fmtRange(d.start, d.end)}</span></div>
+                    <div className="sched-pairs">
+                      {sched.mode === "approval"
+                        ? (d.groups || []).map((g: any, i: number) => <span key={i} className="pair">{T("group.letter", { L: String.fromCharCode(65 + g.groupNo) })}: {g.members.join("、")}</span>)
+                        : pairs(d.matches)}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>)}
+            {sched.knockout?.length > 0 && (<>
+              <h3 className="sched-h">{T("sched.ko.h")}</h3>
+              <ul className="sched-list">
+                {sched.knockout.map((r: any, i: number) => (
+                  <li key={"k" + i}>
+                    <div className="sched-when">{roundLabelT(lang, r.label)}<span className="sched-time">{fmtRange(r.start, r.end)}</span></div>
+                    <div className="sched-pairs">{r.pending ? <span className="tbd">{T("sched.pairTbd")}</span> : pairs(r.matches)}</div>
+                  </li>
+                ))}
+              </ul>
+            </>)}
           </>
         )}
-      </div>
+      </section>
 
-      <div className="card">
-        <h3>{T("rules.s1.h")}</h3>
+      {/* ── the written rules ── */}
+      <section className="rules-sec">
+        <h2 className="rules-h"><span className="rules-no">1</span>{T("rules.s1.h").replace(/^[①-⑳]\s*/, "")}</h2>
         <p className="rules-p">{T("rules.s1.p1")}</p>
         <p className="rules-p">{T("rules.s1.p2")}</p>
-        <p className="rules-p">{T("rules.s1.p3")}</p>
-      </div>
+        <p className="rules-note">{T("rules.s1.p3")}</p>
+      </section>
 
-      <div className="card">
-        <h3>{T("rules.s2.h")}</h3>
+      <section className="rules-sec">
+        <h2 className="rules-h"><span className="rules-no">2</span>{T("rules.s2.h").replace(/^[①-⑳]\s*/, "")}</h2>
         <p className="rules-p">{T("rules.s2.p1")}</p>
         <p className="rules-p">{T("rules.s2.p2")}</p>
-      </div>
+      </section>
 
-      <div className="card">
-        <h3>{T("rules.s3.h")}</h3>
+      <section className="rules-sec">
+        <h2 className="rules-h"><span className="rules-no">3</span>{T("rules.s3.h").replace(/^[①-⑳]\s*/, "")}</h2>
         <p className="rules-p">{T("rules.s3.p1")}</p>
-      </div>
+      </section>
 
-      <div className="card">
-        <h3>{T("rules.s4.h")}</h3>
+      <section className="rules-sec">
+        <h2 className="rules-h">{T("rules.s4.h")}</h2>
         <p className="rules-p">{T("rules.s4.p1")}</p>
         <p className="rules-p">{T("rules.s4.p3")}</p>
         <p className="rules-p">{T("rules.s4.p2")}</p>
-      </div>
+      </section>
 
-      <div className="card">
-        <h3>{T("rules.s5.h")}</h3>
-        <p className="rules-p">{T("rules.s5.p1")}</p>
-        <p className="rules-p">{T("rules.s5.p2")}</p>
-        <p className="rules-p">{T("rules.s5.p3")}</p>
-        <p className="rules-p" style={{ marginTop: 12, fontWeight: 700 }}>{T("rules.contact")}</p>
-      </div>
+      <section className="rules-sec">
+        <h2 className="rules-h">{T("rules.s5.h")}</h2>
+        <ul className="rules-ul">
+          <li>{T("rules.s5.p1")}</li>
+          <li>{T("rules.s5.jp")}</li>
+          <li>{T("rules.s5.p2")}</li>
+          <li>{T("rules.s5.p3")}</li>
+        </ul>
+        <p className="rules-contact">{T("rules.contact")}</p>
+      </section>
+
+      {/* ── organizer & thanks (item 9/10) ── */}
+      <section className="rules-sec rules-ack">
+        <h2 className="rules-h">{T("rules.ack.h")}</h2>
+        <p className="rules-p">{T("rules.ack.host")}</p>
+        <p className="rules-p">{T("rules.ack.thanks")}</p>
+        <div className="qr-grid">
+          {QRS.map((q, i) => (
+            <figure className="qr" key={i}>
+              {q.src ? <img src={q.src} alt={T(q.cap)} /> : <div className="qr-ph">{T("rules.ack.qr.pending")}</div>}
+              <figcaption>{T(q.cap)}</figcaption>
+            </figure>
+          ))}
+        </div>
+      </section>
 
       <div className="foot"><a href="/">{T("rules.back")}</a></div>
     </main>

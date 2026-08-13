@@ -482,3 +482,47 @@ body { font-size: 15px; line-height: 1.6; }
 .ballot-list li.mine { border-color: var(--rose); box-shadow: 0 0 0 3px var(--rose-soft); }
 .ballot-list li.adv { background: var(--rose-soft); }
 .ballot-list li .rankpill { min-width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); font-weight: 800; font-size: 12px; }
+
+/* podium: runner-up / third / fourth under the champion */
+.podium { display: flex; flex-wrap: wrap; gap: 8px 10px; justify-content: center; margin: 6px 0 10px; }
+.podium .pod { font-size: 13px; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; }
+.podium .pod b { color: var(--muted); font-weight: 800; margin-right: 4px; }
+
+/* admin checkbox row */
+.chk { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink); margin: 4px 0; cursor: pointer; }
+.chk input { width: 18px; height: 18px; }
+
+/* ═══════════ Rules page — consistent typographic rhythm & structure ═══════════ */
+/* one line-height & spacing scale for the whole page so leading never looks ragged */
+.rules { max-width: 720px; }
+.rules-hero { margin: 8px 0 20px; }
+.rules-title { font-size: clamp(26px, 5vw, 34px); font-weight: 850; letter-spacing: -.02em; line-height: 1.15; margin: 0; }
+.rules-lede { color: var(--muted); font-size: 15px; line-height: 1.6; margin: 8px 0 0; max-width: 60ch; }
+
+.rules-sec { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: 20px 22px; margin: 0 0 16px; box-shadow: var(--shadow-sm); }
+.rules-h { font-size: 17px; font-weight: 800; letter-spacing: -.01em; line-height: 1.3; margin: 0 0 12px; display: flex; align-items: center; gap: 10px; }
+.rules-no { flex: none; width: 26px; height: 26px; border-radius: 999px; background: var(--rose); color: #fff; font-size: 14px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; }
+
+/* body copy: SINGLE line-height everywhere on this page */
+.rules-p, .rules-note, .rules-ul li, .rules-contact { font-size: 14.5px; line-height: 1.7; color: var(--ink); }
+.rules-p { margin: 0 0 10px; }
+.rules-p:last-child { margin-bottom: 0; }
+.rules-note { margin: 4px 0 0; color: var(--muted); font-size: 13.5px; }
+.rules-ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.rules-ul li { position: relative; padding-left: 18px; }
+.rules-ul li::before { content: ""; position: absolute; left: 2px; top: .72em; width: 6px; height: 6px; border-radius: 999px; background: var(--rose); }
+
+/* contact block: honour \n line breaks, comfortable leading */
+.rules-contact { white-space: pre-line; margin: 16px 0 0; padding: 14px 16px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm); font-weight: 600; }
+
+/* organizer & thanks + QR grid */
+.rules-ack .rules-p { text-align: center; }
+.qr-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 16px; }
+@media (max-width: 560px) { .qr-grid { grid-template-columns: 1fr; max-width: 260px; margin-inline: auto; } }
+.qr { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.qr img { width: 100%; max-width: 200px; aspect-ratio: 1; object-fit: contain; border: 1px solid var(--line); border-radius: var(--r-sm); background: #fff; }
+.qr-ph { width: 100%; max-width: 200px; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; text-align: center; padding: 8px; color: var(--muted); font-size: 13px; border: 1px dashed var(--line); border-radius: var(--r-sm); background: var(--surface-2); }
+.qr figcaption { font-size: 13px; font-weight: 700; color: var(--ink); text-align: center; }
+
+/* live match: hide the split bar until settled (no live rate leak) */
+.share.hidden { visibility: hidden; }
