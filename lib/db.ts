@@ -82,6 +82,7 @@ export interface DB {
   approvalVotes: ApprovalVote[];
   comments: Comment[];
   auditLog: AuditEntry[];
+  settings: { wxGate?: boolean };
 }
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
@@ -91,7 +92,7 @@ const FILE = path.join(DATA_DIR, "saimoe.json");
 export function dataFilePath(): string { return FILE; }
 
 function blank(): DB {
-  return { seq: { competition: 0, candidate: 0, matchup: 0, comment: 0, audit: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [], approvalVotes: [], comments: [], auditLog: [] };
+  return { seq: { competition: 0, candidate: 0, matchup: 0, comment: 0, audit: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [], approvalVotes: [], comments: [], auditLog: [], settings: {} };
 }
 function normalize(o: any): DB {
   if (!o || typeof o !== "object") return blank();
@@ -112,6 +113,7 @@ function normalize(o: any): DB {
     approvalVotes: Array.isArray(o.approvalVotes) ? o.approvalVotes : b.approvalVotes,
     comments: Array.isArray(o.comments) ? o.comments : b.comments,
     auditLog: Array.isArray(o.auditLog) ? o.auditLog : b.auditLog,
+    settings: (o.settings && typeof o.settings === "object") ? o.settings : b.settings,
   };
 }
 
@@ -273,6 +275,20 @@ export function toggleNomination(cid: number, candidateId: number, voterId: stri
   db.nominationVotes.push({ competition_id: cid, candidate_id: candidateId, voter_id: voterId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
   writeDb(db);
   return { voted: true };
+}
+
+/** Read/write the runtime WeChat-gate setting (admin-toggleable). Env WX_VOTE_GATE is only
+ *  the initial default when the operator has never toggled it in the admin page. */
+export function getWxGate(): boolean {
+  const db = readDb();
+  if (typeof db.settings?.wxGate === "boolean") return db.settings.wxGate;
+  const v = (process.env.WX_VOTE_GATE || "").toLowerCase();
+  return v === "on" || v === "1" || v === "true";
+}
+export function setWxGate(on: boolean): void {
+  const db = readDb();
+  db.settings = { ...(db.settings || {}), wxGate: !!on };
+  writeDb(db);
 }
 
 /** Which batch (1-indexed) a group belongs to under approval mode's "N groups per day". */

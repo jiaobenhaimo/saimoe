@@ -350,7 +350,7 @@ export default function Page() {
 
   // matches open for voting RIGHT NOW (drives the "现在投票" panel), for the current phase only
   const openMatches: Match[] =
-    phase === "group" ? (state?.group?.groups ?? []).flatMap((g: any) => g.matchups).filter((m: Match) => m.live && !m.decided && m.a && m.b)
+    phase === "group" ? (state?.group?.mode === "approval" ? [] : (state?.group?.groups ?? []).flatMap((g: any) => g.matchups ?? []).filter((m: Match) => m.live && !m.decided && m.a && m.b))
     : phase === "playoff" ? (state?.playoff?.matchups ?? []).filter((m: Match) => m.live && !m.decided && m.a && m.b)
     : phase === "knockout" ? (state?.knockout?.rounds ?? []).flatMap((r: any) => r.matchups).filter((m: Match) => !m.decided && m.a && m.b)
     : [];
@@ -358,7 +358,7 @@ export default function Page() {
 
   // 下一批对局(下一比赛日 / 下一轮的预告)
   const nextMatches: Match[] =
-    phase === "group" ? (state?.group?.groups ?? []).flatMap((g: any) => g.matchups).filter((m: Match) => (m.matchday ?? 0) === ((state?.group?.matchday ?? 0) + 1) && m.a && m.b)
+    phase === "group" ? (state?.group?.mode === "approval" ? [] : (state?.group?.groups ?? []).flatMap((g: any) => g.matchups ?? []).filter((m: Match) => (m.matchday ?? 0) === ((state?.group?.matchday ?? 0) + 1) && m.a && m.b))
     : [];
 
   const deadline: number | null =

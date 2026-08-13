@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { getWxGate } from "./db";
 
 // Stateless HMAC tokens bind a WeChat openid to a short-lived one-tap link and, after the
 // link is opened, to a longer voter session cookie. No server-side store needed; the
@@ -41,8 +42,9 @@ export const LINK_TTL_MS = 10 * 60_000;        // one-tap link: 10 minutes
 export const SESSION_TTL_MS = 7 * 86_400_000;  // voter session cookie: 7 days
 export const VOTER_COOKIE = "sml_voter";
 
-/** Whether the "must come from a WeChat link to vote" gate is enabled (default OFF). */
+/** Whether the "must come from a WeChat link to vote" gate is enabled.
+ *  Sourced from the admin-toggleable DB setting (falls back to env WX_VOTE_GATE). Default OFF —
+ *  so the site runs perfectly fine WITHOUT any WeChat integration until an admin turns it on. */
 export function gateOn(): boolean {
-  const v = (process.env.WX_VOTE_GATE || "").toLowerCase();
-  return v === "on" || v === "1" || v === "true";
+  return getWxGate();
 }
