@@ -30,6 +30,7 @@ export default function Admin() {
   const [groupSize, setGroupSize] = useState(6);
   const [groupMode, setGroupMode] = useState<"approval" | "rr">("approval");
   const [groupsPerDay, setGroupsPerDay] = useState(2);
+  const [thirdPlace, setThirdPlace] = useState(true);
   const [dlHours, setDlHours] = useState(24);
   const [paceDays, setPaceDays] = useState(1);
   const [paceHours, setPaceHours] = useState(24);
@@ -158,7 +159,7 @@ export default function Admin() {
   const sched = state?.schedule;
   const fmtR = (a?: number | null, b?: number | null) => (a && b ? `${fmtAbs(a)} → ${fmtAbs(b)}` : b ? `→ ${fmtAbs(b)}` : a ? `${fmtAbs(a)} →` : "时间待定");
   const nm = (x: any) => (x ? (x.nameCn || x.name) : "?");
-  const koZh = (label: string) => (label === "final" ? "决赛" : label === "semi" ? "半决赛" : label === "quarter" ? "1/4 决赛" : label.startsWith("top:") ? `${label.slice(4)} 强` : label);
+  const koZh = (label: string) => (label === "bronze" ? "季军战" : label === "final" ? "决赛" : label === "semi" ? "半决赛" : label === "quarter" ? "1/4 决赛" : label.startsWith("top:") ? `${label.slice(4)} 强` : label);
   const winnerOf = (m: any) => (m.winnerId == null ? null : m.a?.id === m.winnerId ? m.a : m.b?.id === m.winnerId ? m.b : null);
 
   return (
@@ -268,11 +269,12 @@ export default function Admin() {
               <input type="number" min={0} value={rHours} onChange={(e) => setRHours(+e.target.value)} /></div>
           </div>
           <p className="hint">约 <b>{estGroups}</b> 个 {groupSize} 人组(余数补进弱组成 {groupSize + 1} 人组),各组前 2 → <b>{estKo}</b> 强淘汰赛。{groupMode === "approval" ? `每人每组最多投 2 票,每天开放 ${groupsPerDay} 个组。` : "组内两两对战,按胜场取前二。"}</p>
+          <label className="chk"><input type="checkbox" checked={thirdPlace} onChange={(e) => setThirdPlace(e.target.checked)} /> 进行季军战(半决赛两位败者加打一场定第三名)</label>
           <hr className="sep" />
 
           <h3 style={{ fontSize: 15 }}>立即开始</h3>
           <button className="btn solid" disabled={busy || size < 4}
-            onClick={() => act("start_groups", { size, groupSize, mode: groupMode, groupsPerDay, perRound, roundDays, dayCap })}>立即结束提名 → 开小组赛(前 {size} 名 → 约 {estGroups} 组 → {estKo} 强)</button>
+            onClick={() => act("start_groups", { size, groupSize, mode: groupMode, groupsPerDay, thirdPlace, perRound, roundDays, dayCap })}>立即结束提名 → 开小组赛(前 {size} 名 → 约 {estGroups} 组 → {estKo} 强)</button>
 
           <hr className="sep" />
           <h3 style={{ fontSize: 15 }}>预约定时开赛</h3>
@@ -284,7 +286,7 @@ export default function Admin() {
               <input type="number" min={1} value={pDays} onChange={(e) => setPDays(+e.target.value)} /></div>
           </div>
           <button className="btn solid" disabled={busy || size < 4 || !nomLocal}
-            onClick={() => act("schedule", { nomEndsAt: nomLocal ? new Date(nomLocal).getTime() : 0, size, groupSize, mode: groupMode, groupsPerDay, roundHours: rHours, groupPerRound: perRound, groupRoundDays: roundDays, dayCap, postponeDays: pDays })}>
+            onClick={() => act("schedule", { nomEndsAt: nomLocal ? new Date(nomLocal).getTime() : 0, size, groupSize, mode: groupMode, groupsPerDay, thirdPlace, roundHours: rHours, groupPerRound: perRound, groupRoundDays: roundDays, dayCap, postponeDays: pDays })}>
             预约定时赛程
           </button>
           {comp.nomEndsAt

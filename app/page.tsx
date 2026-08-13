@@ -678,6 +678,13 @@ export default function Page() {
               <div className="champ-tag">{T("champ.tag")}</div>
             </div>
           )}
+          {state.knockout.champion && (state.knockout.runnerUp || state.knockout.third || state.knockout.fourth) && (
+            <div className="podium">
+              {state.knockout.runnerUp && <span className="pod"><b>{T("place.2")}</b> {label(state.knockout.runnerUp, lang)}</span>}
+              {state.knockout.third && <span className="pod"><b>{T("place.3")}</b> {label(state.knockout.third, lang)}</span>}
+              {state.knockout.fourth && <span className="pod"><b>{T("place.4")}</b> {label(state.knockout.fourth, lang)}</span>}
+            </div>
+          )}
           <div className="sec"><h2>{T("ko.title")}</h2><div className="meta2">{T("ko.hint")}</div></div>
           <div className="bracket">
             {state.knockout.rounds.map((r: any) => (
@@ -710,16 +717,16 @@ export default function Page() {
 function MatchCard({ m, onVote, ko, lang, compact }: { m: Match; onVote: (mid: number, cid: number) => void; ko?: boolean; lang: Lang; compact?: boolean }) {
   const T = (k: string, p?: Record<string, string | number>) => t(lang, k, p);
   const revealed = m.decided;
-  const pa = revealed && m.total ? ((m.votesA || 0) / m.total) * 100 : (m.rateA ?? 50);
+  const pa = revealed && m.total ? ((m.votesA || 0) / m.total) * 100 : 50;
   const live = m.live ?? true;
   const clickable = live && !m.decided && m.a && m.b;
   const status: "live" | "upcoming" | "done" = m.decided ? "done" : (clickable ? "live" : "upcoming");
   const pill = status === "live" ? T("vote.badge.live") : status === "done" ? T("vote.badge.done") : T("vote.badge.upcoming");
   const sideCls = (id: number | undefined) =>
     "side" + (m.myChoice === id ? " picked" : "") + (m.decided && m.winnerId === id ? " win" : "");
-  // 赛中只显示得票率;结算后显示绝对票数
-  const numA = revealed ? String(m.votesA ?? 0) : m.rateA == null ? "—" : `${m.rateA}%`;
-  const numB = revealed ? String(m.votesB ?? 0) : m.rateA == null ? "—" : `${100 - m.rateA}%`;
+  // 赛中不显示任何票数/得票率;结算后才公布绝对票数
+  const numA = revealed ? String(m.votesA ?? 0) : "";
+  const numB = revealed ? String(m.votesB ?? 0) : "";
 
   return (
     <div className={"match match--" + status + (ko ? " ko" : "")}>
@@ -739,7 +746,7 @@ function MatchCard({ m, onVote, ko, lang, compact }: { m: Match; onVote: (mid: n
           {m.decided && m.winnerId === m.b?.id && <span className="adv-tag">{T("match.advance")}</span>}
         </button>
       </div>
-      <div className="share"><div className="a" style={{ width: pa + "%" }} /><div className="b" style={{ width: 100 - pa + "%" }} /></div>
+      <div className={"share" + (revealed ? "" : " hidden")}><div className="a" style={{ width: pa + "%" }} /><div className="b" style={{ width: 100 - pa + "%" }} /></div>
       <div className="match-foot">
         <span className="rate-note">{revealed ? T("match.settled") : live ? T("match.rateNote") : T("match.upcoming")}</span>
       </div>

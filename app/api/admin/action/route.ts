@@ -55,6 +55,7 @@ export async function POST(req: NextRequest) {
         dayCap: Number(body.dayCap) || 0,
         groupMode: (body.mode === "rr" || body.mode === "approval") ? body.mode : "",
         groupsPerDay: Number(body.groupsPerDay) || 0,
+        thirdPlace: body.thirdPlace === undefined ? undefined : !!body.thirdPlace,
         postponeDays: Number(body.postponeDays) || 1,
       });
       rec(`设定定时赛程(取前 ${Number(body.size) || "?"} 名;提名截止 ${body.nomEndsAt ? new Date(Number(body.nomEndsAt)).toLocaleString("zh-CN") : "—"})`);
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest) {
     if (action === "delete_comment") { deleteComment(comp.id, Number(body.commentId)); rec(`删除评论 #${Number(body.commentId)}`); return NextResponse.json({ ok: true }); }
     if (action === "start_groups") {
       if (body.dayCap !== undefined) setGroupDayCap(comp.id, Number(body.dayCap));
-      startGroups(comp.id, Number(body.size), Number(body.perRound) || 0, Number(body.roundDays) || 0, Number(body.groupSize) || 0, (body.mode === "rr" || body.mode === "approval") ? body.mode : "", Number(body.groupsPerDay) || 0);
+      startGroups(comp.id, Number(body.size), Number(body.perRound) || 0, Number(body.roundDays) || 0, Number(body.groupSize) || 0, (body.mode === "rr" || body.mode === "approval") ? body.mode : "", Number(body.groupsPerDay) || 0, body.thirdPlace === undefined ? null : !!body.thirdPlace);
       rec(`开小组赛(取前 ${Number(body.size)} 名;每组 ${Number(body.groupSize) || comp.group_size || 4} 人;模式 ${body.mode === "rr" ? "循环赛" : "投票晋级"})`);
       return NextResponse.json({ ok: true });
     }

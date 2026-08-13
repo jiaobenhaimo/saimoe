@@ -21,7 +21,8 @@ function fmt(ms: number | null | undefined): string {
 }
 const nm = (s: SchedMatch["a"]): string => (s ? (s.nameCn || s.name) : "?");
 function koZh(label: string): string {
-  return label === "final" ? "决赛"
+  return label === "bronze" ? "季军战"
+    : label === "final" ? "决赛"
     : label === "semi" ? "半决赛"
     : label === "quarter" ? "1/4 决赛"
     : label.startsWith("top:") ? `${label.slice(4)} 强`

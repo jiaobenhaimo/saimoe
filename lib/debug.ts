@@ -87,9 +87,13 @@ export function debugVote(voters = 40): { matches: number; votes: number } {
 }
 
 /** One click: seed → nominate → group (all matchdays) → knockout → champion. */
-export function debugSimulate(o: { count?: number; groups?: number; advance?: number; perRound?: number; voters?: number } = {}): { log: string[] } {
+export function debugSimulate(o: { count?: number; groups?: number; advance?: number; perRound?: number; voters?: number; mode?: "approval" | "rr"; groupSize?: number; groupsPerDay?: number } = {}): { log: string[] } {
   const count = o.count ?? 8;
   const perRound = o.perRound ?? 0, voters = o.voters ?? 30;
+  const mode: "approval" | "rr" = o.mode === "rr" ? "rr" : "approval";
+  const groupSize = o.groupSize && o.groupSize > 0 ? o.groupSize : 4;
+  const groupsPerDay = o.groupsPerDay && o.groupsPerDay > 0 ? o.groupsPerDay : 2;
+  const unit = mode === "approval" ? "组" : "场";
   const log: string[] = [];
 
   const seeded = debugSeed(count, "模拟赛 · Simulate");
@@ -97,8 +101,9 @@ export function debugSimulate(o: { count?: number; groups?: number; advance?: nu
   debugNominate(count * 20);
   log.push(`灌入提名票(约 ${count * 20} 张)`);
 
-  startGroups(seeded.id, count, perRound, 0);
-  log.push(`开小组赛(约 ${Math.max(1, Math.floor(count / 4))} 个 4 人组)`);
+  startGroups(seeded.id, count, perRound, 0, groupSize, mode, groupsPerDay);
+  const gc = getActiveCompetition();
+  log.push(`开小组赛(${mode === "approval" ? "投票晋级" : "循环赛"};${gc?.groups_count ?? "?"} 个 ${groupSize} 人组${mode === "approval" ? `,每天 ${groupsPerDay} 组` : ""})`);
 
   let guard = 0;
   while (guard++ < 60) {
@@ -106,11 +111,10 @@ export function debugSimulate(o: { count?: number; groups?: number; advance?: nu
     if (!c || c.phase !== "group") break;
     const vr = debugVote(voters);
     const r = advanceGroupMatchday(seeded.id);
-    log.push(`比赛日投票(${vr.matches} 场)→ ${r.message}`);
+    log.push(`比赛日投票(${vr.matches} ${unit})→ ${r.message}`);
     if (r.done) { startKnockout(seeded.id); log.push("小组赛结束 → 生成淘汰赛"); break; }
   }
 
-  // 第三名加赛(如触发)
   {
     const cp = getActiveCompetition();
     if (cp && cp.phase === "playoff") { const vr = debugVote(voters); resolvePlayoff(seeded.id); log.push(`加赛投票(${vr.matches} 场)→ 结算 → 生成淘汰赛`); }

@@ -103,9 +103,13 @@ const D: Record<string, Entry> = {
   "round.semi": { zh: "半决赛", en: "Semifinal", ja: "準決勝" },
   "round.quarter": { zh: "四分之一决赛", en: "Quarterfinal", ja: "準々決勝" },
   "round.top": { zh: "{n} 强", en: "Top {n}", ja: "ベスト{n}" },
+  "round.bronze": { zh: "季军战", en: "Third-place match", ja: "3位決定戦" },
+  "place.2": { zh: "亚军", en: "Runner-up", ja: "準優勝" },
+  "place.3": { zh: "季军", en: "3rd place", ja: "3位" },
+  "place.4": { zh: "殿军", en: "4th place", ja: "4位" },
 
   "match.advance": { zh: "晋级", en: "Advance", ja: "進出" },
-  "match.rateNote": { zh: "赛中仅显示得票率，结算后公布票数", en: "Only vote share shown during the match; counts revealed after", ja: "試合中は得票率のみ、確定後に票数を公開" },
+  "match.rateNote": { zh: "赛中不公布票数,结算后公布", en: "Counts hidden during the match; revealed after settlement", ja: "試合中は非公開、確定後に票数を公開" },
   "match.settled": { zh: "本场已结算 · 得票已公布", en: "Settled · counts revealed", ja: "確定 · 票数公開済" },
 
   // group results table + next-round preview
@@ -138,7 +142,7 @@ const D: Record<string, Entry> = {
   "rules.s2.p1": { zh: "晋级角色以 6 人一组随机分组;当人数不能被 6 整除时,余下的角色会补进实力较弱的组,因此个别组为 7 人。每天开放两个组进行投票。", en: "Advancing characters are drawn at random into groups of six; when the count is not divisible by six, the leftovers are added to the weaker groups, so a few groups have seven. Two groups open for voting each day.", ja: "進出キャラは6人ずつランダムに組分け。6で割り切れない分は弱いグループに追加され、一部は7人組に。毎日2つの組が投票に開放されます。" },
   "rules.s2.p2": { zh: "每人在每个组里有两票,每名角色仅可投一票;每组得票前二晋级,共 16 强。", en: "In each group you have two votes, at most one per character; the top two by votes in each group advance, forming the last 16.", ja: "各組で1人2票(1キャラにつき1票まで)。各組の得票上位2名が進出し、ベスト16となります。" },
   "rules.s3.h": { zh: "③ 单败淘汰赛", en: "③ Single-elimination knockout", ja: "③ 一発勝負トーナメント" },
-  "rules.s3.p1": { zh: "晋级角色按种子随机排入对阵表,一对一单败淘汰,每轮胜者晋级、败者淘汰,直至决赛决出总冠军。第三名争夺时若「胜场」与「提名票」双双并列,会为这些并列者单独开一轮加赛,决出最后的第三名。", en: "Advancing characters are seeded into a bracket for one-on-one single elimination until the final crowns the champion. If third-place contenders tie on both wins and nomination votes, a separate playoff is held among them to decide the final third-place spot.", ja: "進出キャラをシードして1対1の一発勝負トーナメントで優勝を決定。3位争いで勝ち数と推薦票が同数の場合、同点者だけで別途加賽を行い最後の3位を決めます。" },
+  "rules.s3.p1": { zh: "晋级角色按种子随机排入对阵表,一对一单败淘汰,每轮胜者晋级、败者淘汰,直至决赛决出总冠军。半决赛的两位败者再加打一场「季军战」决出第三名(第 3 / 第 4 名)。", en: "Advancing characters are seeded into a bracket for one-on-one single elimination until the final crowns the champion. The two semifinal losers then play a third-place match to decide 3rd and 4th.", ja: "進出キャラをシードして1対1の一発勝負トーナメントで優勝を決定。準決勝の敗者2名が「3位決定戦」を行い、3位・4位を決めます。" },
   "rules.s4.h": { zh: "关于投票与公平", en: "Voting & fairness", ja: "投票と公平性について" },
   "rules.s4.p1": { zh: "投票以设备去重（不看公网 IP，同一网络下的不同设备可以各投一票）。这是尽力而为的防刷方式，并非绝对严格。", en: "Votes are de-duplicated per device (not by public IP — different devices on the same network can each vote). This is a best-effort anti-fraud measure, not a strict guarantee.", ja: "投票は端末単位で重複排除（公開IPは見ません。同一回線でも別端末なら各1票）。ベストエフォートの不正対策で、厳密ではありません。" },
   "rules.s4.p2": { zh: "也请大家公平公正,不要为了让喜欢的角色获胜而刷票等;一经查实,该角色由不正当手段所投的票将被清空。", en: "Please keep it fair — no vote-stuffing to push your favourite. If confirmed, the votes cast for that character by illegitimate means will be cleared.", ja: "公平にご参加ください。推しを勝たせるための不正投票などはご遠慮を。判明した場合、そのキャラに不正な手段で投じられた票は無効化されます。" },
@@ -146,8 +150,16 @@ const D: Record<string, Entry> = {
   "rules.s5.h": { zh: "补充说明", en: "Additional notes", ja: "補足" },
   "rules.s5.p1": { zh: "同一世界观 / IP 下的同一角色只保留一个(例:Fate 各线的同一角色、惣流·明日香 与 式波·明日香)。若出现多个版本,将被清理为一个。", en: "The same character across versions/works within one franchise is kept only once (e.g. the same Fate character across routes, or Asuka Souryuu vs Asuka Shikinami). Duplicate versions are merged to one.", ja: "同一世界観/IP内の同一キャラは1体のみ(例:Fate各ルートの同一キャラ、惣流・アスカと式波・アスカ)。複数版が出た場合は1体に整理します。" },
   "rules.s5.p2": { zh: "可参与投票的角色以 bangumi 的数据库为准。", en: "Eligible characters follow the bangumi database.", ja: "参加可能なキャラは bangumi のデータベースに準じます。" },
+  "rules.s5.jp": { zh: "参选角色必须出自日本出品的 ACGN 作品(以其所属作品在 bangumi 的「日本」标签为准);经查非日本作品的角色将被移除。", en: "Eligible characters must come from a Japanese-produced ACGN work (judged by the “日本 (Japan)” tag on its work in bangumi); characters found to be from non-Japanese works will be removed.", ja: "参加キャラは日本発の ACGN 作品出身であること(所属作品の bangumi「日本」タグで判定)。非日本作品と判明したキャラは削除されます。" },
   "rules.s5.p3": { zh: "同一作品 / IP 可出现的(不同)角色数量没有上限。", en: "There is no cap on how many (different) characters one work/IP may contribute.", ja: "1作品/IPから登場できる(異なる)キャラ数に上限はありません。" },
-  "rules.contact": { zh: "如有疑问,请联系:微信 [已移除] 或 [已移除] · QQ [已移除] · 邮箱 [已移除]。", en: "Questions? Contact us: WeChat [已移除] or [已移除] · QQ [已移除] · Email [已移除].", ja: "ご不明な点は:WeChat [已移除] または [已移除] · QQ [已移除] · メール [已移除] までご連絡ください。" },
+  "rules.contact": { zh: "如有疑问,请联系:\n微信 [已移除] 或 [已移除]\nQQ [已移除]\n邮箱 [已移除]", en: "Questions? Contact us:\nWeChat [已移除] or [已移除]\nQQ [已移除]\nEmail [已移除]", ja: "ご不明な点は:\nWeChat [已移除] または [已移除]\nQQ [已移除]\nメール [已移除]" },
+  "rules.ack.h": { zh: "主办与鸣谢", en: "Organizer & Thanks", ja: "主催・謝辞" },
+  "rules.ack.host": { zh: "本次比赛由 次元社(Dimension Club)主办。", en: "This event is organized by Dimension Club (次元社).", ja: "本大会は 次元社(Dimension Club)が主催します。" },
+  "rules.ack.thanks": { zh: "特别鸣谢 陈香气吧 对本次比赛的大力支持。", en: "Special thanks to 陈香气吧 for their generous support of this event.", ja: "本大会を強力にご支援いただいた 陈香气吧 に感謝いたします。" },
+  "rules.ack.qr.host": { zh: "次元社公众号", en: "Dimension Club Official Account", ja: "次元社 公式アカウント" },
+  "rules.ack.qr.group": { zh: "微信交流群", en: "WeChat Group", ja: "WeChat 交流グループ" },
+  "rules.ack.qr.bar": { zh: "陈香气吧", en: "陈香气吧", ja: "陈香气吧" },
+  "rules.ack.qr.pending": { zh: "二维码待上传", en: "QR code coming soon", ja: "QRコード準備中" },
   "jp.warn.char": { zh: "⚠️ 未检测到「日本」标签,该角色可能并非出自日本 ACGN 作品;已提交,管理员会复核。", en: "⚠️ No “日本 (Japan)” tag found — this character may not be from a Japanese ACGN work. Submitted anyway; an admin will review.", ja: "⚠️「日本」タグが見つかりません。日本の ACGN 作品ではない可能性があります。提出は受理、管理者が確認します。" },
   "jp.warn.subject": { zh: "⚠️ 该作品未检测到「日本」标签,可能并非日本产;仍已导入,管理员会复核。", en: "⚠️ No “日本 (Japan)” tag on this work — it may not be Japanese. Imported anyway; an admin will review.", ja: "⚠️ この作品に「日本」タグがありません。日本産ではない可能性があります。取り込みは実行、管理者が確認します。" },
   "gb.open": { zh: "投票中 · 已选 {n}/{max}", en: "Voting · {n}/{max} picked", ja: "投票中 · {n}/{max} 選択" },
@@ -193,6 +205,7 @@ export function roundLabelT(lang: Lang, code: string): string {
   if (code === "final") return t(lang, "round.final");
   if (code === "semi") return t(lang, "round.semi");
   if (code === "quarter") return t(lang, "round.quarter");
+  if (code === "bronze") return t(lang, "round.bronze");
   if (code.startsWith("top:")) return t(lang, "round.top", { n: code.slice(4) });
   return code;
 }

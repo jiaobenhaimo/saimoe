@@ -21,6 +21,7 @@ export interface Competition {
   id: number; title: string; description: string | null; short_name: string | null; phase: Phase;
   target_size: number | null; groups_count: number | null;
   champion_id: number | null; ko_round: number | null; created_at: number;
+  third_place?: boolean | null; // 是否进行季军战(默认 true)
   // ── timed schedule (epoch ms; null = not scheduled) ──
   nom_ends_at: number | null; group_ends_at: number | null; ko_round_ends_at: number | null;
   auto_size: number | null;
@@ -53,7 +54,7 @@ export interface Candidate {
 export interface Matchup {
   id: number; competition_id: number; stage: "group" | "knockout" | "playoff"; round_no: number;
   group_no: number | null; slot: number; a_id: number; b_id: number;
-  winner_id: number | null; decided: boolean; matchday?: number | null;
+  winner_id: number | null; decided: boolean; matchday?: number | null; bronze?: boolean; // bronze=true: 季军战(半决赛两败者)
 }
 interface NominationVote { competition_id: number; candidate_id: number; voter_id: string; created_at?: number; device_bucket?: string | null; ip?: string | null; }
 interface MatchVote { matchup_id: number; voter_id: string; choice_id: number; created_at?: number; device_bucket?: string | null; ip?: string | null; }
@@ -161,7 +162,7 @@ export function ensureSchema(): void {
 export function createCompetition(title: string): number {
   const db = readDb();
   const id = ++db.seq.competition;
-  db.competitions.push({ id, title, description: null, short_name: null, phase: "nomination", target_size: null, groups_count: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_size: null, group_mode: null, groups_per_day: null, group_started_at: null, group_matchday_starts: null, ko_target: null, ko_seed_ids: null, playoff_slots: null });
+  db.competitions.push({ id, title, description: null, short_name: null, phase: "nomination", target_size: null, groups_count: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_size: null, group_mode: null, groups_per_day: null, group_started_at: null, group_matchday_starts: null, ko_target: null, ko_seed_ids: null, playoff_slots: null, third_place: null });
   writeDb(db);
   return id;
 }
