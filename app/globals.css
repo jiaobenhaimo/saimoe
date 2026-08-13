@@ -385,3 +385,100 @@ body { font-size: 15px; line-height: 1.6; }
 .audit .au-ts { flex: none; width: 92px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .audit .au-sum { flex: 1; color: var(--ink); }
 .audit .au-phase { flex: none; font-size: 11px; font-weight: 700; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+
+/* ─────────── schedule preview (rules page) ─────────── */
+.sched-h { font-size: 14px; margin: 14px 0 6px; color: var(--muted); font-weight: 800; letter-spacing: .02em; }
+.sched-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.sched-list li { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--surface-2); }
+.sched-list li.cur { border-color: var(--rose); box-shadow: 0 0 0 3px var(--rose-soft); }
+.sched-when { font-weight: 800; font-size: 14px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.sched-when .sched-time { margin-left: auto; font-weight: 600; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sched-pairs { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; }
+.sched-pairs .pair { font-size: 13px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; }
+.sched-pairs .pair i { color: var(--muted); font-style: normal; font-size: 11px; padding: 0 2px; }
+.sched-pairs .pair.done { color: var(--muted); }
+.sched-pairs .pair b { color: var(--rose); font-weight: 800; }
+.sched-pairs .tbd { font-size: 13px; color: var(--muted); font-style: italic; }
+
+/* ─────────── admin section headers ─────────── */
+.admin-section { margin: 26px 0 4px; padding-bottom: 6px; border-bottom: 2px solid var(--line); font-size: 15px; font-weight: 900; letter-spacing: .02em; color: var(--ink); display: flex; align-items: center; gap: 8px; }
+.admin-section:first-of-type { margin-top: 8px; }
+.admin-section .tag { font-size: 11px; font-weight: 700; color: var(--muted); }
+
+/* ═══════════════ HIG pass — 中度 (tokens · controls · hierarchy · density · targets) ═══════════════ */
+
+/* design tokens: 8pt spacing rhythm, radius ramp, softer layered shadow, comfortable tap target */
+:root{
+  --r-sm:10px; --r-md:14px; --r-lg:20px; --r-pill:999px;
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px;
+  --tap:44px;
+  --shadow-sm:0 1px 2px rgba(36,24,32,.05), 0 4px 14px -10px rgba(36,24,32,.18);
+}
+@media (prefers-color-scheme: dark){
+  :root{ --shadow-sm:0 1px 2px rgba(0,0,0,.35), 0 4px 14px -10px rgba(0,0,0,.5); }
+}
+
+/* typography ramp: clearer large-title / title / body hierarchy */
+.title{ font-size: clamp(30px, 6vw, 40px); letter-spacing:-.021em; }
+.subtitle{ font-size:15px; line-height:1.5; }
+.card h3{ font-size:16px; font-weight:800; letter-spacing:-.01em; margin:0 0 var(--sp-3); }
+
+/* cards: consistent radius, calmer depth, a touch more air */
+.card{ border-radius: var(--r-md); padding: var(--sp-5); box-shadow: var(--shadow-sm); }
+.group, .results, .nextup, .deadline, .pool-admin{ border-radius: var(--r-md); }
+
+/* controls: unified shape/height; primary hover parity */
+.btn{ min-height:40px; border-radius: var(--r-sm); padding:9px 15px; font-size:13.5px; display:inline-flex; align-items:center; justify-content:center; gap:6px; }
+.btn.solid{ border-color: var(--rose); }
+.btn.solid:hover:not(:disabled){ background:var(--rose-deep); border-color:var(--rose-deep); }
+.field input, .cmt-name, .cmt-text{ min-height:44px; border-radius: var(--r-sm); }
+.field input:focus{ box-shadow:0 0 0 4px var(--rose-soft); }
+.cmt-name:focus, .cmt-text:focus{ border-color:var(--rose); box-shadow:0 0 0 4px var(--rose-soft); outline:none; }
+.searchbox input{ min-height:52px; border-radius: var(--r-md); }
+
+/* enforce HIG 44pt tap targets on touch pointers; enlarge tiny text links */
+@media (pointer: coarse){
+  .btn, .lang, .phasebar .chip, .cmt-toggle, .cmt-name, .cmt-text, .field input{ min-height: var(--tap); }
+  .hint a, .foot a, .sec a{ display:inline-block; padding:6px 2px; }
+}
+
+/* segmented control (HIG): language switch */
+.langbar{ gap:0; padding:3px; background:var(--surface-2); border:1px solid var(--line); border-radius:var(--r-pill); width:fit-content; margin-left:auto; }
+.lang{ border:none; background:transparent; color:var(--muted); padding:5px 14px; border-radius:var(--r-pill); line-height:1.5; }
+.lang:hover:not(.on){ color:var(--ink); background:transparent; }
+.lang.on{ background:var(--rose); border-color:transparent; color:#fff; box-shadow:var(--shadow-sm); }
+
+/* segmented control (HIG): phase navigation */
+.phasebar{ gap:0; padding:4px; background:var(--surface-2); border:1px solid var(--line); border-radius:var(--r-pill); }
+.phasebar .chip{ border:none; background:transparent; color:var(--muted); padding:7px 14px; border-radius:var(--r-pill); }
+.phasebar .chip.on{ background:var(--rose); color:#fff; box-shadow:var(--shadow-sm); }
+.phasebar .chip.sel:not(.on){ background:var(--rose-soft); color:var(--rose-deep); box-shadow:none; }
+.phasebar .chip.on.sel{ box-shadow:0 0 0 3px var(--rose-soft); }
+
+/* admin: single-column grouped layout (HIG settings style); section headers span full width in order */
+.admin{ max-width:640px; }
+.admin-cards{ column-count:auto; column-gap:0; display:flex; flex-direction:column; gap:var(--sp-4); margin-top:var(--sp-2); }
+.admin-cards > .card{ display:block; width:auto; margin:0; break-inside:auto; }
+.admin-section{ margin:var(--sp-2) 0 0; }
+.admin-section:first-of-type{ margin-top:0; }
+@media (max-width:720px){ .admin-cards{ column-count:auto; } }
+
+/* row density: 8pt rhythm + comfortable minimum height */
+.rrow, .prow{ padding:12px 14px; gap:12px; min-height:64px; }
+.pool-admin .prow{ padding:10px 14px; min-height:0; }
+
+/* WeChat voting gate: read-only / link-error banner */
+.gate-banner { margin: 12px 0 4px; padding: 12px 14px; border-radius: var(--r-md); background: var(--rose-soft); border: 1px solid var(--rose); color: var(--rose-deep); font-size: 13.5px; line-height: 1.5; }
+
+/* ─────────── approval-mode group ballots ─────────── */
+.group.ballot h3 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.group.ballot .gstatus { font-size: 12px; font-weight: 700; color: var(--muted); }
+.group.ballot.open .gstatus { color: var(--rose-deep); }
+.ballot-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ballot-list li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); min-height: 60px; }
+.ballot-list li .meta { flex: 1; min-width: 0; }
+.ballot-list li .nm { font-weight: 700; }
+.ballot-list li .sub { font-size: 12px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.ballot-list li.mine { border-color: var(--rose); box-shadow: 0 0 0 3px var(--rose-soft); }
+.ballot-list li.adv { background: var(--rose-soft); }
+.ballot-list li .rankpill { min-width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); font-weight: 800; font-size: 12px; }

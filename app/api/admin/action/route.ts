@@ -44,6 +44,10 @@ export async function POST(req: NextRequest) {
         roundHours: body.roundHours ? Number(body.roundHours) : null,
         groupPerRound: Number(body.groupPerRound) || 0,
         groupRoundDays: Number(body.groupRoundDays) || 0,
+        groupSize: Number(body.groupSize) || 0,
+        dayCap: Number(body.dayCap) || 0,
+        groupMode: (body.mode === "rr" || body.mode === "approval") ? body.mode : "",
+        groupsPerDay: Number(body.groupsPerDay) || 0,
         postponeDays: Number(body.postponeDays) || 1,
       });
       rec(`设定定时赛程(取前 ${Number(body.size) || "?"} 名;提名截止 ${body.nomEndsAt ? new Date(Number(body.nomEndsAt)).toLocaleString("zh-CN") : "—"})`);
@@ -58,8 +62,8 @@ export async function POST(req: NextRequest) {
     if (action === "delete_comment") { deleteComment(comp.id, Number(body.commentId)); rec(`删除评论 #${Number(body.commentId)}`); return NextResponse.json({ ok: true }); }
     if (action === "start_groups") {
       if (body.dayCap !== undefined) setGroupDayCap(comp.id, Number(body.dayCap));
-      startGroups(comp.id, Number(body.size), Number(body.perRound) || 0, Number(body.roundDays) || 0);
-      rec(`开小组赛(取前 ${Number(body.size)} 名;每比赛日最多 ${Number(body.dayCap) || 4} 场)`);
+      startGroups(comp.id, Number(body.size), Number(body.perRound) || 0, Number(body.roundDays) || 0, Number(body.groupSize) || 0, (body.mode === "rr" || body.mode === "approval") ? body.mode : "", Number(body.groupsPerDay) || 0);
+      rec(`开小组赛(取前 ${Number(body.size)} 名;每组 ${Number(body.groupSize) || comp.group_size || 4} 人;模式 ${body.mode === "rr" ? "循环赛" : "投票晋级"})`);
       return NextResponse.json({ ok: true });
     }
     if (action === "start_knockout") { startKnockout(comp.id); rec("结算小组赛 → 生成淘汰赛"); return NextResponse.json({ ok: true }); }

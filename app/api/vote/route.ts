@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema, toggleNomination, castMatchVote } from "@/lib/db";
+import { ensureSchema, toggleNomination, castMatchVote, castApprovalVote } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getVoterId, getDeviceBucket } from "@/lib/voter";
 import { getActiveCompetition } from "@/lib/engine";
 import { rateLimited } from "@/lib/ratelimit";
+import { verifyToken, gateOn, VOTER_COOKIE } from "@/lib/wxsession";
 
 function clientIp(req: NextRequest): string {
   return (req.headers.get("x-forwarded-for") || "").split(",")[0]?.trim() || "unknown";
@@ -22,6 +23,16 @@ export async function POST(req: NextRequest) {
     const bucket = await getDeviceBucket();
     const ip = clientIp(req);
     const meta = { bucket, ip };
+
+    // WeChat gate (opt-in via WX_VOTE_GATE): only users who opened a per-user link from the
+    // 公众号 may vote; direct site visitors are read-only. openid becomes the dedup identity.
+    let voterId = vid;
+    if (gateOn()) {
+      const openid = verifyToken(req.cookies.get(VOTER_COOKIE)?.value);
+      if (!openid) return NextResponse.json({ error: "请在公众号回复「投票」获取投票链接后再来投票。", needLink: true }, { status: 403 });
+      voterId = "wx:" + openid;
+    }
+
     const comp = getActiveCompetition();
     if (!comp) return NextResponse.json({ error: "没有进行中的比赛。" }, { status: 400 });
 
@@ -30,16 +41,24 @@ export async function POST(req: NextRequest) {
     // ── nomination upvote (toggle) ──
     if (body.type === "nominate") {
       if (comp.phase !== "nomination") return NextResponse.json({ error: "提名投票已结束。" }, { status: 400 });
-      const r = toggleNomination(comp.id, Number(body.candidateId), vid, meta);
+      const r = toggleNomination(comp.id, Number(body.candidateId), voterId, meta);
       if (!r) return NextResponse.json({ error: "角色不存在。" }, { status: 404 });
       if ("error" in r) return NextResponse.json({ error: r.error }, { status: 400 });
       return NextResponse.json({ ok: true, voted: r.voted });
     }
 
+    // ── group approval vote (approval mode: ≤2 picks per group) ──
+    if (body.type === "approval") {
+      if (comp.phase !== "group") return NextResponse.json({ error: "当前不在小组赛阶段。" }, { status: 400 });
+      const r = castApprovalVote(comp.id, Number(body.candidateId), voterId, meta);
+      if ("error" in r) return NextResponse.json({ error: r.error }, { status: r.status });
+      return NextResponse.json({ ok: true, picked: r.picked, count: r.count });
+    }
+
     // ── matchup vote (group or knockout) ──
     if (body.type === "match") {
       if (comp.phase !== "group" && comp.phase !== "knockout" && comp.phase !== "playoff") return NextResponse.json({ error: "当前没有开放的对战。" }, { status: 400 });
-      const r = castMatchVote(comp.id, Number(body.matchupId), vid, Number(body.choiceId), meta);
+      const r = castMatchVote(comp.id, Number(body.matchupId), voterId, Number(body.choiceId), meta);
       if ("error" in r) return NextResponse.json({ error: r.error }, { status: r.status });
       return NextResponse.json({ ok: true, choice: r.choice });
     }

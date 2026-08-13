@@ -1,4 +1,4 @@
-import { readDb, writeDb, commentCounts, type DB, type Competition, type Candidate, type Matchup } from "./db";
+import { readDb, writeDb, commentCounts, approvalTally, groupBatch, type DB, type Competition, type Candidate, type Matchup } from "./db";
 
 // ── reads ─────────────────────────────────────────────────────
 export function getActiveCompetition(): Competition | null {
@@ -31,15 +31,17 @@ export function getState(voterId: string) {
     competition: {
       id: comp.id, title: comp.title, description: comp.description, shortName: comp.short_name ?? "", phase: comp.phase,
       groupsCount: comp.groups_count, championId: comp.champion_id,
+      targetSize: comp.target_size ?? null,
       nomEndsAt: comp.nom_ends_at ?? null, groupEndsAt: comp.group_ends_at ?? null, koRoundEndsAt: comp.ko_round_ends_at ?? null,
       postponeDays: comp.postpone_days ?? null,
       nomUserLimit: comp.nom_user_limit ?? 0, nomMinVotes: comp.nom_min_votes ?? 0,
       groupMatchday: comp.group_matchday ?? null, groupMatchdayCount: comp.group_matchday_count ?? null,
       groupRoundEndsAt: comp.group_round_ends_at ?? null,
       groupPerRound: comp.group_per_round ?? 0, groupRoundDays: comp.group_round_days ?? 0,
-      groupDayCap: comp.group_day_cap ?? 4,
+      groupDayCap: comp.group_day_cap ?? 4, roundHours: comp.round_hours ?? 0, groupSize: comp.group_size ?? null,
       koTarget: comp.ko_target ?? null,
     },
+    schedule: projectSchedule(db, comp),
   };
 
   if (comp.phase === "nomination") {
@@ -93,6 +95,43 @@ export function getState(voterId: string) {
     result.nominationRanking = cands
       .map((c) => ({ ...slim(c)!, votes: nomCount.get(c.id) || 0 }))
       .sort((x, y) => y.votes - x.votes || x.name.localeCompare(y.name));
+  }
+
+  // ── approval-mode group block (no matchups): group ballots, ≤2 picks per group ──
+  const isApproval = (comp.group_mode ?? "approval") === "approval";
+  const groupedCands = cands.filter((c) => c.group_no != null);
+  if (isApproval && groupedCands.length && (comp.phase === "group" || comp.phase === "playoff" || comp.phase === "knockout" || comp.phase === "finished")) {
+    const isGroupPhase = comp.phase === "group";
+    const curMd = comp.group_matchday ?? 1;
+    const perDay = comp.groups_per_day && comp.groups_per_day > 0 ? comp.groups_per_day : 2;
+    const numGroups = comp.groups_count ?? (Math.max(...groupedCands.map((c) => c.group_no!)) + 1);
+    const mdCount = comp.group_matchday_count ?? Math.max(1, Math.ceil(numGroups / perDay));
+    const gtStarts = (comp.group_matchday_starts || {}) as Record<number, number>;
+    const knownDays = Object.keys(gtStarts).map(Number).filter((n) => Number.isFinite(n));
+    const maxKnownDay = knownDays.length ? Math.max(...knownDays) : 0;
+    const roundMs = (comp.group_round_days || 0) * 86400_000;
+    const dayDate = (d: number): number | null => {
+      if (gtStarts[d] != null) return gtStarts[d];
+      if (!comp.group_round_days) return null;
+      if (maxKnownDay > 0) return gtStarts[maxKnownDay] + (d - maxKnownDay) * roundMs;
+      if (comp.group_started_at != null) return comp.group_started_at + (d - 1) * roundMs;
+      return null;
+    };
+    const tally = approvalTally(db, comp.id);
+    const myPicks = new Set(db.approvalVotes.filter((v) => v.competition_id === comp.id && v.voter_id === voterId).map((v) => v.candidate_id));
+    const byG = new Map<number, Candidate[]>();
+    for (const c of groupedCands) { const g = c.group_no!; if (!byG.has(g)) byG.set(g, []); byG.get(g)!.push(c); }
+    const groups = [...byG.entries()].sort((a, b) => a[0] - b[0]).map(([g, members]) => {
+      const batch = groupBatch(g, perDay);
+      const open = isGroupPhase && batch === curMd;             // currently votable
+      const revealed = !open;                                    // hide live counts while open (avoid sway), reveal once closed / in later phases
+      const rows = members.map((c) => ({ ...slim(c)!, votes: tally.get(c.id) || 0, mine: myPicks.has(c.id), seed: c.seed ?? 0 }));
+      rows.sort((x, y) => (revealed ? (y.votes - x.votes) : 0) || (x.seed - y.seed));
+      const shaped = rows.map((r, i) => ({ ...r, rank: i, advancing: revealed && i < 2, votes: revealed ? r.votes : null }));
+      return { group: g, day: batch, open, closed: revealed, date: dayDate(batch), members: shaped };
+    });
+    const myPickCount = (gNo: number) => db.approvalVotes.filter((v) => v.competition_id === comp.id && v.voter_id === voterId && v.group_no === gNo).length;
+    result.group = { mode: "approval", groups: groups.map((g) => ({ ...g, myPicks: myPickCount(g.group) })), matchday: curMd, matchdayCount: mdCount, groupsPerDay: perDay, perGroupVotes: 2 };
   }
 
   // ── group block: returned whenever group matches exist, so it stays viewable in later phases ──
@@ -149,7 +188,7 @@ export function getState(voterId: string) {
         // reveal group vote totals only after the stage is over (i.e. in the history view)
         return { group: g, standings: stand.map((s) => ({ ...s, votesFor: isGroupPhase ? null : s.votesFor })), matchups };
       });
-    result.group = { groups, matchday: curMd, matchdayCount: mdCount };
+    result.group = { mode: "rr", groups, matchday: curMd, matchdayCount: mdCount };
   }
 
   // ── playoff block: returned whenever playoff matches exist ──
@@ -197,6 +236,145 @@ function roundLabel(contestants: number): string {
   if (contestants === 8) return "quarter";
   return "top:" + contestants;
 }
+
+// ── public schedule preview (bracket + per-matchday pairings + projected times) ──
+// Used by the rules page and admin so the schedule shown to the public stays in sync
+// with what the admin configures. Group pairings are fixed once the stage starts;
+// knockout pairings only exist for rounds already generated (they depend on winners),
+// so future knockout rounds carry projected times but no pairings (pending = true).
+export type SchedSide = { id: number; name: string; nameCn: string | null } | null;
+export interface SchedMatch { a: SchedSide; b: SchedSide; decided: boolean; winnerId: number | null; }
+export interface SchedGroupDay { matchday: number; matchdayCount: number; start: number | null; end: number | null; current: boolean; matches: SchedMatch[]; groups?: { groupNo: number; members: string[] }[]; }
+export interface SchedKoRound { label: string; contestants: number; start: number | null; end: number | null; pending: boolean; matches: SchedMatch[]; }
+export interface SchedulePreview {
+  known: boolean; phase: string;
+  planned: boolean;                 // nomination-phase: a booked plan exists (structure known, draw pending)
+  mode: "approval" | "rr";          // group-stage voting model
+  targetSize: number | null; groups: number | null; koTarget: number | null; groupSize: number | null;
+  plan: { nomEndsAt: number | null; groupRoundDays: number | null; dayCap: number | null; roundHours: number | null; postponeDays: number | null } | null;
+  group: SchedGroupDay[]; knockout: SchedKoRound[];
+}
+
+export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
+  const DAY = 86_400_000, HOUR = 3_600_000;
+  const nameOf = (id: number): SchedSide => {
+    const c = db.candidates.find((x) => x.id === id && x.competition_id === comp.id);
+    return c ? { id: c.id, name: c.name, nameCn: c.name_cn } : null;
+  };
+  const known = comp.phase === "group" || comp.phase === "playoff" || comp.phase === "knockout" || comp.phase === "finished";
+  const out: SchedulePreview = {
+    known, phase: comp.phase, planned: false, mode: ((comp.group_mode as any) ?? "approval"),
+    targetSize: comp.target_size ?? null, groups: comp.groups_count ?? null, koTarget: comp.ko_target ?? null,
+    groupSize: comp.group_size ?? null, plan: null,
+    group: [], knockout: [],
+  };
+
+  if (!known) {
+    // nomination phase: the group draw only happens when nomination closes, so per-match
+    // pairings can't exist yet. But if the admin has booked a plan (auto_size set), we can
+    // show the intended STRUCTURE + cadence so the rules/admin pages preview what's coming.
+    const N = comp.auto_size ?? 0;
+    if (N >= 4) {
+      const G = Math.max(2, Math.floor(comp.group_size ?? 4));
+      const groups = Math.max(1, Math.floor(N / G));
+      out.planned = true;
+      out.targetSize = N;
+      out.groupSize = G;
+      out.groups = groups;
+      out.koTarget = nextPow2(2 * groups);
+      out.plan = {
+        nomEndsAt: comp.nom_ends_at ?? null,
+        groupRoundDays: comp.group_round_days ?? null,
+        dayCap: comp.group_day_cap ?? null,
+        roundHours: comp.round_hours ?? null,
+        postponeDays: comp.postpone_days ?? null,
+      };
+    }
+    return out;
+  }
+
+  // group matchday time windows — mirrors getState.mdDate: recorded ground truth for
+  // reached days, pace-projection for days not yet opened (so history never drifts).
+  const gtStarts = (comp.group_matchday_starts || {}) as Record<number, number>;
+  const knownDays = Object.keys(gtStarts).map(Number).filter((n) => Number.isFinite(n));
+  const maxKnownDay = knownDays.length ? Math.max(...knownDays) : 0;
+  const pace = comp.group_round_days || 0;
+  const roundMs = pace * DAY;
+  const dayStart = (d: number): number | null => {
+    const k = gtStarts[d];
+    if (k != null) return k;
+    if (!pace) return null;
+    if (maxKnownDay > 0) return gtStarts[maxKnownDay] + (d - maxKnownDay) * roundMs;
+    if (comp.group_started_at != null) return comp.group_started_at + (d - 1) * roundMs;
+    return null;
+  };
+  const mdCount = comp.group_matchday_count ?? 1;
+  const curMd = comp.group_matchday ?? 1;
+  const approval = (comp.group_mode ?? "approval") === "approval";
+  if (approval) {
+    const perDay = comp.groups_per_day && comp.groups_per_day > 0 ? comp.groups_per_day : 2;
+    const nameCn = (id: number) => { const s = nameOf(id); return s ? (s.nameCn || s.name) : "?"; };
+    const grouped = db.candidates.filter((c) => c.competition_id === comp.id && c.group_no != null);
+    for (let d = 1; d <= mdCount; d++) {
+      const start = dayStart(d);
+      let end: number | null = null;
+      if (comp.phase === "group" && d === curMd && comp.group_round_ends_at) end = comp.group_round_ends_at;
+      else if (start != null && pace) end = start + roundMs;
+      const gNos = [...new Set(grouped.map((c) => c.group_no!))].filter((g) => groupBatch(g, perDay) === d).sort((a, b) => a - b);
+      const groups = gNos.map((g) => ({ groupNo: g, members: grouped.filter((c) => c.group_no === g).sort((a, b) => (a.seed ?? 0) - (b.seed ?? 0)).map((c) => nameCn(c.id)) }));
+      out.group.push({ matchday: d, matchdayCount: mdCount, start, end, current: comp.phase === "group" && d === curMd, matches: [], groups });
+    }
+  } else {
+    const gms = db.matchups.filter((m) => m.competition_id === comp.id && m.stage === "group");
+    for (let d = 1; d <= mdCount; d++) {
+      const start = dayStart(d);
+      let end: number | null = null;
+      if (comp.phase === "group" && d === curMd && comp.group_round_ends_at) end = comp.group_round_ends_at;
+      else if (start != null && pace) end = start + roundMs;
+      const matches = gms
+        .filter((m) => (m.matchday ?? 1) === d)
+        .sort((a, b) => (a.group_no ?? 0) - (b.group_no ?? 0) || a.slot - b.slot)
+        .map((m) => ({ a: nameOf(m.a_id), b: nameOf(m.b_id), decided: m.decided, winnerId: m.winner_id }));
+      out.group.push({ matchday: d, matchdayCount: mdCount, start, end, current: comp.phase === "group" && d === curMd, matches });
+    }
+  }
+
+  // knockout rounds — project times; attach pairings only where matchups already exist.
+  const koTarget = comp.ko_target ?? 0;
+  if (koTarget >= 2) {
+    const koMs = db.matchups.filter((m) => m.competition_id === comp.id && m.stage === "knockout");
+    const byRound = new Map<number, Matchup[]>();
+    for (const m of koMs) { const arr = byRound.get(m.round_no) || []; arr.push(m); byRound.set(m.round_no, arr); }
+    const roundNos = [...byRound.keys()];
+    const rh = comp.round_hours || 0;
+    let cursor: number | null = null;
+    let curKoSize: number | null = null;
+    if (comp.phase === "knockout") {
+      const maxRn = koMs.length ? Math.max(...koMs.map((m) => m.round_no)) : 0;
+      const cnt = koMs.filter((m) => m.round_no === maxRn).length;
+      curKoSize = Math.max(2, cnt * 2);
+    } else if (comp.phase === "group" || comp.phase === "playoff") {
+      cursor = out.group.length ? out.group[out.group.length - 1].end : null;
+    }
+    for (let S = koTarget; S >= 2; S = S >> 1) {
+      const rn = roundNos.find((r) => byRound.get(r)!.length * 2 === S);
+      const matches: SchedMatch[] = rn != null
+        ? byRound.get(rn)!.slice().sort((a, b) => a.slot - b.slot).map((m) => ({ a: nameOf(m.a_id), b: nameOf(m.b_id), decided: m.decided, winnerId: m.winner_id }))
+        : [];
+      let start: number | null = null, end: number | null = null;
+      if (comp.phase === "knockout" && curKoSize != null) {
+        if (S === curKoSize) { end = comp.ko_round_ends_at ?? null; cursor = end; }
+        else if (S < curKoSize) { start = cursor; end = (cursor != null && rh) ? cursor + rh * HOUR : null; cursor = end; }
+        // S > curKoSize → already-played round: leave times null (historical)
+      } else if (comp.phase === "group" || comp.phase === "playoff") {
+        start = cursor; end = (cursor != null && rh) ? cursor + rh * HOUR : null; cursor = end;
+      }
+      out.knockout.push({ label: roundLabel(S), contestants: S, start, end, pending: rn == null, matches });
+    }
+  }
+  return out;
+}
+
 
 // ── helpers ───────────────────────────────────────────────────
 function isPow2(n: number) { return n >= 2 && (n & (n - 1)) === 0; }
@@ -308,7 +486,7 @@ export function updateCompetition(cid: number, title: string, description: strin
 }
 
 /** nomination → group: keep top `size` candidates, split into groups, build round-robin. */
-export function startGroups(cid: number, size: number, perRound = 0, roundDays = 0) {
+export function startGroups(cid: number, size: number, perRound = 0, roundDays = 0, groupSize = 0, mode: "approval" | "rr" | "" = "", groupsPerDay = 0) {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
   if (!comp || comp.phase !== "nomination") return; // idempotent
@@ -334,16 +512,18 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   const seedOfId = new Map<number, number>();
   qualifiers.forEach((r, i) => seedOfId.set(r.id, i)); // 排位赛种子 = 提名排名(0 最强)
 
-  const c = a % 4;
+  // 每组人数 G(默认 4)。前 base 名分成整齐的 G 人组,余数补进最弱的若干组 → 那些组变 G+1 人。
+  const G = Math.max(2, Math.floor(groupSize > 0 ? groupSize : (comp.group_size ?? 4)));
+  const c = a % G;
   const base = a - c;
-  const numGroups = Math.max(1, Math.floor(base / 4));
+  const numGroups = Math.max(1, Math.floor(base / G));
 
-  // 前 base 名随机分成 numGroups 个 4 人组
+  // 前 base 名随机分成 numGroups 个 G 人组
   const topIds = shuffle(qualifiers.slice(0, base).map((r) => r.id));
   const groups: number[][] = Array.from({ length: numGroups }, () => []);
-  topIds.forEach((id, i) => groups[Math.floor(i / 4)].push(id));
+  topIds.forEach((id, i) => groups[Math.floor(i / G)].push(id));
 
-  // 余下 c 名补进「最弱」的 c 个组(成员种子和最大者最弱;并列随机)→ 这些组变 5 人
+  // 余下 c 名补进「最弱」的 c 个组(成员种子和最大者最弱;并列随机)→ 这些组变 G+1 人
   const leftovers = qualifiers.slice(base).map((r) => r.id);
   const strength = groups.map((g, idx) => ({ idx, sum: g.reduce((t, id) => t + (seedOfId.get(id) || 0), 0), r: Math.random() }));
   strength.sort((x, y) => y.sum - x.sum || x.r - y.r);
@@ -360,12 +540,31 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   comp.phase = "group";
   comp.target_size = a;
   comp.groups_count = numGroups;
+  comp.group_size = G;
   comp.ko_target = nextPow2(2 * numGroups); // ≤8 组→16,9-16 组→32,以此类推
   comp.group_started_at = Date.now(); // legacy 锚点,仅供旧数据兜底
   comp.group_matchday_starts = { 1: comp.group_started_at }; // 事实来源:第 1 比赛日真实开始的时刻
   comp.nom_ends_at = null;
 
-  // 比赛日排程:每组各自 circle method 生成轮次,再全局装箱成「每个比赛日 ≤ DAY_CAP 场」
+  const MODE: "approval" | "rr" = mode === "rr" || mode === "approval" ? mode : ((comp.group_mode as any) ?? "approval");
+  comp.group_mode = MODE;
+
+  if (MODE === "approval") {
+    // 投票晋级制:不生成对阵。每个「比赛日」开放 groups_per_day 个组的组内投票(每人 2 票)。
+    const perDay = groupsPerDay > 0 ? Math.floor(groupsPerDay) : (comp.groups_per_day && comp.groups_per_day > 0 ? comp.groups_per_day : 2);
+    const RD = roundDays > 0 ? roundDays : (comp.group_round_days ?? 0);
+    comp.groups_per_day = perDay;
+    comp.group_per_round = null;
+    comp.group_round_days = RD || null;
+    comp.group_matchday = 1;
+    comp.group_matchday_count = Math.max(1, Math.ceil(numGroups / perDay));
+    comp.group_round_ends_at = RD > 0 ? Date.now() + RD * 86400_000 : null;
+    comp.group_ends_at = null;
+    writeDb(db);
+    return;
+  }
+
+  // ── 循环赛(1v1)模式:每组各自 circle method 生成轮次,再全局装箱成「每个比赛日 ≤ DAY_CAP 场」──
   const K = perRound > 0 ? perRound : (comp.group_per_round ?? 0);
   const RD = roundDays > 0 ? roundDays : (comp.group_round_days ?? 0);
   const DAY_CAP = comp.group_day_cap && comp.group_day_cap > 0 ? comp.group_day_cap : GROUP_DAY_CAP;
@@ -391,10 +590,13 @@ export function advanceGroupMatchday(cid: number): { done: boolean; message: str
   if (!comp || comp.phase !== "group") throw new Error("当前不在小组赛阶段。");
   const cur = comp.group_matchday ?? 1;
   const count = comp.group_matchday_count ?? 1;
-  const counts = matchCounts(db, cid);
-  const seedOf = seedLookup(db, cid);
-  for (const m of db.matchups)
-    if (m.competition_id === cid && m.stage === "group" && (m.matchday ?? 1) === cur) decide(m, counts, seedOf);
+  const approval = (comp.group_mode ?? "approval") === "approval";
+  if (!approval) {
+    const counts = matchCounts(db, cid);
+    const seedOf = seedLookup(db, cid);
+    for (const m of db.matchups)
+      if (m.competition_id === cid && m.stage === "group" && (m.matchday ?? 1) === cur) decide(m, counts, seedOf);
+  }
   if (cur < count) {
     comp.group_matchday = cur + 1;
     const now = Date.now();
@@ -418,8 +620,10 @@ export function startKnockout(cid: number) {
   const koTarget = comp.ko_target ?? nextPow2(2 * numGroups);
   const counts = matchCounts(db, cid);
   const seedOf = seedLookup(db, cid);
+  const approval = (comp.group_mode ?? "approval") === "approval";
+  const appr = approval ? approvalTally(db, cid) : null;
 
-  for (const m of db.matchups) if (m.competition_id === cid && m.stage === "group") decide(m, counts, seedOf);
+  if (!approval) for (const m of db.matchups) if (m.competition_id === cid && m.stage === "group") decide(m, counts, seedOf);
 
   const nomCount = new Map<number, number>();
   for (const v of db.nominationVotes) if (v.competition_id === cid) nomCount.set(v.candidate_id, (nomCount.get(v.candidate_id) || 0) + 1);
@@ -431,6 +635,11 @@ export function startKnockout(cid: number) {
     const gms = db.matchups.filter((m) => m.competition_id === cid && m.stage === "group" && m.group_no === g);
     const members = db.candidates.filter((cd) => cd.competition_id === cid && cd.group_no === g);
     const stats: Row[] = members.map((mem) => {
+      if (approval) {
+        // 投票晋级制:以组内得票数作为排名依据(等价地塞进 wins/vf,复用下方同一套排序/补位)
+        const a2 = appr!.get(mem.id) || 0;
+        return { id: mem.id, wins: a2, vf: a2, votes: nomCount.get(mem.id) || 0, groupRank: 0 };
+      }
       let wins = 0, vf = 0;
       for (const mm of gms) {
         const va = counts.get(mm.id + ":" + mm.a_id) || 0, vb = counts.get(mm.id + ":" + mm.b_id) || 0;
@@ -577,6 +786,10 @@ export interface ScheduleOpts {
   postponeDays: number;          // days to push back if the pool is short at the deadline
   groupPerRound?: number;        // matches per matchday per group (0 = auto)
   groupRoundDays?: number;       // days per group matchday
+  groupSize?: number;            // players per group (0 = default 4)
+  dayCap?: number;               // max matches opened per global matchday (0 = default)
+  groupMode?: "approval" | "rr" | ""; // group-stage model to use when auto-opening
+  groupsPerDay?: number;         // approval mode: groups opened per matchday (0 = default 2)
 }
 
 /** Arm the automatic schedule (only meaningful in the nomination phase). */
@@ -589,6 +802,10 @@ export function scheduleCompetition(cid: number, o: ScheduleOpts) {
   comp.round_hours = o.roundHours;
   comp.group_per_round = o.groupPerRound && o.groupPerRound > 0 ? o.groupPerRound : null;
   comp.group_round_days = o.groupRoundDays && o.groupRoundDays > 0 ? o.groupRoundDays : null;
+  comp.group_size = o.groupSize && o.groupSize > 0 ? Math.max(2, Math.floor(o.groupSize)) : comp.group_size;
+  comp.group_day_cap = o.dayCap && o.dayCap > 0 ? Math.floor(o.dayCap) : comp.group_day_cap;
+  if (o.groupMode === "approval" || o.groupMode === "rr") comp.group_mode = o.groupMode;
+  if (o.groupsPerDay && o.groupsPerDay > 0) comp.groups_per_day = Math.floor(o.groupsPerDay);
   comp.postpone_days = o.postponeDays > 0 ? o.postponeDays : 1;
   comp.nom_ends_at = o.nomEndsAt && o.nomEndsAt > Date.now() ? o.nomEndsAt : null;
   writeDb(db);
