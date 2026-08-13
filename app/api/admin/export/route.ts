@@ -44,10 +44,18 @@ export async function GET(req: NextRequest) {
       }
     }
   } else if (state.group) {
-    rows.push(["阶段", "组", "名次", "角色", "胜", "得票"]);
-    for (const g of state.group.groups) {
-      g.standings.forEach((s: any, i: number) =>
-        rows.push(["小组赛", String.fromCharCode(65 + g.group), String(i + 1), s.nameCn || s.name, String(s.wins), String(s.votesFor ?? "")]));
+    if (state.group.mode === "approval") {
+      rows.push(["阶段", "组", "名次", "角色", "得票", "晋级"]);
+      for (const g of state.group.groups) {
+        (g.members ?? []).forEach((s: any, i: number) =>
+          rows.push(["小组赛", String.fromCharCode(65 + g.group), String(i + 1), s.nameCn || s.name, String(s.votes ?? ""), s.advancing ? "是" : ""]));
+      }
+    } else {
+      rows.push(["阶段", "组", "名次", "角色", "胜", "得票"]);
+      for (const g of state.group.groups) {
+        g.standings.forEach((s: any, i: number) =>
+          rows.push(["小组赛", String.fromCharCode(65 + g.group), String(i + 1), s.nameCn || s.name, String(s.wins), String(s.votesFor ?? "")]));
+      }
     }
   } else if (state.nomination) {
     rows.push(["阶段", "角色", "提名数"]);

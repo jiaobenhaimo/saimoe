@@ -427,10 +427,27 @@ export default function Admin() {
         </div>
       )}
 
+      {/* ── 公众号 / 投票通道 ── */}
+      <div className="admin-section">📣 公众号 / 投票通道</div>
+
+      <div className="card">
+        <h3>投票门禁</h3>
+        <p className="hint">
+          默认<b>关闭</b>:任何人打开网站即可投票(按浏览器指纹尽力去重),<b>不需要微信</b>。
+          开启后:只有从公众号「回复投票」拿到专属链接的用户能投票,直连网站的人只读;admin 始终用令牌进后台,不受影响。
+          <br />开启前请确认已配置 <code>WX_TOKEN</code> / <code>PUBLIC_BASE_URL</code> 并把 <code>/api/wx</code> 接入公众号,否则用户拿不到链接会无法投票。
+        </p>
+        <p style={{ margin: "0 0 10px" }}>当前状态:<b style={{ color: state?.voteGate?.on ? "var(--rose-deep)" : "var(--muted)" }}>{state?.voteGate?.on ? "已开启(仅公众号链接可投)" : "已关闭(无需微信,人人可投)"}</b></p>
+        <button className={"btn" + (state?.voteGate?.on ? "" : " solid")} disabled={busy || !token}
+          onClick={() => act("set_wx_gate", { on: !state?.voteGate?.on })}>
+          {state?.voteGate?.on ? "关闭门禁(改为人人可投)" : "开启门禁(改为仅公众号链接可投)"}
+        </button>
+      </div>
+
       {comp && (
         <div className="card">
-          <h3>📣 公众号推送文案</h3>
-          <p className="hint">生成本轮提醒文案。<b>手动群发</b>:每天可在公众号后台群发 1 条,复制下面「群发」文案粘贴即可(群发是同一条发给所有人,无法带每人专属链接,故用「回复投票领链接」引导)。<b>拉取回复</b>:用户给公众号发消息时,自动回复这条(含该用户专属投票链接)——这段文案由服务器在被动回复时生成,下面是样例。</p>
+          <h3>本轮推送文案</h3>
+          <p className="hint"><b>手动群发</b>:每天可在公众号后台群发 1 条,复制下面「群发」文案粘贴即可(群发是同一条发给所有人,无法带每人专属链接,故用「回复投票领链接」引导)。<b>拉取回复</b>:用户给公众号发消息时,自动回复这条(含该用户专属投票链接)——由服务器在被动回复时生成,下面是样例。</p>
           <button className="btn solid" disabled={remindBusy} onClick={loadRemind}>{remindBusy ? "生成中…" : "生成本轮推送文案"}</button>
           {remind && (
             <>
