@@ -31,6 +31,9 @@ export interface Competition {
   group_matchday: number | null; group_matchday_count: number | null;
   group_per_round: number | null; group_round_days: number | null; group_round_ends_at: number | null;
   group_day_cap: number | null;   // 每比赛日最多对局数(null=默认 4)
+  group_size: number | null;      // 每组人数(null=默认 4;余数补进弱组成 G+1 人组)
+  group_mode: "approval" | "rr" | null; // 小组赛玩法:approval=每人组内投2票取前二(默认);rr=两两对阵循环赛
+  groups_per_day: number | null;  // approval 模式:每个比赛日开放几个组投票(默认 2)
   group_started_at: number | null; // 小组赛开赛时间(legacy anchor,仅供旧数据兜底用)
   // 每个比赛日"真实"开始的时间戳(在 startGroups / advanceGroupMatchday 发生的那一刻记录),
   // 作为"日期"列的事实来源——已发生的比赛日永远读这里,不会因为之后调整节奏(setPace)
@@ -54,6 +57,8 @@ export interface Matchup {
 }
 interface NominationVote { competition_id: number; candidate_id: number; voter_id: string; created_at?: number; device_bucket?: string | null; ip?: string | null; }
 interface MatchVote { matchup_id: number; voter_id: string; choice_id: number; created_at?: number; device_bucket?: string | null; ip?: string | null; }
+/** A group-stage approval vote (approval mode): one row per (voter, group, candidate). Max 2 per (voter, group). */
+interface ApprovalVote { competition_id: number; group_no: number; candidate_id: number; voter_id: string; created_at?: number; device_bucket?: string | null; ip?: string | null; }
 
 /** Non-identifying-by-default metadata attached to a vote. `bucket` is a coarse
  *  cross-browser device hint; `ip` is the caller's forwarded IP. Both are used only to
@@ -74,6 +79,7 @@ export interface DB {
   matchups: Matchup[];
   nominationVotes: NominationVote[];
   matchVotes: MatchVote[];
+  approvalVotes: ApprovalVote[];
   comments: Comment[];
   auditLog: AuditEntry[];
 }
@@ -85,7 +91,7 @@ const FILE = path.join(DATA_DIR, "saimoe.json");
 export function dataFilePath(): string { return FILE; }
 
 function blank(): DB {
-  return { seq: { competition: 0, candidate: 0, matchup: 0, comment: 0, audit: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [], comments: [], auditLog: [] };
+  return { seq: { competition: 0, candidate: 0, matchup: 0, comment: 0, audit: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [], approvalVotes: [], comments: [], auditLog: [] };
 }
 function normalize(o: any): DB {
   if (!o || typeof o !== "object") return blank();
@@ -103,6 +109,7 @@ function normalize(o: any): DB {
     matchups: Array.isArray(o.matchups) ? o.matchups : b.matchups,
     nominationVotes: Array.isArray(o.nominationVotes) ? o.nominationVotes : b.nominationVotes,
     matchVotes: Array.isArray(o.matchVotes) ? o.matchVotes : b.matchVotes,
+    approvalVotes: Array.isArray(o.approvalVotes) ? o.approvalVotes : b.approvalVotes,
     comments: Array.isArray(o.comments) ? o.comments : b.comments,
     auditLog: Array.isArray(o.auditLog) ? o.auditLog : b.auditLog,
   };
@@ -152,7 +159,7 @@ export function ensureSchema(): void {
 export function createCompetition(title: string): number {
   const db = readDb();
   const id = ++db.seq.competition;
-  db.competitions.push({ id, title, description: null, short_name: null, phase: "nomination", target_size: null, groups_count: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_started_at: null, group_matchday_starts: null, ko_target: null, ko_seed_ids: null, playoff_slots: null });
+  db.competitions.push({ id, title, description: null, short_name: null, phase: "nomination", target_size: null, groups_count: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_size: null, group_mode: null, groups_per_day: null, group_started_at: null, group_matchday_starts: null, ko_target: null, ko_seed_ids: null, playoff_slots: null });
   writeDb(db);
   return id;
 }
@@ -266,6 +273,44 @@ export function toggleNomination(cid: number, candidateId: number, voterId: stri
   db.nominationVotes.push({ competition_id: cid, candidate_id: candidateId, voter_id: voterId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
   writeDb(db);
   return { voted: true };
+}
+
+/** Which batch (1-indexed) a group belongs to under approval mode's "N groups per day". */
+export function groupBatch(groupNo: number, perDay: number): number {
+  return Math.floor(groupNo / Math.max(1, perDay)) + 1;
+}
+/** approval tally for one competition → Map<candidate_id, approval count>. */
+export function approvalTally(db: DB, cid: number): Map<number, number> {
+  const m = new Map<number, number>();
+  for (const v of db.approvalVotes) if (v.competition_id === cid) m.set(v.candidate_id, (m.get(v.candidate_id) || 0) + 1);
+  return m;
+}
+
+/** Toggle a group-stage approval vote (approval mode). Enforces ≤2 picks per (voter, group),
+ *  ≤1 per candidate, and that the group is in the currently-open batch. */
+export function castApprovalVote(cid: number, candidateId: number, voterId: string, meta?: VoteMeta): { picked: boolean; count: number } | { error: string; status: number } {
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp || comp.phase !== "group") return { error: "当前不在小组赛阶段。", status: 400 };
+  if ((comp.group_mode ?? "approval") !== "approval") return { error: "当前小组赛不是投票晋级模式。", status: 400 };
+  const cand = db.candidates.find((c) => c.id === candidateId && c.competition_id === cid);
+  if (!cand || cand.group_no == null) return { error: "角色不存在或未分组。", status: 404 };
+  const perDay = comp.groups_per_day && comp.groups_per_day > 0 ? comp.groups_per_day : 2;
+  const cur = comp.group_matchday ?? 1;
+  if (groupBatch(cand.group_no, perDay) !== cur) return { error: "本组当前未开放投票,请等待对应比赛日。", status: 400 };
+
+  const g = cand.group_no;
+  const mine = db.approvalVotes.filter((v) => v.competition_id === cid && v.group_no === g && v.voter_id === voterId);
+  const existing = mine.find((v) => v.candidate_id === candidateId);
+  if (existing) {
+    db.approvalVotes = db.approvalVotes.filter((v) => !(v.competition_id === cid && v.group_no === g && v.voter_id === voterId && v.candidate_id === candidateId));
+    writeDb(db);
+    return { picked: false, count: mine.length - 1 };
+  }
+  if (mine.length >= 2) return { error: "每组最多投 2 票,请先取消一个再选。", status: 400 };
+  db.approvalVotes.push({ competition_id: cid, group_no: g, candidate_id: candidateId, voter_id: voterId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
+  writeDb(db);
+  return { picked: true, count: mine.length + 1 };
 }
 
 /** Cast / change / retract a matchup vote. */

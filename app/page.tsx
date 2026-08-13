@@ -146,9 +146,6 @@ export default function Page() {
   const [hits, setHits] = useState<any[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchErr, setSearchErr] = useState("");
-  const [manual, setManual] = useState(false);
-  const [mName, setMName] = useState("");
-  const [mImg, setMImg] = useState("");
   const [subQ, setSubQ] = useState("");
   const [subHits, setSubHits] = useState<any[] | null>(null);
   const [subSearching, setSubSearching] = useState(false);
@@ -157,6 +154,8 @@ export default function Page() {
   const [now, setNow] = useState(() => Date.now());
   const [sel, setSel] = useState<number | null>(null);
   const [nomErr, setNomErr] = useState("");
+  const [linkErr, setLinkErr] = useState(false);
+  useEffect(() => { try { setLinkErr(new URLSearchParams(window.location.search).get("linkerr") === "1"); } catch {} }, []);
   const [lang, setLang] = useLang();
   const T = (k: string, p?: Record<string, string | number>) => t(lang, k, p);
 
@@ -209,10 +208,10 @@ export default function Page() {
   }, []);
 
   // 角色搜索:v0 只有 POST /v0/search/characters。把它发成 CORS「简单请求」(text/plain)绕过预检;
-  // 能否成功取决于 Bangumi 是否给 POST 附跨域头,失败则回退手动添加。
+  // 能否成功取决于 Bangumi 是否给 POST 附跨域头,失败则提示改用「搜作品名」导入。
   const search = async () => {
     const kw = q.trim(); if (!kw) return;
-    setSearching(true); setSearchErr(""); setHits(null); setManual(false); setSubHits(null); setImportMsg("");
+    setSearching(true); setSearchErr(""); setHits(null); setSubHits(null); setImportMsg("");
     try {
       const r = await fetch("https://api.bgm.tv/v0/search/characters?limit=20", {
         method: "POST",
@@ -229,7 +228,7 @@ export default function Page() {
         .filter((c: any) => !seen.has(c.bgmId) && (seen.add(c.bgmId), true));
       setHits(items);
       if (items.length === 0) setSearchErr(T("search.trysubject"));
-    } catch { setSearchErr(T("search.fail", { err: "跨域被拦截,请改用搜作品或手动添加" })); setHits([]); }
+    } catch { setSearchErr(T("search.fail", { err: "跨域被拦截,请改用搜作品名导入" })); setHits([]); }
     finally { setSearching(false); }
   };
 
@@ -267,11 +266,6 @@ export default function Page() {
     } finally { busyRef.current = false; }
   };
   const nominate = async (h: any) => { await post({ batch: [{ bgmId: h.bgmId, name: h.name, nameCn: h.nameCn, image: h.image }] }); await load(); };
-  const nominateManual = async () => {
-    if (!mName.trim()) return;
-    await post({ manual: { name: mName.trim(), image: mImg.trim() } });
-    setMName(""); setMImg(""); setManual(false); await load();
-  };
   // 浏览器直接调 GET(取角色列表 + 逐个补中文名),再交服务端存储;顺带记录作品名。
   const importSubject = async (subjectId: string, subjectName: string) => {
     setImportMsg(T("import.progress", { name: subjectName }));
@@ -307,8 +301,10 @@ export default function Page() {
     }
   };
 
+  const canVote = !state?.voteGate?.on || !!state?.voteGate?.canVote;
   const nomVote = async (candidateId: number) => {
     setNomErr("");
+    if (!canVote) { setNomErr(T("gate.readonly")); return; }
     const r = await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "nominate", candidateId }) });
     const j = await r.json().catch(() => ({}));
     if (j?.error) setNomErr(j.error);
@@ -321,7 +317,15 @@ export default function Page() {
     await load();
   };
   const matchVote = async (matchupId: number, choiceId: number) => {
+    if (!canVote) return; // gate on & no link session → read-only (banner explains)
     await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "match", matchupId, choiceId }) });
+    await load();
+  };
+  const approvalVote = async (candidateId: number) => {
+    if (!canVote) return;
+    const r = await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "approval", candidateId }) });
+    const j = await r.json().catch(() => ({}));
+    if (j?.error) setNomErr(j.error);
     await load();
   };
 
@@ -392,6 +396,9 @@ export default function Page() {
         })}
       </div>
       <div className="hint" style={{ marginTop: 6 }}><a href="/rules">{T("rulesLink")}</a></div>
+      {(linkErr || !canVote) && (
+        <div className="gate-banner">{linkErr ? T("gate.linkErr") : T("gate.readonly")}</div>
+      )}
 
       {!loading && comp && deadline && phase !== "finished" && (
         <div className="deadline">
@@ -474,7 +481,6 @@ export default function Page() {
             <button onClick={searchSubjects} disabled={subSearching || !subQ.trim()}>{subSearching ? T("common.searching") : T("nom.searchSubject")}</button>
           </div>
           {importMsg && <div className="hint">{importMsg}</div>}
-          <div className="hint">{T("nom.notFoundQ")}<a onClick={() => setManual(true)}>{T("nom.manualAdd")}</a></div>
 
           {subHits && (
             <div className="results">
@@ -500,15 +506,6 @@ export default function Page() {
                   <button className="btn" onClick={() => nominate(h)}>{T("nom.plus")}</button>
                 </div>
               ))}
-            </div>
-          )}
-
-          {manual && (
-            <div className="card" style={{ marginTop: 14 }}>
-              <h3>{T("nom.manualTitle")}</h3>
-              <div className="field"><label>{T("nom.nameRequired")}</label><input value={mName} onChange={(e) => setMName(e.target.value)} /></div>
-              <div className="field"><label>{T("nom.imgOptional")}</label><input value={mImg} onChange={(e) => setMImg(e.target.value)} /></div>
-              <button className="btn solid" onClick={nominateManual} disabled={!mName.trim()}>{T("nom.addToPool")}</button>
             </div>
           )}
 
@@ -562,41 +559,57 @@ export default function Page() {
           <div className="sec"><h2>{T("group.title")}</h2><div className="meta2">{comp.koTarget ? T("group.wc", { n: comp.koTarget }) : ""}</div></div>
           {state.group.matchdayCount > 1 && <div className="hint">{T("group.matchday", { d: state.group.matchday, n: state.group.matchdayCount })}</div>}
           <div className="groupwrap">
-            {state.group.groups.map((g: any) => (
-              <div className="group" key={g.group}>
-                <h3>{T("group.letter", { L: String.fromCharCode(65 + g.group) })}</h3>
-                <table className="stand">
-                  <thead><tr><th>{T("th.rank")}</th><th>{T("th.char")}</th><th style={{ textAlign: "right" }}>{T("th.win")}</th><th style={{ textAlign: "right" }}>{T("th.votes")}</th></tr></thead>
-                  <tbody>
-                    {g.standings.map((s: any, i: number) => (
-                      <tr key={s.id} className={i < 2 ? "adv" : ""}>
-                        <td>{i + 1}</td><td>{label(s, lang)}</td><td className="n num">{s.wins}</td><td className="n num">{s.votesFor ?? "—"}</td>
-                      </tr>
+            {state.group.mode === "approval"
+              ? state.group.groups.map((g: any) => (
+                <div className={"group ballot" + (g.open ? " open" : "")} key={g.group}>
+                  <h3>{T("group.letter", { L: String.fromCharCode(65 + g.group) })}
+                    <span className="gstatus">{g.open ? T("gb.open", { n: g.myPicks, max: state.group.perGroupVotes }) : g.closed ? T("gb.closed") : T("gb.upcoming")}</span></h3>
+                  <ul className="ballot-list">
+                    {g.members.map((m: any) => (
+                      <li key={m.id} className={(m.mine ? "mine " : "") + (m.advancing ? "adv" : "")}>
+                        <Avatar c={m} />
+                        <div className="meta"><div className="nm">{label(m, lang)}</div>
+                          {m.votes != null && <div className="sub">{m.votes} {T("gb.votes")}{m.advancing ? " · " + T("gb.adv") : ""}</div>}</div>
+                        {g.open
+                          ? <button className={"btn" + (m.mine ? " solid" : "")} disabled={!canVote} onClick={() => approvalVote(m.id)}>{m.mine ? T("gb.picked") : T("gb.pick")}</button>
+                          : <span className="rankpill">{m.rank + 1}</span>}
+                      </li>
                     ))}
-                  </tbody>
-                </table>
-                <table className="stand gm-table">
-                  <thead><tr><th>{T("th.match")}</th><th>{T("th.date")}</th><th>{T("th.result")}</th></tr></thead>
-                  <tbody>
-                    {g.matchups.map((m: Match) => (
-                      <tr key={m.id} className={m.decided ? "decided" : ""}>
-                        <td>{label(m.a, lang)} <span className="vs-mini">vs</span> {label(m.b, lang)}</td>
-                        <td className="n num">{m.date ? fmtAbs(m.date, lang) : (m.matchday ? T("group.matchday", { d: m.matchday, n: state.group.matchdayCount }) : "—")}</td>
-                        <td className="n">
-                          {m.decided
-                            ? <span className="win-nm">{m.winnerId === m.a?.id ? label(m.a, lang) : label(m.b, lang)} · {T("match.won")}</span>
-                            : m.live ? T("vote.badge.live") : T("vote.badge.upcoming")}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {/* full interactive cards — this is where you vote & read/leave comments (the
-                    compact table above is a quick-glance schedule/result overview, not a
-                    substitute: it has no vote or comment affordance) */}
-                {g.matchups.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} />)}
-              </div>
-            ))}
+                  </ul>
+                </div>
+              ))
+              : state.group.groups.map((g: any) => (
+                <div className="group" key={g.group}>
+                  <h3>{T("group.letter", { L: String.fromCharCode(65 + g.group) })}</h3>
+                  <table className="stand">
+                    <thead><tr><th>{T("th.rank")}</th><th>{T("th.char")}</th><th style={{ textAlign: "right" }}>{T("th.win")}</th><th style={{ textAlign: "right" }}>{T("th.votes")}</th></tr></thead>
+                    <tbody>
+                      {g.standings.map((s: any, i: number) => (
+                        <tr key={s.id} className={i < 2 ? "adv" : ""}>
+                          <td>{i + 1}</td><td>{label(s, lang)}</td><td className="n num">{s.wins}</td><td className="n num">{s.votesFor ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <table className="stand gm-table">
+                    <thead><tr><th>{T("th.match")}</th><th>{T("th.date")}</th><th>{T("th.result")}</th></tr></thead>
+                    <tbody>
+                      {g.matchups.map((m: Match) => (
+                        <tr key={m.id} className={m.decided ? "decided" : ""}>
+                          <td>{label(m.a, lang)} <span className="vs-mini">vs</span> {label(m.b, lang)}</td>
+                          <td className="n num">{m.date ? fmtAbs(m.date, lang) : (m.matchday ? T("group.matchday", { d: m.matchday, n: state.group.matchdayCount }) : "—")}</td>
+                          <td className="n">
+                            {m.decided
+                              ? <span className="win-nm">{m.winnerId === m.a?.id ? label(m.a, lang) : label(m.b, lang)} · {T("match.won")}</span>
+                              : m.live ? T("vote.badge.live") : T("vote.badge.upcoming")}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {g.matchups.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} />)}
+                </div>
+              ))}
           </div>
         </>
       )}
@@ -658,8 +671,7 @@ export default function Page() {
       )}
 
       <div className="foot">
-        {T("dataFrom")}<br />
-        <a href="/rules">{T("rules")}</a>
+        {T("dataFrom")}
       </div>
     </main>
   );

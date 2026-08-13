@@ -54,15 +54,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, added, imported: body.batch.length });
     }
 
-    // ── manual add ──
-    if (body.manual?.name) {
-      const name = String(body.manual.name).trim();
-      const nameCn = String(body.manual.nameCn || "").trim();
-      const image = String(body.manual.image || "").trim();
-      const bgmId = "m_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-      return NextResponse.json({ ok: true, added: addCandidate(comp.id, bgmId, name, nameCn, image, "", vid) });
-    }
-
     return NextResponse.json({ error: "缺少角色信息。" }, { status: 400 });
   } catch (e: any) {
     return NextResponse.json({ error: e.message || "nominate failed" }, { status: 500 });

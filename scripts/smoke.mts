@@ -6,7 +6,7 @@ process.env.DATA_DIR = process.env.SMOKE_DATA_DIR || "/tmp/saimoe-smoke";
 // Dynamic imports so DATA_DIR is set before lib/db reads it (ESM hoists static imports).
 const db = await import("../lib/db");
 const eng = await import("../lib/engine");
-const { createCompetition, addCandidate, toggleNomination, ensureSchema } = db;
+const { createCompetition, addCandidate, toggleNomination, ensureSchema, castApprovalVote } = db;
 const { getState, startGroups, advanceGroupMatchday, startKnockout, advanceKnockout, undoLastTransition, setGroupDayCap, getActiveCompetition } = eng;
 
 let failures = 0;
@@ -22,7 +22,7 @@ for (let i = 1; i <= 16; i++) toggleNomination(cid, i, "v" + i);
 
 // ── group stage: day cap + dated matchups ──
 setGroupDayCap(cid, 3);
-startGroups(cid, 16, 0, 1); // roundDays = 1 so matchday dates are computed
+startGroups(cid, 16, 0, 1, 0, "rr"); // roundDays = 1 so matchday dates are computed; rr mode = 1v1 round-robin
 let s: any = getState("x");
 check("group phase reached", s.competition.phase === "group");
 const perDay = new Map<number, number>();
@@ -61,6 +61,26 @@ check("undo leaves finished", getActiveCompetition()?.phase === "finished");
 let guard2 = 0;
 while (getActiveCompetition()?.phase !== "nomination" && guard2++ < 12) undoLastTransition(cid);
 check("undo chain back to nomination", getActiveCompetition()?.phase === "nomination");
+
+// ── approval mode (default): group ballots, ≤2 picks, top-2 advance, knockout handoff ──
+const cid2 = createCompetition("approval-smoke");
+for (let i = 1; i <= 8; i++) addCandidate(cid2, "a" + i, "AC" + i, "", "");
+const pool2 = (getState("seed") as any).nomination.pool as any[];
+pool2.forEach((c: any, i: number) => { for (let v = 0; v <= i; v++) toggleNomination(cid2, c.id, `n${c.id}_${v}`); });
+startGroups(cid2, 8, 0, 0, 4, "approval", 2); // 8→2 groups of 4, 2 groups/day → 1 batch
+let sa = getState("viewer");
+check("approval mode set", sa.group.mode === "approval" && sa.group.groups.length === 2);
+const gm = sa.group.groups[0].members;
+check("approval group open with members", sa.group.groups[0].open === true && gm.length === 4);
+const p1 = castApprovalVote(cid2, gm[0].id, "viewer", {});
+const p2 = castApprovalVote(cid2, gm[1].id, "viewer", {});
+const p3 = castApprovalVote(cid2, gm[2].id, "viewer", {});
+check("approval ≤2 picks enforced", (p1 as any).picked && (p2 as any).picked && "error" in (p3 as any));
+sa = getState("viewer");
+check("approval hides live counts", sa.group.groups[0].members[0].votes === null);
+let ga = 0; while ((getActiveCompetition() as any)?.group_matchday && (getActiveCompetition() as any)?.phase === "group" && ga++ < 6) { const r = advanceGroupMatchday(cid2); if (r.done) break; }
+startKnockout(cid2);
+check("approval → knockout handoff", getActiveCompetition()?.phase === "knockout");
 
 console.log(failures ? `\n${failures} failure(s)` : "\nall smoke checks passed");
 process.exit(failures ? 1 : 0);
