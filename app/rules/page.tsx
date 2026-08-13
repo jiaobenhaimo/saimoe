@@ -149,6 +149,7 @@ export default function Rules() {
         <p className="rules-p">{T("rules.s5.p1")}</p>
         <p className="rules-p">{T("rules.s5.p2")}</p>
         <p className="rules-p">{T("rules.s5.p3")}</p>
+        <p className="rules-p" style={{ marginTop: 12, fontWeight: 700 }}>{T("rules.contact")}</p>
       </div>
 
       <div className="foot"><a href="/">{T("rules.back")}</a></div>

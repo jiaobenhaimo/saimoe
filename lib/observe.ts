@@ -44,6 +44,9 @@ export function detectAnomalies(cid: number): {
     evs.push({ voter: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null, ts: v.created_at ?? null, matchId: v.matchup_id });
   for (const v of db.nominationVotes) if (v.competition_id === cid)
     evs.push({ voter: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null, ts: v.created_at ?? null, matchId: null });
+  // approval-mode group votes (no matchup_id): fold in so device/IP/burst detection covers them too
+  for (const v of db.approvalVotes) if (v.competition_id === cid)
+    evs.push({ voter: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null, ts: v.created_at ?? null, matchId: null });
 
   const flags: Flag[] = [];
   const withMeta = evs.filter((e) => e.bucket || e.ip || e.ts != null).length;

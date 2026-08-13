@@ -434,6 +434,12 @@ export function invalidateVotes(cid: number, by: "bucket" | "ip" | "voter", key:
     return (v as any)[field] !== key;
   });
   removed += mvBefore - db.matchVotes.length;
+  const avBefore = db.approvalVotes.length;
+  db.approvalVotes = db.approvalVotes.filter((v) => {
+    if (v.competition_id !== cid) return true;
+    return (v as any)[field] !== key;
+  });
+  removed += avBefore - db.approvalVotes.length;
   if (removed) writeDb(db);
   return removed;
 }

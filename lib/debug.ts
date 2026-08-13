@@ -42,6 +42,28 @@ export function debugVote(voters = 40): { matches: number; votes: number } {
   if (!comp) throw new Error("没有比赛。");
   let open = [] as typeof db.matchups;
   if (comp.phase === "group") {
+    // approval mode has no matchups — cast fake group ballots (≤2 per voter per open group)
+    if ((comp.group_mode ?? "approval") === "approval") {
+      const perDay = comp.groups_per_day && comp.groups_per_day > 0 ? comp.groups_per_day : 2;
+      const cur = comp.group_matchday ?? 1;
+      const openGroups = [...new Set(db.candidates.filter((c) => c.competition_id === comp.id && c.group_no != null).map((c) => c.group_no!))]
+        .filter((g) => Math.floor(g / Math.max(1, perDay)) + 1 === cur);
+      let av = 0;
+      for (let v = 0; v < voters; v++) {
+        const voter = `dbgv-${v}`;
+        for (const g of openGroups) {
+          const members = db.candidates.filter((c) => c.competition_id === comp.id && c.group_no === g);
+          if (!members.length) continue;
+          const picks = [...members].sort(() => Math.random() - 0.5).slice(0, 2); // up to 2 random picks
+          for (const p of picks) {
+            const exists = db.approvalVotes.find((x) => x.competition_id === comp.id && x.group_no === g && x.voter_id === voter && x.candidate_id === p.id);
+            if (!exists) { db.approvalVotes.push({ competition_id: comp.id, group_no: g, candidate_id: p.id, voter_id: voter, created_at: Date.now(), device_bucket: `dbg-bkt-${v % 5}`, ip: `10.0.0.${v % 8}` }); av++; }
+          }
+        }
+      }
+      writeDb(db);
+      return { matches: openGroups.length, votes: av };
+    }
     const cur = comp.group_matchday ?? 1;
     open = db.matchups.filter((m) => m.competition_id === comp.id && m.stage === "group" && (m.matchday ?? 1) === cur && !m.decided);
   } else if (comp.phase === "knockout") {
