@@ -4,6 +4,7 @@ import { apiEnabled } from "@/lib/flags";
 import { getVoterId } from "@/lib/voter";
 import { getActiveCompetition } from "@/lib/engine";
 import { rateLimited } from "@/lib/ratelimit";
+import { gateOn } from "@/lib/wxsession";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,8 +28,8 @@ export async function POST(req: NextRequest) {
     ensureSchema();
     const vid = await getVoterId();
     const ip = clientIp(req);
-    // 反刷:每个身份 / IP 每分钟最多 10 条
-    if (rateLimited("cmt:" + vid, 10, 60_000) || rateLimited("cmtip:" + ip, 20, 60_000))
+    // 反刷:每个身份每分钟最多 10 条;IP 上限仅作粗粒度防滥用,门禁关闭时放宽(NAT 共享)
+    if (rateLimited("cmt:" + vid, 10, 60_000) || rateLimited("cmtip:" + ip, gateOn() ? 20 : 120, 60_000))
       return NextResponse.json({ error: "评论太频繁，请稍后再试。" }, { status: 429 });
     const comp = getActiveCompetition();
     if (!comp) return NextResponse.json({ error: "没有进行中的比赛。" }, { status: 400 });

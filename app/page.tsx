@@ -265,7 +265,35 @@ export default function Page() {
       return await r.json();
     } finally { busyRef.current = false; }
   };
-  const nominate = async (h: any) => { await post({ batch: [{ bgmId: h.bgmId, name: h.name, nameCn: h.nameCn, image: h.image }] }); await load(); };
+  // ── 日本产地软校验(方案 A):查 bangumi 作品 tag 是否含「日本」。返回 true/false/null(null=查不了,不阻断) ──
+  const subjectHasJP = async (subjectId: string | number): Promise<boolean | null> => {
+    try {
+      const d = await (await fetch(`https://api.bgm.tv/v0/subjects/${encodeURIComponent(String(subjectId))}`, { headers: { Accept: "application/json" } })).json();
+      const names: string[] = [
+        ...((Array.isArray(d?.tags) ? d.tags : []).map((t: any) => (typeof t === "string" ? t : t?.name || ""))),
+        ...((Array.isArray(d?.meta_tags) ? d.meta_tags : []).map((m: any) => (typeof m === "string" ? m : m?.name || ""))),
+      ];
+      return names.some((n) => n.includes("日本"));
+    } catch { return null; }
+  };
+  const characterHasJP = async (rawId: string | number): Promise<boolean | null> => {
+    try {
+      const subs = await (await fetch(`https://api.bgm.tv/v0/characters/${encodeURIComponent(String(rawId))}/subjects`, { headers: { Accept: "application/json" } })).json();
+      const ids = (Array.isArray(subs) ? subs : []).map((s: any) => s?.id).filter(Boolean).slice(0, 3);
+      if (!ids.length) return null;
+      for (const id of ids) { const jp = await subjectHasJP(id); if (jp) return true; }
+      return false;
+    } catch { return null; }
+  };
+
+  const nominate = async (h: any) => {
+    setImportMsg("");
+    await post({ batch: [{ bgmId: h.bgmId, name: h.name, nameCn: h.nameCn, image: h.image }] });
+    await load();
+    // 软校验:提交后再查产地,非日本(明确 false)才警告;查不了(null)不打扰
+    const rawId = String(h.bgmId).replace(/^c/, "");
+    if (rawId) { const jp = await characterHasJP(rawId); if (jp === false) setImportMsg(T("jp.warn.char")); }
+  };
   // 浏览器直接调 GET(取角色列表 + 逐个补中文名),再交服务端存储;顺带记录作品名。
   const importSubject = async (subjectId: string, subjectName: string) => {
     setImportMsg(T("import.progress", { name: subjectName }));
@@ -294,7 +322,9 @@ export default function Page() {
       }
       const batch = chars.map((c: any) => ({ bgmId: c.bgmId, name: c.name, nameCn: c.nameCn, nameEn: c.nameEn || "", image: c.image, subjectName: c.subjectName }));
       const j = await post({ batch });
-      setImportMsg(j?.error ? T("import.fail", { err: j.error }) : T("import.done", { name: subjectName, added: j?.added ?? 0, imported: chars.length }));
+      const jp = await subjectHasJP(subjectId); // 方案 A:软校验,仅在明确非日本时追加提醒
+      const warn = jp === false ? " " + T("jp.warn.subject") : "";
+      setImportMsg((j?.error ? T("import.fail", { err: j.error }) : T("import.done", { name: subjectName, added: j?.added ?? 0, imported: chars.length })) + warn);
       await load();
     } catch (e: any) {
       setImportMsg(T("import.fail", { err: e?.message || "network" }));
