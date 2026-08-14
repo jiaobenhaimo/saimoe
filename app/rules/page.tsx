@@ -35,7 +35,7 @@ export default function Rules() {
     fetch("/api/state", { cache: "no-store" }).then((r) => r.json()).then((d) => { setComp(d?.competition ?? null); setSched(d?.schedule ?? null); }).catch(() => {});
   }, []);
   const T = (k: string, p?: Record<string, string | number>) => t(lang, k, p);
-  const name = comp?.shortName || T("title");
+  const name = (lang === "en" ? (comp?.shortEn || comp?.shortName) : lang === "ja" ? (comp?.shortJa || comp?.shortName) : comp?.shortName) || T("title");
 
   const loc = lang === "zh" ? "zh-CN" : lang === "ja" ? "ja-JP" : "en-US";
   const f = (ms: number) => { try { return new Date(ms).toLocaleString(loc, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
@@ -44,12 +44,37 @@ export default function Rules() {
   const side = (s: Side): string => (s ? (lang === "zh" ? (s.nameCn || s.name) : s.name) : "?");
   const winner = (m: SMatch): Side => (m.winnerId == null ? null : m.a?.id === m.winnerId ? m.a : m.b?.id === m.winnerId ? m.b : null);
   const known = !!sched?.known;
+  const [hideDone, setHideDone] = useState(true);
 
-  const pairs = (matches: SMatch[]) => matches.map((m, i) => (
-    <span key={i} className={"pair" + (m.decided ? " done" : "")}>
-      {side(m.a)} <i>{T("sched.vs")}</i> {side(m.b)}{m.decided && winner(m) ? <b> · {side(winner(m))} {T("sched.won")}</b> : null}
-    </span>
-  ));
+  // Flatten the schedule into ordered timeline nodes: nomination close → each group matchday → each knockout round.
+  type TLDetail = { text: string; done: boolean; won: string | null };
+  type TLNode = { label: string; start: number | null; end: number | null; state: "done" | "current" | "upcoming"; pending?: boolean; detail: TLDetail[] };
+  const now = Date.now();
+  const nodes: TLNode[] = [];
+  if (known && sched) {
+    const phase = sched.phase;
+    // nomination close
+    const nomEnd = sched.plan?.nomEndsAt ?? null;
+    if (nomEnd) nodes.push({ label: T("sched.nomEnd"), start: null, end: nomEnd, state: phase === "nomination" ? "current" : "done", detail: [] });
+    // group matchdays
+    for (const d of (sched.group || [])) {
+      const detail: TLDetail[] = sched.mode === "approval"
+        ? (d.groups || []).map((g: any) => ({ text: `${T("group.letter", { L: String.fromCharCode(65 + g.groupNo) })}: ${g.members.join("、")}`, done: false, won: null }))
+        : (d.matches || []).map((m: SMatch) => ({ text: `${side(m.a)} ${T("sched.vs")} ${side(m.b)}`, done: m.decided, won: m.decided && winner(m) ? side(winner(m)) : null }));
+      const state: TLNode["state"] = d.current ? "current" : d.end && d.end < now ? "done" : phase === "group" && d.matchday < (sched.groupMatchday ?? 0) ? "done" : "upcoming";
+      nodes.push({ label: T("sched.md", { d: d.matchday, n: d.matchdayCount }), start: d.start, end: d.end, state, detail });
+    }
+    // knockout rounds
+    for (const r of (sched.knockout || [])) {
+      const detail: TLDetail[] = (r.matches || []).map((m: SMatch) => ({ text: `${side(m.a)} ${T("sched.vs")} ${side(m.b)}`, done: m.decided, won: m.decided && winner(m) ? side(winner(m)) : null }));
+      const allDone = r.matches?.length > 0 && r.matches.every((m: SMatch) => m.decided);
+      const anyLive = r.matches?.some((m: SMatch) => !m.decided) && !r.pending && (r.start ? r.start <= now : false);
+      const state: TLNode["state"] = r.pending ? "upcoming" : allDone ? "done" : anyLive ? "current" : (r.end && r.end < now ? "done" : "upcoming");
+      nodes.push({ label: roundLabelT(lang, r.label), start: r.start, end: r.end, state, pending: r.pending, detail });
+    }
+    // exactly one "current": if none marked, mark the first upcoming
+    if (!nodes.some((n) => n.state === "current")) { const i = nodes.findIndex((n) => n.state === "upcoming"); if (i >= 0) nodes[i].state = "current"; }
+  }
 
   return (
     <main className="wrap rules">
@@ -60,17 +85,25 @@ export default function Rules() {
         <p className="rules-lede">{T("rules.subtitle", { name })}</p>
       </header>
 
-      {/* ── schedule preview (auto-synced with the admin-configured schedule) ── */}
+      {/* ── schedule preview: vertical timeline, finished nodes hideable (item 1) ── */}
       <section className="rules-sec">
-        <h2 className="rules-h">{T("sched.h")}</h2>
+        <div className="tl-head">
+          <h2 className="rules-h" style={{ margin: 0 }}>{T("sched.h")}</h2>
+          {known && nodes.some((n) => n.state === "done") && (
+            <button type="button" className="tl-toggle" aria-pressed={hideDone} onClick={() => setHideDone((v) => !v)}>
+              {hideDone ? T("sched.showDone") : T("sched.hideDone")}
+            </button>
+          )}
+        </div>
+
         {sched?.planned ? (
           <>
             <p className="rules-p"><b>{T("sched.bracketG", { n: sched.targetSize ?? "?", g: sched.groups ?? "?", s: sched.groupSize ?? "?", k: sched.koTarget ?? "?" })}</b></p>
-            <ul className="sched-list">
-              <li><div className="sched-when">{T("sched.cadNom")}<span className="sched-time">{sched.plan?.nomEndsAt ? f(sched.plan.nomEndsAt) : T("sched.cadTbd")}</span></div></li>
-              <li><div className="sched-when">{T("sched.cadGroup")}<span className="sched-time">{sched.plan?.groupRoundDays ? T("sched.cadGroupVal", { d: sched.plan.groupRoundDays, c: sched.plan.dayCap || 4 }) : T("sched.cadManual")}</span></div></li>
-              <li><div className="sched-when">{T("sched.cadKo")}<span className="sched-time">{sched.plan?.roundHours ? T("sched.cadKoVal", { h: sched.plan.roundHours }) : T("sched.cadManual")}</span></div></li>
-            </ul>
+            <ol className="tl">
+              <li className="tl-node upcoming"><span className="tl-dot" /><div className="tl-card"><div className="tl-when"><span className="tl-label">{T("sched.nomEnd")}</span><span className="tl-time">{sched.plan?.nomEndsAt ? f(sched.plan.nomEndsAt) : T("sched.cadTbd")}</span></div></div></li>
+              <li className="tl-node upcoming"><span className="tl-dot" /><div className="tl-card"><div className="tl-when"><span className="tl-label">{T("sched.cadGroup")}</span><span className="tl-time">{sched.plan?.groupRoundDays ? T("sched.cadGroupVal", { d: sched.plan.groupRoundDays, c: sched.plan.dayCap || 4 }) : T("sched.cadManual")}</span></div></div></li>
+              <li className="tl-node upcoming last"><span className="tl-dot" /><div className="tl-card"><div className="tl-when"><span className="tl-label">{T("sched.cadKo")}</span><span className="tl-time">{sched.plan?.roundHours ? T("sched.cadKoVal", { h: sched.plan.roundHours }) : T("sched.cadManual")}</span></div></div></li>
+            </ol>
             <p className="rules-note">{T("sched.plannedNote")}</p>
           </>
         ) : !known ? (
@@ -78,32 +111,23 @@ export default function Rules() {
         ) : (
           <>
             <p className="rules-p"><b>{T("sched.bracket", { n: sched.targetSize ?? "?", g: sched.groups ?? "?", k: sched.koTarget ?? "?" })}</b><br />{T("sched.advanceRule")}</p>
-            {sched.group?.length > 0 && (<>
-              <h3 className="sched-h">{T("sched.group.h")}</h3>
-              <ul className="sched-list">
-                {sched.group.map((d: any) => (
-                  <li key={"g" + d.matchday} className={d.current ? "cur" : ""}>
-                    <div className="sched-when">{T("sched.md", { d: d.matchday, n: d.matchdayCount })}{d.current ? ` · ${T("sched.now")}` : ""}<span className="sched-time">{fmtRange(d.start, d.end)}</span></div>
-                    <div className="sched-pairs">
-                      {sched.mode === "approval"
-                        ? (d.groups || []).map((g: any, i: number) => <span key={i} className="pair">{T("group.letter", { L: String.fromCharCode(65 + g.groupNo) })}: {g.members.join("、")}</span>)
-                        : pairs(d.matches)}
+            <ol className={"tl" + (hideDone ? " hide-done" : "")}>
+              {nodes.map((n, i) => (
+                <li key={i} className={"tl-node " + n.state + (i === nodes.length - 1 ? " last" : "")}>
+                  <span className="tl-dot" />
+                  <div className="tl-card">
+                    <div className="tl-when">
+                      <span className="tl-label">{n.label}</span>
+                      <span className={"tl-tag " + n.state}>{n.state === "current" ? T("sched.now") : n.state === "done" ? T("sched.doneTag") : T("sched.upcomingTag")}</span>
+                      <span className="tl-time">{fmtRange(n.start, n.end)}</span>
                     </div>
-                  </li>
-                ))}
-              </ul>
-            </>)}
-            {sched.knockout?.length > 0 && (<>
-              <h3 className="sched-h">{T("sched.ko.h")}</h3>
-              <ul className="sched-list">
-                {sched.knockout.map((r: any, i: number) => (
-                  <li key={"k" + i}>
-                    <div className="sched-when">{roundLabelT(lang, r.label)}<span className="sched-time">{fmtRange(r.start, r.end)}</span></div>
-                    <div className="sched-pairs">{r.pending ? <span className="tbd">{T("sched.pairTbd")}</span> : pairs(r.matches)}</div>
-                  </li>
-                ))}
-              </ul>
-            </>)}
+                    {n.pending ? <div className="tl-body"><span className="tbd">{T("sched.pairTbd")}</span></div>
+                      : n.detail.length > 0 ? <div className="tl-body">{n.detail.map((d, j) => <span key={j} className={"pair" + (d.done ? " done" : "")}>{d.text}{d.won ? <b> · {d.won}</b> : null}</span>)}</div>
+                      : null}
+                  </div>
+                </li>
+              ))}
+            </ol>
           </>
         )}
       </section>

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, setWxGate } from "@/lib/db";
+import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, setWxGate, editCandidate, mergeCandidates } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline, setPace, setGroupDayCap, resolvePlayoff } from "@/lib/engine";
 
@@ -39,8 +39,10 @@ export async function POST(req: NextRequest) {
     if (!comp) return NextResponse.json({ error: "还没有比赛，请先创建。" }, { status: 400 });
 
     if (action === "update") {
-      updateCompetition(comp.id, String(body.title ?? ""), body.description ?? null, body.shortName ? String(body.shortName) : "");
-      rec(`修改标题/简介${body.shortName ? " / 简称" : ""}`);
+      updateCompetition(comp.id, String(body.title ?? ""), body.description ?? null, body.shortName ? String(body.shortName) : "", {
+        titleEn: body.titleEn, titleJa: body.titleJa, descEn: body.descEn, descJa: body.descJa, shortEn: body.shortEn, shortJa: body.shortJa,
+      });
+      rec(`修改标题/简介(三语)`);
       return NextResponse.json({ ok: true });
     }
     if (action === "schedule") {
@@ -96,6 +98,20 @@ export async function POST(req: NextRequest) {
       if (!ok) return NextResponse.json({ error: "角色不存在。" }, { status: 404 });
       rec(`移除提名角色 #${Number(body.candidateId)}`);
       return NextResponse.json({ ok: true, message: "已移除该角色。" });
+    }
+    if (action === "edit_candidate") {
+      const ok = editCandidate(comp.id, Number(body.candidateId), {
+        name: body.name, nameCn: body.nameCn, nameEn: body.nameEn, image: body.image, subjectName: body.subjectName,
+      });
+      if (!ok) return NextResponse.json({ error: "角色不存在。" }, { status: 404 });
+      rec(`编辑角色信息 #${Number(body.candidateId)}`);
+      return NextResponse.json({ ok: true, message: "已更新角色信息。" });
+    }
+    if (action === "merge_candidate") {
+      const r = mergeCandidates(comp.id, Number(body.fromId), Number(body.toId));
+      if ("error" in r) return NextResponse.json({ error: r.error }, { status: 400 });
+      rec(`合并角色 #${Number(body.fromId)} → #${Number(body.toId)}(迁移 ${r.moved} 票)`);
+      return NextResponse.json({ ok: true, message: `已合并,迁移 ${r.moved} 张提名票。` });
     }
     if (action === "undo") { const message = undoLastTransition(comp.id); rec(`撤回上一步:${message}`); return NextResponse.json({ ok: true, message }); }
     if (action === "resettle") { const message = resettleCurrentRound(comp.id); rec(`重算本轮:${message}`); return NextResponse.json({ ok: true, message }); }

@@ -19,6 +19,7 @@ export type Phase = "nomination" | "group" | "playoff" | "knockout" | "finished"
 
 export interface Competition {
   id: number; title: string; description: string | null; short_name: string | null; phase: Phase;
+  title_en?: string | null; title_ja?: string | null; desc_en?: string | null; desc_ja?: string | null; short_en?: string | null; short_ja?: string | null;
   target_size: number | null; groups_count: number | null;
   champion_id: number | null; ko_round: number | null; created_at: number;
   third_place?: boolean | null; // 是否进行季军战(默认 true)
@@ -162,7 +163,7 @@ export function ensureSchema(): void {
 export function createCompetition(title: string): number {
   const db = readDb();
   const id = ++db.seq.competition;
-  db.competitions.push({ id, title, description: null, short_name: null, phase: "nomination", target_size: null, groups_count: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_size: null, group_mode: null, groups_per_day: null, group_started_at: null, group_matchday_starts: null, ko_target: null, ko_seed_ids: null, playoff_slots: null, third_place: null });
+  db.competitions.push({ id, title, description: null, short_name: null, title_en: null, title_ja: null, desc_en: null, desc_ja: null, short_en: null, short_ja: null, phase: "nomination", target_size: null, groups_count: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_size: null, group_mode: null, groups_per_day: null, group_started_at: null, group_matchday_starts: null, ko_target: null, ko_seed_ids: null, playoff_slots: null, third_place: null });
   writeDb(db);
   return id;
 }
@@ -248,6 +249,44 @@ export function sweepOrphanNominations(cid: number, graceMs: number): number {
 
 /** Remove a candidate and all its votes (and any matchups referencing it).
  *  Returns false if the candidate doesn't exist. Only call during nomination. */
+/** Edit a candidate's display info (name / cn / en / image / work). Allowed any phase. */
+export function editCandidate(cid: number, id: number, f: { name?: string; nameCn?: string; nameEn?: string; image?: string; subjectName?: string }): boolean {
+  const db = readDb();
+  const c = db.candidates.find((x) => x.id === id && x.competition_id === cid);
+  if (!c) return false;
+  if (f.name != null && f.name.trim()) c.name = f.name.trim();
+  if (f.nameCn != null) c.name_cn = f.nameCn.trim() || null;
+  if (f.nameEn != null) c.name_en = f.nameEn.trim() || null;
+  if (f.image != null) c.image = f.image.trim() || null;
+  if (f.subjectName != null) c.subject_name = f.subjectName.trim() || null;
+  writeDb(db);
+  return true;
+}
+
+/** Merge candidate A(from) into B(to): move A's nomination votes to B (dedup by voter),
+ *  then delete A. Nomination phase only (used to collapse duplicate/cross-version entries). */
+export function mergeCandidates(cid: number, fromId: number, toId: number): { moved: number } | { error: string } {
+  if (fromId === toId) return { error: "不能合并同一个角色。" };
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp) return { error: "没有比赛。" };
+  if (comp.phase !== "nomination") return { error: "仅提名阶段可以合并角色。" };
+  const A = db.candidates.find((c) => c.id === fromId && c.competition_id === cid);
+  const B = db.candidates.find((c) => c.id === toId && c.competition_id === cid);
+  if (!A || !B) return { error: "角色不存在。" };
+  const bVoters = new Set(db.nominationVotes.filter((v) => v.competition_id === cid && v.candidate_id === toId).map((v) => v.voter_id));
+  let moved = 0;
+  for (const v of db.nominationVotes) {
+    if (v.competition_id === cid && v.candidate_id === fromId && !bVoters.has(v.voter_id)) {
+      v.candidate_id = toId; bVoters.add(v.voter_id); moved++;
+    }
+  }
+  db.nominationVotes = db.nominationVotes.filter((v) => !(v.competition_id === cid && v.candidate_id === fromId));
+  db.candidates = db.candidates.filter((c) => !(c.id === fromId && c.competition_id === cid));
+  writeDb(db);
+  return { moved };
+}
+
 export function removeCandidate(cid: number, candidateId: number): boolean {
   const db = readDb();
   if (!db.candidates.some((c) => c.id === candidateId && c.competition_id === cid)) return false;

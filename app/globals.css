@@ -52,7 +52,7 @@ html, body { margin: 0; padding: 0; }
 body {
   background: var(--paper);
   color: var(--ink);
-  font-family: "PingFang SC", "Hiragino Sans GB", "Yu Gothic", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "PingFang SC", "Hiragino Sans GB", "Yu Gothic", "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
@@ -412,6 +412,7 @@ body { font-size: 15px; line-height: 1.6; }
   --r-sm:10px; --r-md:14px; --r-lg:20px; --r-pill:999px;
   --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px;
   --tap:44px;
+  --danger:#e5484d; --danger-ink:#ffffff;
   --shadow-sm:0 1px 2px rgba(36,24,32,.05), 0 4px 14px -10px rgba(36,24,32,.18);
 }
 @media (prefers-color-scheme: dark){
@@ -438,7 +439,7 @@ body { font-size: 15px; line-height: 1.6; }
 
 /* enforce HIG 44pt tap targets on touch pointers; enlarge tiny text links */
 @media (pointer: coarse){
-  .btn, .lang, .phasebar .chip, .cmt-toggle, .cmt-name, .cmt-text, .field input{ min-height: var(--tap); }
+  .btn, .lang, .phasebar .chip, .cmt-toggle, .cmt-name, .cmt-text, .field input, .tl-toggle{ min-height: var(--tap); }
   .hint a, .foot a, .sec a{ display:inline-block; padding:6px 2px; }
 }
 
@@ -526,3 +527,50 @@ body { font-size: 15px; line-height: 1.6; }
 
 /* live match: hide the split bar until settled (no live rate leak) */
 .share.hidden { visibility: hidden; }
+
+/* ─────────── collapsible "finished" content (details/summary) ─────────── */
+.done-fold { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); margin-top: 10px; overflow: hidden; }
+.done-fold > summary { cursor: pointer; list-style: none; padding: 11px 14px; font-weight: 700; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; user-select: none; min-height: 44px; }
+.done-fold > summary::-webkit-details-marker { display: none; }
+.done-fold > summary::before { content: "▸"; font-size: 11px; transition: transform .15s ease; }
+.done-fold[open] > summary { border-bottom: 1px solid var(--line); color: var(--ink); }
+.done-fold[open] > summary::before { transform: rotate(90deg); }
+.done-fold .fold-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+.done-fold.group.ballot { padding: 0; }
+
+/* ═══════════ Schedule timeline (vertical, finished-hideable) ═══════════ */
+.tl-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.tl-toggle { min-height: 36px; padding: 6px 14px; border-radius: var(--r-pill); border: 1px solid var(--line); background: var(--surface-2); color: var(--rose-deep); font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; }
+.tl-toggle:active { transform: scale(.97); }
+
+.tl { list-style: none; margin: 0; padding: 0; position: relative; }
+.tl-node { position: relative; padding: 0 0 18px 28px; }
+.tl-node::before { content: ""; position: absolute; left: 6px; top: 6px; bottom: -6px; width: 2px; background: var(--line); }
+.tl-node.last::before { display: none; }
+.tl-node.upcoming::before { background: repeating-linear-gradient(var(--line) 0 4px, transparent 4px 8px); }
+.tl-dot { position: absolute; left: 0; top: 3px; width: 14px; height: 14px; border-radius: 999px; background: var(--surface); border: 2px solid var(--line); z-index: 1; }
+.tl-node.done .tl-dot { background: var(--muted); border-color: var(--muted); }
+.tl-node.current .tl-dot { background: var(--rose); border-color: var(--rose); box-shadow: 0 0 0 4px var(--rose-soft); }
+
+.tl-card { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); padding: 12px 14px; }
+.tl-node.current .tl-card { border-color: var(--rose); box-shadow: var(--shadow-sm); }
+.tl-node.done .tl-card { background: var(--surface-2); opacity: .72; }
+.tl-when { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.tl-label { font-weight: 700; font-size: 14.5px; }
+.tl-time { margin-left: auto; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tl-tag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: var(--r-pill); border: 1px solid var(--line); color: var(--muted); }
+.tl-tag.current { background: var(--rose); color: #fff; border-color: var(--rose); }
+.tl-tag.done { color: var(--muted); }
+.tl-body { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.tl-body .pair { font-size: 12.5px; padding: 4px 10px; border-radius: var(--r-pill); background: var(--surface-2); border: 1px solid var(--line); line-height: 1.5; }
+.tl-body .pair.done { color: var(--muted); }
+.tl-body .pair b { color: var(--rose-deep); font-weight: 700; }
+.tl-body .tbd { font-size: 12.5px; color: var(--muted); }
+.tl.hide-done .tl-node.done { display: none; }
+
+/* HIG: system font leads with SF/-apple-system for Latin, CJK faces follow per-glyph */
+
+/* HIG: destructive actions use a semantic red, distinct from the brand tint */
+.btn.danger { border-color: var(--danger); color: var(--danger); }
+.btn.danger:hover:not(:disabled) { background: var(--danger); color: var(--danger-ink); }
+.btn.danger.solid { background: var(--danger); color: var(--danger-ink); border-color: var(--danger); }

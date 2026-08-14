@@ -405,8 +405,12 @@ export default function Page() {
   return (
     <main className="wrap">
       <div className="langbar">{LANGS.map((L) => <button key={L.code} type="button" className={"lang" + (lang === L.code ? " on" : "")} onClick={() => setLang(L.code)}>{L.label}</button>)}</div>
-      <h1 className="title">{comp?.title || T("title")}</h1>
-      <p className="subtitle">{comp?.shortName ? `${comp.shortName} · ` : ""}{comp?.description || T("subtitle")}</p>
+      <h1 className="title">{(lang === "en" ? (comp?.titleEn || comp?.title) : lang === "ja" ? (comp?.titleJa || comp?.title) : comp?.title) || T("title")}</h1>
+      <p className="subtitle">{(() => {
+        const sn = lang === "en" ? (comp?.shortEn || comp?.shortName) : lang === "ja" ? (comp?.shortJa || comp?.shortName) : comp?.shortName;
+        const ds = lang === "en" ? (comp?.descEn || comp?.description) : lang === "ja" ? (comp?.descJa || comp?.description) : comp?.description;
+        return (sn ? `${sn} · ` : "") + (ds || T("subtitle"));
+      })()}</p>
       <div className="phasebar">
         {phases.map(([p, name]) => {
           const enabled = comp && hasView[p];
@@ -590,56 +594,72 @@ export default function Page() {
           {state.group.matchdayCount > 1 && <div className="hint">{T("group.matchday", { d: state.group.matchday, n: state.group.matchdayCount })}</div>}
           <div className="groupwrap">
             {state.group.mode === "approval"
-              ? state.group.groups.map((g: any) => (
-                <div className={"group ballot" + (g.open ? " open" : "")} key={g.group}>
-                  <h3>{T("group.letter", { L: String.fromCharCode(65 + g.group) })}
-                    <span className="gstatus">{g.open ? T("gb.open", { n: g.myPicks, max: state.group.perGroupVotes }) : g.closed ? T("gb.closed") : T("gb.upcoming")}</span></h3>
-                  <ul className="ballot-list">
-                    {g.members.map((m: any) => (
-                      <li key={m.id} className={(m.mine ? "mine " : "") + (m.advancing ? "adv" : "")}>
-                        <Avatar c={m} />
-                        <div className="meta"><div className="nm">{label(m, lang)}</div>
-                          {m.votes != null && <div className="sub">{m.votes} {T("gb.votes")}{m.advancing ? " · " + T("gb.adv") : ""}</div>}</div>
-                        {g.open
-                          ? <button className={"btn" + (m.mine ? " solid" : "")} disabled={!canVote} onClick={() => approvalVote(m.id)}>{m.mine ? T("gb.picked") : T("gb.pick")}</button>
-                          : <span className="rankpill">{m.rank + 1}</span>}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))
-              : state.group.groups.map((g: any) => (
-                <div className="group" key={g.group}>
-                  <h3>{T("group.letter", { L: String.fromCharCode(65 + g.group) })}</h3>
-                  <table className="stand">
-                    <thead><tr><th>{T("th.rank")}</th><th>{T("th.char")}</th><th style={{ textAlign: "right" }}>{T("th.win")}</th><th style={{ textAlign: "right" }}>{T("th.votes")}</th></tr></thead>
-                    <tbody>
-                      {g.standings.map((s: any, i: number) => (
-                        <tr key={s.id} className={i < 2 ? "adv" : ""}>
-                          <td>{i + 1}</td><td>{label(s, lang)}</td><td className="n num">{s.wins}</td><td className="n num">{s.votesFor ?? "—"}</td>
-                        </tr>
+              ? state.group.groups.map((g: any) => {
+                const inner = (
+                  <>
+                    <h3>{T("group.letter", { L: String.fromCharCode(65 + g.group) })}
+                      <span className="gstatus">{g.open ? T("gb.open", { n: g.myPicks, max: state.group.perGroupVotes }) : g.closed ? T("gb.closed") : T("gb.upcoming")}</span></h3>
+                    <ul className="ballot-list">
+                      {g.members.map((m: any) => (
+                        <li key={m.id} className={(m.mine ? "mine " : "") + (m.advancing ? "adv" : "")}>
+                          <Avatar c={m} />
+                          <div className="meta"><div className="nm">{label(m, lang)}</div>
+                            {m.votes != null && <div className="sub">{m.votes} {T("gb.votes")}{m.advancing ? " · " + T("gb.adv") : ""}</div>}</div>
+                          {g.open
+                            ? <button className={"btn" + (m.mine ? " solid" : "")} disabled={!canVote} onClick={() => approvalVote(m.id)}>{m.mine ? T("gb.picked") : T("gb.pick")}</button>
+                            : <span className="rankpill">{m.rank + 1}</span>}
+                        </li>
                       ))}
-                    </tbody>
-                  </table>
-                  <table className="stand gm-table">
-                    <thead><tr><th>{T("th.match")}</th><th>{T("th.date")}</th><th>{T("th.result")}</th></tr></thead>
-                    <tbody>
-                      {g.matchups.map((m: Match) => (
-                        <tr key={m.id} className={m.decided ? "decided" : ""}>
-                          <td>{label(m.a, lang)} <span className="vs-mini">vs</span> {label(m.b, lang)}</td>
-                          <td className="n num">{m.date ? fmtAbs(m.date, lang) : (m.matchday ? T("group.matchday", { d: m.matchday, n: state.group.matchdayCount }) : "—")}</td>
-                          <td className="n">
-                            {m.decided
-                              ? <span className="win-nm">{m.winnerId === m.a?.id ? label(m.a, lang) : label(m.b, lang)} · {T("match.won")}</span>
-                              : m.live ? T("vote.badge.live") : T("vote.badge.upcoming")}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {g.matchups.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} />)}
-                </div>
-              ))}
+                    </ul>
+                  </>
+                );
+                // finished groups collapse by default; open / upcoming stay visible
+                return g.closed && !g.open
+                  ? <details className="group ballot done-fold" key={g.group}><summary>{T("fold.doneGroup", { L: String.fromCharCode(65 + g.group) })}</summary><div className="fold-body">{inner}</div></details>
+                  : <div className={"group ballot" + (g.open ? " open" : "")} key={g.group}>{inner}</div>;
+              })
+              : state.group.groups.map((g: any) => {
+                const liveMs = g.matchups.filter((m: Match) => !m.decided);
+                const doneMs = g.matchups.filter((m: Match) => m.decided);
+                return (
+                  <div className="group" key={g.group}>
+                    <h3>{T("group.letter", { L: String.fromCharCode(65 + g.group) })}</h3>
+                    <table className="stand">
+                      <thead><tr><th>{T("th.rank")}</th><th>{T("th.char")}</th><th style={{ textAlign: "right" }}>{T("th.win")}</th><th style={{ textAlign: "right" }}>{T("th.votes")}</th></tr></thead>
+                      <tbody>
+                        {g.standings.map((s: any, i: number) => (
+                          <tr key={s.id} className={i < 2 ? "adv" : ""}>
+                            <td>{i + 1}</td><td>{label(s, lang)}</td><td className="n num">{s.wins}</td><td className="n num">{s.votesFor ?? "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <table className="stand gm-table">
+                      <thead><tr><th>{T("th.match")}</th><th>{T("th.date")}</th><th>{T("th.result")}</th></tr></thead>
+                      <tbody>
+                        {g.matchups.map((m: Match) => (
+                          <tr key={m.id} className={m.decided ? "decided" : ""}>
+                            <td>{label(m.a, lang)} <span className="vs-mini">vs</span> {label(m.b, lang)}</td>
+                            <td className="n num">{m.date ? fmtAbs(m.date, lang) : (m.matchday ? T("group.matchday", { d: m.matchday, n: state.group.matchdayCount }) : "—")}</td>
+                            <td className="n">
+                              {m.decided
+                                ? <span className="win-nm">{m.winnerId === m.a?.id ? label(m.a, lang) : label(m.b, lang)} · {T("match.won")}</span>
+                                : m.live ? T("vote.badge.live") : T("vote.badge.upcoming")}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {liveMs.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} />)}
+                    {doneMs.length > 0 && (
+                      <details className="done-fold">
+                        <summary>{T("fold.doneMatches", { n: doneMs.length })}</summary>
+                        <div className="fold-body">{doneMs.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} />)}</div>
+                      </details>
+                    )}
+                  </div>
+                );
+              })}
           </div>
         </>
       )}

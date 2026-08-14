@@ -30,6 +30,7 @@ export function getState(voterId: string) {
   const base = {
     competition: {
       id: comp.id, title: comp.title, description: comp.description, shortName: comp.short_name ?? "", phase: comp.phase,
+      titleEn: comp.title_en ?? "", titleJa: comp.title_ja ?? "", descEn: comp.desc_en ?? "", descJa: comp.desc_ja ?? "", shortEn: comp.short_en ?? "", shortJa: comp.short_ja ?? "",
       groupsCount: comp.groups_count, championId: comp.champion_id,
       targetSize: comp.target_size ?? null,
       nomEndsAt: comp.nom_ends_at ?? null, groupEndsAt: comp.group_ends_at ?? null, koRoundEndsAt: comp.ko_round_ends_at ?? null,
@@ -258,7 +259,7 @@ export interface SchedMatch { a: SchedSide; b: SchedSide; decided: boolean; winn
 export interface SchedGroupDay { matchday: number; matchdayCount: number; start: number | null; end: number | null; current: boolean; matches: SchedMatch[]; groups?: { groupNo: number; members: string[] }[]; }
 export interface SchedKoRound { label: string; contestants: number; start: number | null; end: number | null; pending: boolean; matches: SchedMatch[]; }
 export interface SchedulePreview {
-  known: boolean; phase: string;
+  known: boolean; phase: string; groupMatchday?: number;
   planned: boolean;                 // nomination-phase: a booked plan exists (structure known, draw pending)
   mode: "approval" | "rr";          // group-stage voting model
   targetSize: number | null; groups: number | null; koTarget: number | null; groupSize: number | null;
@@ -274,7 +275,7 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
   };
   const known = comp.phase === "group" || comp.phase === "playoff" || comp.phase === "knockout" || comp.phase === "finished";
   const out: SchedulePreview = {
-    known, phase: comp.phase, planned: false, mode: ((comp.group_mode as any) ?? "approval"),
+    known, phase: comp.phase, groupMatchday: comp.group_matchday ?? 0, planned: false, mode: ((comp.group_mode as any) ?? "approval"),
     targetSize: comp.target_size ?? null, groups: comp.groups_count ?? null, koTarget: comp.ko_target ?? null,
     groupSize: comp.group_size ?? null, plan: null,
     group: [], knockout: [],
@@ -491,15 +492,21 @@ function bracketSeedOrder(n: number): number[] {
 }
 
 // ── admin transitions ─────────────────────────────────────────
-export function updateCompetition(cid: number, title: string, description: string | null, shortName = "") {
+export function updateCompetition(cid: number, title: string, description: string | null, shortName = "", tri?: { titleEn?: string; titleJa?: string; descEn?: string; descJa?: string; shortEn?: string; shortJa?: string }) {
   const t = (title || "").trim();
   if (!t) throw new Error("标题不能为空。");
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
   if (!comp) return;
+  const clean = (v?: string) => (v || "").trim() || null;
   comp.title = t;
-  comp.description = (description || "").trim() || null;
-  comp.short_name = (shortName || "").trim() || null;
+  comp.description = clean(description || "");
+  comp.short_name = clean(shortName);
+  if (tri) {
+    comp.title_en = clean(tri.titleEn); comp.title_ja = clean(tri.titleJa);
+    comp.desc_en = clean(tri.descEn); comp.desc_ja = clean(tri.descJa);
+    comp.short_en = clean(tri.shortEn); comp.short_ja = clean(tri.shortJa);
+  }
   writeDb(db);
 }
 
