@@ -581,3 +581,18 @@ body { font-size: 15px; line-height: 1.6; }
 .more-fold > summary::-webkit-details-marker { display: none; }
 .more-fold > summary::before { content: "▸"; font-size: 10px; transition: transform .15s ease; }
 .more-fold[open] > summary::before { transform: rotate(90deg); }
+
+/* ═══════════ Admin: two-column layout on wide screens (item 3) ═══════════ */
+@media (min-width: 900px) {
+  .admin .admin-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  .admin .admin-cards > .admin-section { grid-column: 1 / -1; }
+  .admin .admin-cards > .card { margin: 0; }
+}
+/* admin live tallies (item 1) */
+.tally-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.tally-col { border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
+.tally-h { font-weight: 800; font-size: 13px; padding: 6px 10px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
+.tally-row { display: flex; justify-content: space-between; gap: 8px; padding: 6px 10px; font-size: 13px; border-top: 1px solid var(--line); }
+.tally-row:first-of-type { border-top: none; }
+.tally-row.adv { background: var(--rose-soft); font-weight: 700; }
+.tally-row .v { font-variant-numeric: tabular-nums; color: var(--rose-deep); }

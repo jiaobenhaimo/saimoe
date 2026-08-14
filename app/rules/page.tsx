@@ -163,6 +163,7 @@ export default function Rules() {
       <section className="rules-sec">
         <h2 className="rules-h">{T("rules.s4.h")}</h2>
         <p className="rules-p">{T("rules.s4.p1")}</p>
+        <p className="rules-p">{T("rules.s4.p4")}</p>
         <p className="rules-p">{T("rules.s4.p3")}</p>
         <p className="rules-p">{T("rules.s4.p2")}</p>
       </section>

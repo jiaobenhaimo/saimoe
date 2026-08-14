@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ensureSchema, readAudit } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition } from "@/lib/engine";
-import { detectAnomalies, projectTimeline } from "@/lib/observe";
+import { detectAnomalies, projectTimeline, liveTallies } from "@/lib/observe";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,5 +21,6 @@ export async function GET(req: NextRequest) {
   if (!comp) return NextResponse.json({ competition: null, flags: [], thresholds: {}, totals: { votes: 0, matches: 0, withMeta: 0 }, timeline: [], audit });
   const { flags, thresholds, totals } = detectAnomalies(comp.id);
   const timeline = projectTimeline(comp.id);
-  return NextResponse.json({ competition: { id: comp.id, phase: comp.phase }, flags, thresholds, totals, timeline, audit });
+  const tallies = liveTallies(comp.id);
+  return NextResponse.json({ competition: { id: comp.id, phase: comp.phase }, flags, thresholds, totals, timeline, tallies, audit });
 }

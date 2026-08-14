@@ -10,6 +10,9 @@ function fmtAbs(ms?: number | null): string {
 
 export default function Admin() {
   const [token, setToken] = useState("");
+  const [authed, setAuthed] = useState(false);
+  const [authErr, setAuthErr] = useState("");
+  const [tallies, setTallies] = useState<any>(null);
   const [state, setState] = useState<any>(null);
   const [msg, setMsg] = useState<{ t: string; ok: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -107,10 +110,20 @@ export default function Admin() {
     if (!tk) return;
     try {
       const r = await fetch("/api/admin/observe", { headers: { "x-admin-token": tk }, cache: "no-store" });
-      if (r.ok) setObs(await r.json());
+      if (r.ok) { const j = await r.json(); setObs(j); setTallies(j.tallies || null); setAuthed(true); }
     } catch {}
   }, [token]);
   useEffect(() => { if (token) loadObs(); }, [token, loadObs]);
+  // token gate: only reveal the console once the token is verified against an admin endpoint (item 2)
+  const unlock = useCallback(async () => {
+    const tk = token.trim(); setAuthErr("");
+    if (!tk) { setAuthErr("请输入令牌。"); return; }
+    try {
+      const r = await fetch("/api/admin/observe", { headers: { "x-admin-token": tk }, cache: "no-store" });
+      if (r.ok) { localStorage.setItem("adminToken", tk); setAuthed(true); const j = await r.json(); setObs(j); setTallies(j.tallies || null); }
+      else setAuthErr("令牌不正确。");
+    } catch { setAuthErr("校验失败,请重试。"); }
+  }, [token]);
   const invalidate = async (by: string, key: string) => { await act("invalidate_votes", { by, key }); await loadObs(); };
 
   const loadRemind = async () => {
@@ -177,11 +190,18 @@ export default function Admin() {
 
       <div className="admin-cards">
 
-      {/* ── 接入 ── */}
+      {/* ── 接入(先验证令牌才显示控制台)── */}
       <div className="card">
         <div className="field"><label>管理员令牌</label>
-          <input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="ADMIN_TOKEN" /></div>
+          <input type="password" value={token} onChange={(e) => setToken(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") unlock(); }} placeholder="ADMIN_TOKEN" /></div>
+        {!authed && <button className="btn solid" onClick={unlock} style={{ marginTop: 8 }}>解锁控制台</button>}
+        {authed && <p className="hint" style={{ margin: "8px 0 0", color: "var(--ok)" }}>✓ 已解锁</p>}
+        {authErr && <p className="hint" style={{ margin: "8px 0 0", color: "var(--danger)" }}>{authErr}</p>}
       </div>
+
+      {!authed ? (
+        <div className="card"><p className="hint" style={{ margin: 0 }}>输入管理员令牌并解锁后,这里会显示全部管理选项。</p></div>
+      ) : (<>
 
       <div className="admin-section">📊 概览</div>
       <div className="card">
@@ -264,8 +284,8 @@ export default function Admin() {
               <input type="number" min={4} value={size} onChange={(e) => setSize(+e.target.value)} /></div>
             <div className="field"><label>每组人数</label>
               <input type="number" min={2} value={groupSize} onChange={(e) => setGroupSize(+e.target.value)} /></div>
-            <div className="field"><label>每比赛日最多对局数</label>
-              <input type="number" min={1} value={dayCap} onChange={(e) => setDayCap(+e.target.value)} /></div>
+            <div className="field"><label>每比赛日最多对局数(0=无限制)</label>
+              <input type="number" min={0} value={dayCap} onChange={(e) => setDayCap(+e.target.value)} /></div>
           </div>
           <div className="row3">
             <div className="field"><label>小组赛玩法</label>
@@ -282,8 +302,8 @@ export default function Admin() {
               <input type="number" min={0} value={roundDays} onChange={(e) => setRoundDays(+e.target.value)} /></div>
           </div>
           <div className="row3">
-            {groupMode === "rr" && <div className="field"><label>每比赛日最多对局数</label>
-              <input type="number" min={1} value={dayCap} onChange={(e) => setDayCap(+e.target.value)} /></div>}
+            {groupMode === "rr" && <div className="field"><label>每比赛日最多对局数(0=无限制)</label>
+              <input type="number" min={0} value={dayCap} onChange={(e) => setDayCap(+e.target.value)} /></div>}
             <div className="field"><label>每轮淘汰赛（小时,0=手动）</label>
               <input type="number" min={0} value={rHours} onChange={(e) => setRHours(+e.target.value)} /></div>
           </div>
@@ -448,21 +468,16 @@ export default function Admin() {
         </div>
       )}
 
-      {/* ── 公众号 / 投票通道 ── */}
+      {/* ── 公众号 / 投票通道:仅当 .env 启用门禁(WX_VOTE_GATE)时出现 ── */}
+      {state?.voteGate?.on && (<>
       <div className="admin-section">📣 公众号 / 投票通道</div>
 
       <div className="card">
-        <h3>投票门禁</h3>
+        <h3>投票门禁 · 已由环境变量启用</h3>
         <p className="hint">
-          默认<b>关闭</b>:任何人打开网站即可投票(按浏览器指纹尽力去重),<b>不需要微信</b>。
-          开启后:只有从公众号「回复投票」拿到专属链接的用户能投票,直连网站的人只读;admin 始终用令牌进后台,不受影响。
-          <br />开启前请确认已配置 <code>WX_TOKEN</code> / <code>PUBLIC_BASE_URL</code> 并把 <code>/api/wx</code> 接入公众号,否则用户拿不到链接会无法投票。
+          门禁由 <code>WX_VOTE_GATE</code> 环境变量控制,当前为<b>开启</b>:只有从公众号「回复投票」拿到专属链接的用户能投票,直连网站的人只读;admin 始终用令牌进后台,不受影响。
+          <br />需关闭请在部署环境移除 / 置空 <code>WX_VOTE_GATE</code> 后重新部署。请确认已配置 <code>WX_TOKEN</code> / <code>PUBLIC_BASE_URL</code> 并把 <code>/api/wx</code> 接入公众号。
         </p>
-        <p style={{ margin: "0 0 10px" }}>当前状态:<b style={{ color: state?.voteGate?.on ? "var(--rose-deep)" : "var(--muted)" }}>{state?.voteGate?.on ? "已开启(仅公众号链接可投)" : "已关闭(无需微信,人人可投)"}</b></p>
-        <button className={"btn" + (state?.voteGate?.on ? "" : " solid")} disabled={busy || !token}
-          onClick={() => act("set_wx_gate", { on: !state?.voteGate?.on })}>
-          {state?.voteGate?.on ? "关闭门禁(改为人人可投)" : "开启门禁(改为仅公众号链接可投)"}
-        </button>
       </div>
 
       {comp && (
@@ -481,6 +496,7 @@ export default function Admin() {
           )}
         </div>
       )}
+      </>)}
 
       {/* ── 内容管理 ── */}
       {comp && (<div className="admin-section">🗂️ 内容管理</div>)}
@@ -560,6 +576,34 @@ export default function Admin() {
       {/* ── 监控与诊断 ── */}
       <div className="admin-section">🛡️ 监控与诊断</div>
 
+      {comp && tallies && tallies.mode !== "none" && (phase === "group" || phase === "knockout" || phase === "playoff") && (
+        <div className="card">
+          <h3>实时票数(管理员)</h3>
+          <p className="hint">仅管理员可见的当前票数(用户页赛中不公布)。{" "}<a onClick={loadObs}>刷新</a></p>
+          {tallies.mode === "approval" ? (
+            <div className="tally-grid">
+              {(tallies.groups || []).map((g: any) => (
+                <div className="tally-col" key={g.group}>
+                  <div className="tally-h">{String.fromCharCode(65 + g.group)} 组</div>
+                  {g.rows.map((r: any, i: number) => (
+                    <div className={"tally-row" + (i < 2 ? " adv" : "")} key={r.name}><span className="nm">{r.name}</span><span className="v num">{r.votes}</span></div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="pool-admin">
+              {(tallies.matches || []).map((m: any, i: number) => (
+                <div className="prow" key={i}>
+                  <div className="meta"><div className="nm">{m.a} <span className="vs-mini">vs</span> {m.b}</div><div className="sub">{m.label}{m.decided ? " · 已结算" : ""}</div></div>
+                  <div className="votecell num"><div className="c">{m.va} : {m.vb}</div></div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {comp && obs && (
         <div className="card">
           <h3>异常投票看板</h3>
@@ -600,12 +644,14 @@ export default function Admin() {
         </div>
       )}
 
-      <div className="card">
-        <h3>服务端诊断</h3>
-        <p className="hint">查看服务端环境:Node 版本、数据/备份目录、以及对 <code>api.bgm.tv</code> 的系统 DNS 解析(仅解析,不发起连接)。搜索/导入已改为浏览器端直连 Bangumi,服务端不再访问 Bangumi;若在线搜索失败,请在浏览器控制台排查前端请求。</p>
-        <button className="btn solid" disabled={busy || pinging} onClick={ping}>{pinging ? "检查中…" : "运行诊断"}</button>
-        {pingResult && <pre className="ping-result">{JSON.stringify(pingResult, null, 2)}</pre>}
-      </div>
+      {dbgOn && (
+        <div className="card">
+          <h3>服务端诊断</h3>
+          <p className="hint">查看服务端环境:Node 版本、数据/备份目录、以及对 <code>api.bgm.tv</code> 的系统 DNS 解析(仅解析,不发起连接)。搜索/导入已改为浏览器端直连 Bangumi,服务端不再访问 Bangumi;若在线搜索失败,请在浏览器控制台排查前端请求。</p>
+          <button className="btn solid" disabled={busy || pinging} onClick={ping}>{pinging ? "检查中…" : "运行诊断"}</button>
+          {pingResult && <pre className="ping-result">{JSON.stringify(pingResult, null, 2)}</pre>}
+        </div>
+      )}
 
       {dbgOn && (
         <div className="card" style={{ borderColor: "var(--gold)", background: "#fffdf5" }}>
@@ -638,6 +684,7 @@ export default function Admin() {
         <button className="btn danger" disabled={busy} onClick={() => { if (confirm("确认删除当前比赛？")) act("reset"); }}>重置 / 删除当前比赛</button>
       </div>
 
+      </>)}
       </div>
 
       {msg && <div className={"msg " + (msg.ok ? "ok" : "err")}>{msg.t}</div>}

@@ -320,15 +320,8 @@ export function toggleNomination(cid: number, candidateId: number, voterId: stri
 /** Read/write the runtime WeChat-gate setting (admin-toggleable). Env WX_VOTE_GATE is only
  *  the initial default when the operator has never toggled it in the admin page. */
 export function getWxGate(): boolean {
-  const db = readDb();
-  if (typeof db.settings?.wxGate === "boolean") return db.settings.wxGate;
   const v = (process.env.WX_VOTE_GATE || "").toLowerCase();
   return v === "on" || v === "1" || v === "true";
-}
-export function setWxGate(on: boolean): void {
-  const db = readDb();
-  db.settings = { ...(db.settings || {}), wxGate: !!on };
-  writeDb(db);
 }
 
 /** Which batch (1-indexed) a group belongs to under approval mode's "N groups per day". */
