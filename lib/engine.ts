@@ -601,7 +601,7 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   // ── 循环赛(1v1)模式:每组各自 circle method 生成轮次,再全局装箱成「每个比赛日 ≤ DAY_CAP 场」──
   const K = perRound > 0 ? perRound : (comp.group_per_round ?? 0);
   const RD = roundDays > 0 ? roundDays : (comp.group_round_days ?? 0);
-  const DAY_CAP = comp.group_day_cap && comp.group_day_cap > 0 ? comp.group_day_cap : GROUP_DAY_CAP;
+  const DAY_CAP = comp.group_day_cap == null ? GROUP_DAY_CAP : (comp.group_day_cap <= 0 ? Infinity : comp.group_day_cap); // 0 = 无限制
   const perGroupRounds = groups.map((g) => roundRobinRounds(g, K));
   const days = packMatchdays(perGroupRounds, DAY_CAP);
   days.forEach((day, di) => day.forEach((mm, si) => {
@@ -858,7 +858,7 @@ export function scheduleCompetition(cid: number, o: ScheduleOpts) {
   comp.group_per_round = o.groupPerRound && o.groupPerRound > 0 ? o.groupPerRound : null;
   comp.group_round_days = o.groupRoundDays && o.groupRoundDays > 0 ? o.groupRoundDays : null;
   comp.group_size = o.groupSize && o.groupSize > 0 ? Math.max(2, Math.floor(o.groupSize)) : comp.group_size;
-  comp.group_day_cap = o.dayCap && o.dayCap > 0 ? Math.floor(o.dayCap) : comp.group_day_cap;
+  comp.group_day_cap = (typeof o.dayCap === "number" && o.dayCap >= 0) ? Math.floor(o.dayCap) : comp.group_day_cap;
   if (o.groupMode === "approval" || o.groupMode === "rr") comp.group_mode = o.groupMode;
   if (o.groupsPerDay && o.groupsPerDay > 0) comp.groups_per_day = Math.floor(o.groupsPerDay);
   if (typeof o.thirdPlace === "boolean") comp.third_place = o.thirdPlace;
@@ -1014,7 +1014,7 @@ export function setGroupDayCap(cid: number, cap: number): void {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
   if (!comp) return;
-  comp.group_day_cap = Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : null;
+  comp.group_day_cap = Number.isFinite(cap) && cap >= 0 ? Math.floor(cap) : null;
   writeDb(db);
 }
 

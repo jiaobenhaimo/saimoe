@@ -1,4 +1,4 @@
-import { readDb } from "./db";
+import { readDb, approvalTally } from "./db";
 
 // ── tunable detection thresholds (env-overridable) ────────────────────────────
 function envNum(key: string, dflt: number): number {
@@ -191,4 +191,36 @@ export function projectTimeline(cid: number): TimelineItem[] {
   }
 
   return items; // finished
+}
+
+/** Admin-only UNMASKED live tallies (public state hides these mid-match). */
+export function liveTallies(cid: number): {
+  mode: "approval" | "match" | "none";
+  groups?: { group: number; rows: { name: string; votes: number }[] }[];
+  matches?: { label: string; a: string; va: number; b: string; vb: number; decided: boolean }[];
+} {
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp) return { mode: "none" };
+  const nm = (id: number) => { const c = db.candidates.find((x) => x.id === id); return c ? (c.name_cn || c.name) : "?"; };
+
+  if (comp.phase === "group" && (comp.group_mode ?? "approval") === "approval") {
+    const tally = approvalTally(db, cid);
+    const byG = new Map<number, { name: string; votes: number }[]>();
+    for (const c of db.candidates) {
+      if (c.competition_id !== cid || c.group_no == null) continue;
+      if (!byG.has(c.group_no)) byG.set(c.group_no, []);
+      byG.get(c.group_no)!.push({ name: nm(c.id), votes: tally.get(c.id) || 0 });
+    }
+    const groups = [...byG.entries()].sort((a, b) => a[0] - b[0]).map(([group, rows]) => ({ group, rows: rows.sort((x, y) => y.votes - x.votes) }));
+    return { mode: "approval", groups };
+  }
+  // matchup-based (rr group / knockout / playoff): count votes per side
+  const count = new Map<string, number>();
+  for (const v of db.matchVotes) count.set(v.matchup_id + ":" + v.choice_id, (count.get(v.matchup_id + ":" + v.choice_id) || 0) + 1);
+  const stages = comp.phase === "group" ? ["group"] : comp.phase === "knockout" ? ["knockout"] : comp.phase === "playoff" ? ["playoff"] : [];
+  const matches = db.matchups
+    .filter((m) => m.competition_id === cid && stages.includes(m.stage))
+    .map((m) => ({ label: m.stage === "group" ? `${String.fromCharCode(65 + (m.group_no ?? 0))}组` : m.stage, a: nm(m.a_id), va: count.get(m.id + ":" + m.a_id) || 0, b: nm(m.b_id), vb: count.get(m.id + ":" + m.b_id) || 0, decided: m.decided }));
+  return { mode: "match", matches };
 }

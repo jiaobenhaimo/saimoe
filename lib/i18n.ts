@@ -110,7 +110,7 @@ const D: Record<string, Entry> = {
   "place.4": { zh: "殿军", en: "4th place", ja: "4位" },
 
   "match.advance": { zh: "晋级", en: "Advance", ja: "進出" },
-  "match.rateNote": { zh: "赛中不公布票数,结算后公布", en: "Counts hidden during the match; revealed after settlement", ja: "試合中は非公開、確定後に票数を公開" },
+  "rules.s4.p4": { zh: "投票期间不公布实时票数,以免影响判断;每场 / 每组结算后再公布得票结果。", en: "Live vote counts are hidden during voting to avoid swaying the result; totals are published once each match/group is settled.", ja: "投票中はリアルタイム得票数を公開しません(結果への影響を避けるため)。各試合・各グループの確定後に集計を公開します。" },
   "match.settled": { zh: "本场已结算 · 得票已公布", en: "Settled · counts revealed", ja: "確定 · 票数公開済" },
 
   // group results table + next-round preview

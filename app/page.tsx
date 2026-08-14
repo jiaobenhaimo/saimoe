@@ -816,7 +816,7 @@ function MatchCard({ m, onVote, ko, lang, compact }: { m: Match; onVote: (mid: n
       </div>
       <div className={"share" + (revealed ? "" : " hidden")}><div className="a" style={{ width: pa + "%" }} /><div className="b" style={{ width: 100 - pa + "%" }} /></div>
       <div className="match-foot">
-        <span className="rate-note">{revealed ? T("match.settled") : live ? T("match.rateNote") : T("match.upcoming")}</span>
+        {revealed ? <span className="rate-note">{T("match.settled")}</span> : null}
       </div>
       {!compact && m.a && m.b && <Comments matchId={m.id} count={m.commentN} lang={lang} />}
     </div>

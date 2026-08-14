@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, setWxGate, editCandidate, mergeCandidates } from "@/lib/db";
+import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, editCandidate, mergeCandidates } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline, setPace, setGroupDayCap, resolvePlayoff } from "@/lib/engine";
 
@@ -28,12 +28,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, id });
     }
 
-    // global setting — works with or without an active competition
-    if (action === "set_wx_gate") {
-      setWxGate(!!body.on);
-      rec(`公众号投票门禁:${body.on ? "开启" : "关闭"}`);
-      return NextResponse.json({ ok: true, wxGate: !!body.on });
-    }
 
     const comp = getActiveCompetition();
     if (!comp) return NextResponse.json({ error: "还没有比赛，请先创建。" }, { status: 400 });
