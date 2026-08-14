@@ -76,6 +76,33 @@ function api(path: string, opts: RequestInit = {}) {
   return fetch(path, { ...opts, headers, cache: "no-store" });
 }
 
+// ── optimistic vote helpers: mutate a shallow copy so the UI reacts before the server replies ──
+function optimisticApproval(group: any, candidateId: number): any {
+  if (!group || group.mode !== "approval") return group;
+  const groups = group.groups.map((g: any) => {
+    if (!g.open || !g.members?.some((m: any) => m.id === candidateId)) return g;
+    const picked = g.members.find((m: any) => m.id === candidateId)?.mine;
+    if (!picked && (g.myPicks ?? 0) >= (group.perGroupVotes ?? 2)) return g; // at cap → no optimistic add
+    return { ...g, myPicks: (g.myPicks ?? 0) + (picked ? -1 : 1), members: g.members.map((m: any) => m.id === candidateId ? { ...m, mine: !picked } : m) };
+  });
+  return { ...group, groups };
+}
+function flipChoice(list: any[] | undefined, matchupId: number, choiceId: number): any[] | undefined {
+  return list?.map((m: any) => m.id === matchupId ? { ...m, myChoice: choiceId } : m);
+}
+function optimisticChoice(group: any, matchupId: number, choiceId: number): any {
+  if (!group || group.mode !== "rr") return group;
+  return { ...group, groups: group.groups.map((g: any) => ({ ...g, matchups: flipChoice(g.matchups, matchupId, choiceId) })) };
+}
+function optimisticKo(ko: any, matchupId: number, choiceId: number): any {
+  if (!ko?.rounds) return ko;
+  return { ...ko, rounds: ko.rounds.map((r: any) => ({ ...r, matchups: flipChoice(r.matchups, matchupId, choiceId) })) };
+}
+function optimisticPlayoff(pl: any, matchupId: number, choiceId: number): any {
+  if (!pl?.matchups) return pl;
+  return { ...pl, matchups: flipChoice(pl.matchups, matchupId, choiceId) };
+}
+
 // 浏览器直接加载 Bangumi 图片(用户网络可达,不经服务端);统一转成方形 grid 尺寸。
 function imgSrc(url?: string | null): string {
   if (!url) return "";
@@ -139,6 +166,7 @@ function useLang(): [Lang, (l: Lang) => void] {
 
 export default function Page() {
   const [state, setState] = useState<any>(null);
+  const [voting, setVoting] = useState<Set<number>>(new Set()); // ids with an in-flight vote (instant button feedback)
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState(false);
   const [view, setView] = useState<string | null>(null); // which phase's section to show (null = follow current)
@@ -347,16 +375,26 @@ export default function Page() {
     await load();
   };
   const matchVote = async (matchupId: number, choiceId: number) => {
-    if (!canVote) return; // gate on & no link session → read-only (banner explains)
-    await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "match", matchupId, choiceId }) });
-    await load();
+    if (!canVote || voting.has(matchupId)) return;
+    setVoting((s) => new Set(s).add(matchupId));
+    // optimistic: reflect the pick immediately so the UI responds without waiting for the round-trip
+    setState((prev: any) => prev ? { ...prev, group: optimisticChoice(prev.group, matchupId, choiceId), knockout: optimisticKo(prev.knockout, matchupId, choiceId), playoff: optimisticPlayoff(prev.playoff, matchupId, choiceId) } : prev);
+    try {
+      await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "match", matchupId, choiceId }) });
+      await load();
+    } finally { setVoting((s) => { const n = new Set(s); n.delete(matchupId); return n; }); }
   };
   const approvalVote = async (candidateId: number) => {
-    if (!canVote) return;
-    const r = await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "approval", candidateId }) });
-    const j = await r.json().catch(() => ({}));
-    if (j?.error) setNomErr(j.error);
-    await load();
+    if (!canVote || voting.has(candidateId)) return;
+    setVoting((s) => new Set(s).add(candidateId));
+    // optimistic: toggle my pick locally right away
+    setState((prev: any) => prev ? { ...prev, group: optimisticApproval(prev.group, candidateId) } : prev);
+    try {
+      const r = await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "approval", candidateId }) });
+      const j = await r.json().catch(() => ({}));
+      if (j?.error) setNomErr(j.error);
+      await load();
+    } finally { setVoting((s) => { const n = new Set(s); n.delete(candidateId); return n; }); }
   };
 
   const comp = state?.competition;
@@ -590,33 +628,43 @@ export default function Page() {
       {!loading && comp && showKey === "group" && state?.group && (
         <>
           {viewingPast && <div className="viewback">{T("view.back")}</div>}
-          <div className="sec"><h2>{T("group.title")}</h2><div className="meta2">{comp.koTarget ? T("group.wc", { n: comp.koTarget }) : ""}</div></div>
+          <div className="sec"><h2>{T("group.title")}</h2><div className="meta2">{comp.koTarget ? T((comp.groupsCount && comp.koTarget <= 2 * comp.groupsCount) ? "group.wc2" : "group.wc", { n: comp.koTarget }) : ""}</div></div>
           {state.group.matchdayCount > 1 && <div className="hint">{T("group.matchday", { d: state.group.matchday, n: state.group.matchdayCount })}</div>}
           <div className="groupwrap">
             {state.group.mode === "approval"
               ? state.group.groups.map((g: any) => {
-                const inner = (
-                  <>
-                    <h3>{T("group.letter", { L: String.fromCharCode(65 + g.group) })}
-                      <span className="gstatus">{g.open ? T("gb.open", { n: g.myPicks, max: state.group.perGroupVotes }) : g.closed ? T("gb.closed") : T("gb.upcoming")}</span></h3>
-                    <ul className="ballot-list">
-                      {g.members.map((m: any) => (
-                        <li key={m.id} className={(m.mine ? "mine " : "") + (m.advancing ? "adv" : "")}>
-                          <Avatar c={m} />
-                          <div className="meta"><div className="nm">{label(m, lang)}</div>
-                            {m.votes != null && <div className="sub">{m.votes} {T("gb.votes")}{m.advancing ? " · " + T("gb.adv") : ""}</div>}</div>
-                          {g.open
-                            ? <button className={"btn" + (m.mine ? " solid" : "")} disabled={!canVote} onClick={() => approvalVote(m.id)}>{m.mine ? T("gb.picked") : T("gb.pick")}</button>
-                            : <span className="rankpill">{m.rank + 1}</span>}
-                        </li>
-                      ))}
-                    </ul>
-                  </>
+                const row = (m: any) => (
+                  <li key={m.id} className={(m.mine ? "mine " : "") + (m.advancing ? "adv" : "")}>
+                    <Avatar c={m} />
+                    <div className="meta"><div className="nm">{label(m, lang)}</div>
+                      {m.votes != null && <div className="sub">{m.votes} {T("gb.votes")}{m.advancing ? " · " + T("gb.adv") : ""}</div>}</div>
+                    {g.open
+                      ? <button className={"btn" + (m.mine ? " solid" : "")} disabled={!canVote || voting.has(m.id)} aria-busy={voting.has(m.id)} onClick={() => approvalVote(m.id)}>{voting.has(m.id) ? "…" : m.mine ? T("gb.picked") : T("gb.pick")}</button>
+                      : <span className="rankpill">{m.rank + 1}</span>}
+                  </li>
                 );
-                // finished groups collapse by default; open / upcoming stay visible
-                return g.closed && !g.open
-                  ? <details className="group ballot done-fold" key={g.group}><summary>{T("fold.doneGroup", { L: String.fromCharCode(65 + g.group) })}</summary><div className="fold-body">{inner}</div></details>
-                  : <div className={"group ballot" + (g.open ? " open" : "")} key={g.group}>{inner}</div>;
+                const header = (
+                  <h3>{T("group.letter", { L: String.fromCharCode(65 + g.group) })}
+                    <span className="gstatus">{g.open ? T("gb.open", { n: g.myPicks, max: state.group.perGroupVotes }) : g.closed ? T("gb.closed") : T("gb.upcoming")}</span></h3>
+                );
+                // finished group: show advancers, tuck the rest behind an expander
+                if (g.closed && !g.open) {
+                  const adv = g.members.filter((m: any) => m.advancing);
+                  const others = g.members.filter((m: any) => !m.advancing);
+                  return (
+                    <div className="group ballot" key={g.group}>
+                      {header}
+                      <ul className="ballot-list">{adv.map(row)}</ul>
+                      {others.length > 0 && (
+                        <details className="more-fold">
+                          <summary>{T("gb.showOthers", { n: others.length })}</summary>
+                          <ul className="ballot-list" style={{ marginTop: 8 }}>{others.map(row)}</ul>
+                        </details>
+                      )}
+                    </div>
+                  );
+                }
+                return <div className={"group ballot" + (g.open ? " open" : "")} key={g.group}>{header}<ul className="ballot-list">{g.members.map(row)}</ul></div>;
               })
               : state.group.groups.map((g: any) => {
                 const liveMs = g.matchups.filter((m: Match) => !m.decided);

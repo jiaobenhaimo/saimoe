@@ -256,7 +256,7 @@ function roundLabel(contestants: number): string {
 // so future knockout rounds carry projected times but no pairings (pending = true).
 export type SchedSide = { id: number; name: string; nameCn: string | null } | null;
 export interface SchedMatch { a: SchedSide; b: SchedSide; decided: boolean; winnerId: number | null; }
-export interface SchedGroupDay { matchday: number; matchdayCount: number; start: number | null; end: number | null; current: boolean; matches: SchedMatch[]; groups?: { groupNo: number; members: string[] }[]; }
+export interface SchedGroupDay { matchday: number; matchdayCount: number; start: number | null; end: number | null; current: boolean; matches: SchedMatch[]; groups?: { groupNo: number; members: string[]; advancers?: string[] }[]; }
 export interface SchedKoRound { label: string; contestants: number; start: number | null; end: number | null; pending: boolean; matches: SchedMatch[]; }
 export interface SchedulePreview {
   known: boolean; phase: string; groupMatchday?: number;
@@ -333,7 +333,15 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
       if (comp.phase === "group" && d === curMd && comp.group_round_ends_at) end = comp.group_round_ends_at;
       else if (start != null && pace) end = start + roundMs;
       const gNos = [...new Set(grouped.map((c) => c.group_no!))].filter((g) => groupBatch(g, perDay) === d).sort((a, b) => a - b);
-      const groups = gNos.map((g) => ({ groupNo: g, members: grouped.filter((c) => c.group_no === g).sort((a, b) => (a.seed ?? 0) - (b.seed ?? 0)).map((c) => nameCn(c.id)) }));
+      const dClosed = comp.phase !== "group" || d < curMd;
+      const aTally = dClosed ? approvalTally(db, comp.id) : null;
+      const groups = gNos.map((g) => {
+        const mem = grouped.filter((c) => c.group_no === g).sort((a, b) => (a.seed ?? 0) - (b.seed ?? 0));
+        const advancers = aTally
+          ? [...mem].sort((a, b) => (aTally.get(b.id) || 0) - (aTally.get(a.id) || 0) || (a.seed ?? 0) - (b.seed ?? 0)).slice(0, 2).map((c) => nameCn(c.id))
+          : [];
+        return { groupNo: g, members: mem.map((c) => nameCn(c.id)), advancers };
+      });
       out.group.push({ matchday: d, matchdayCount: mdCount, start, end, current: comp.phase === "group" && d === curMd, matches: [], groups });
     }
   } else {

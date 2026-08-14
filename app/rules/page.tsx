@@ -42,37 +42,46 @@ export default function Rules() {
   const fmtRange = (s: number | null, e: number | null): string =>
     s && e ? `${f(s)} → ${f(e)}` : e ? `→ ${f(e)}` : s ? `${f(s)} →` : T("sched.tbd");
   const side = (s: Side): string => (s ? (lang === "zh" ? (s.nameCn || s.name) : s.name) : "?");
-  const winner = (m: SMatch): Side => (m.winnerId == null ? null : m.a?.id === m.winnerId ? m.a : m.b?.id === m.winnerId ? m.b : null);
   const known = !!sched?.known;
   const [hideDone, setHideDone] = useState(true);
 
   // Flatten the schedule into ordered timeline nodes: nomination close → each group matchday → each knockout round.
-  type TLDetail = { text: string; done: boolean; won: string | null };
+  type TLSeg = { t: string; b: boolean };
+  type TLDetail = { segs: TLSeg[]; done: boolean };
   type TLNode = { label: string; start: number | null; end: number | null; state: "done" | "current" | "upcoming"; pending?: boolean; detail: TLDetail[] };
   const now = Date.now();
   const nodes: TLNode[] = [];
   if (known && sched) {
     const phase = sched.phase;
-    // nomination close
     const nomEnd = sched.plan?.nomEndsAt ?? null;
     if (nomEnd) nodes.push({ label: T("sched.nomEnd"), start: null, end: nomEnd, state: phase === "nomination" ? "current" : "done", detail: [] });
-    // group matchdays
     for (const d of (sched.group || [])) {
       const detail: TLDetail[] = sched.mode === "approval"
-        ? (d.groups || []).map((g: any) => ({ text: `${T("group.letter", { L: String.fromCharCode(65 + g.groupNo) })}: ${g.members.join("、")}`, done: false, won: null }))
-        : (d.matches || []).map((m: SMatch) => ({ text: `${side(m.a)} ${T("sched.vs")} ${side(m.b)}`, done: m.decided, won: m.decided && winner(m) ? side(winner(m)) : null }));
+        ? (d.groups || []).map((g: any) => {
+            const adv = new Set<string>(g.advancers || []);
+            const segs: TLSeg[] = [{ t: `${T("group.letter", { L: String.fromCharCode(65 + g.groupNo) })}: `, b: false }];
+            (g.members || []).forEach((nm: string, k: number) => { if (k) segs.push({ t: "、", b: false }); segs.push({ t: nm, b: adv.has(nm) }); });
+            return { segs, done: adv.size > 0 };
+          })
+        : (d.matches || []).map((m: SMatch) => {
+            const wa = m.decided && m.winnerId != null && m.a?.id === m.winnerId;
+            const wb = m.decided && m.winnerId != null && m.b?.id === m.winnerId;
+            return { segs: [{ t: side(m.a), b: wa }, { t: ` ${T("sched.vs")} `, b: false }, { t: side(m.b), b: wb }], done: m.decided };
+          });
       const state: TLNode["state"] = d.current ? "current" : d.end && d.end < now ? "done" : phase === "group" && d.matchday < (sched.groupMatchday ?? 0) ? "done" : "upcoming";
       nodes.push({ label: T("sched.md", { d: d.matchday, n: d.matchdayCount }), start: d.start, end: d.end, state, detail });
     }
-    // knockout rounds
     for (const r of (sched.knockout || [])) {
-      const detail: TLDetail[] = (r.matches || []).map((m: SMatch) => ({ text: `${side(m.a)} ${T("sched.vs")} ${side(m.b)}`, done: m.decided, won: m.decided && winner(m) ? side(winner(m)) : null }));
+      const detail: TLDetail[] = (r.matches || []).map((m: SMatch) => {
+        const wa = m.decided && m.winnerId != null && m.a?.id === m.winnerId;
+        const wb = m.decided && m.winnerId != null && m.b?.id === m.winnerId;
+        return { segs: [{ t: side(m.a), b: wa }, { t: ` ${T("sched.vs")} `, b: false }, { t: side(m.b), b: wb }], done: m.decided };
+      });
       const allDone = r.matches?.length > 0 && r.matches.every((m: SMatch) => m.decided);
       const anyLive = r.matches?.some((m: SMatch) => !m.decided) && !r.pending && (r.start ? r.start <= now : false);
       const state: TLNode["state"] = r.pending ? "upcoming" : allDone ? "done" : anyLive ? "current" : (r.end && r.end < now ? "done" : "upcoming");
       nodes.push({ label: roundLabelT(lang, r.label), start: r.start, end: r.end, state, pending: r.pending, detail });
     }
-    // exactly one "current": if none marked, mark the first upcoming
     if (!nodes.some((n) => n.state === "current")) { const i = nodes.findIndex((n) => n.state === "upcoming"); if (i >= 0) nodes[i].state = "current"; }
   }
 
@@ -110,7 +119,7 @@ export default function Rules() {
           <p className="rules-note">{T("sched.pending")}</p>
         ) : (
           <>
-            <p className="rules-p"><b>{T("sched.bracket", { n: sched.targetSize ?? "?", g: sched.groups ?? "?", k: sched.koTarget ?? "?" })}</b><br />{T("sched.advanceRule")}</p>
+            <p className="rules-p"><b>{T("sched.bracket", { n: sched.targetSize ?? "?", g: sched.groups ?? "?", k: sched.koTarget ?? "?" })}</b><br />{T((sched.groups && sched.koTarget && sched.koTarget <= 2 * sched.groups) ? "sched.advanceRule2" : "sched.advanceRule")}</p>
             <ol className={"tl" + (hideDone ? " hide-done" : "")}>
               {nodes.map((n, i) => (
                 <li key={i} className={"tl-node " + n.state + (i === nodes.length - 1 ? " last" : "")}>
@@ -122,7 +131,7 @@ export default function Rules() {
                       <span className="tl-time">{fmtRange(n.start, n.end)}</span>
                     </div>
                     {n.pending ? <div className="tl-body"><span className="tbd">{T("sched.pairTbd")}</span></div>
-                      : n.detail.length > 0 ? <div className="tl-body">{n.detail.map((d, j) => <span key={j} className={"pair" + (d.done ? " done" : "")}>{d.text}{d.won ? <b> · {d.won}</b> : null}</span>)}</div>
+                      : n.detail.length > 0 ? <div className="tl-body">{n.detail.map((d, j) => <span key={j} className={"pair" + (d.done ? " done" : "")}>{d.segs.map((s, k) => s.b ? <b key={k}>{s.t}</b> : <span key={k}>{s.t}</span>)}</span>)}</div>
                       : null}
                   </div>
                 </li>
