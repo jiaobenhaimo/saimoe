@@ -574,3 +574,10 @@ body { font-size: 15px; line-height: 1.6; }
 .btn.danger { border-color: var(--danger); color: var(--danger); }
 .btn.danger:hover:not(:disabled) { background: var(--danger); color: var(--danger-ink); }
 .btn.danger.solid { background: var(--danger); color: var(--danger-ink); border-color: var(--danger); }
+
+/* "show N more" expander inside a finished group (advancers shown, rest tucked away) */
+.more-fold { margin-top: 4px; }
+.more-fold > summary { cursor: pointer; list-style: none; font-size: 13px; font-weight: 600; color: var(--rose-deep); padding: 8px 4px; min-height: 36px; display: inline-flex; align-items: center; gap: 6px; user-select: none; }
+.more-fold > summary::-webkit-details-marker { display: none; }
+.more-fold > summary::before { content: "▸"; font-size: 10px; transition: transform .15s ease; }
+.more-fold[open] > summary::before { transform: rotate(90deg); }
