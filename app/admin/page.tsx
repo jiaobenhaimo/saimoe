@@ -38,6 +38,13 @@ export default function Admin() {
   const [editTitle, setEditTitle] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [editShort, setEditShort] = useState("");
+  const [editTitleEn, setEditTitleEn] = useState(""); const [editTitleJa, setEditTitleJa] = useState("");
+  const [editDescEn, setEditDescEn] = useState(""); const [editDescJa, setEditDescJa] = useState("");
+  const [editShortEn, setEditShortEn] = useState(""); const [editShortJa, setEditShortJa] = useState("");
+  // pool row: inline edit + two-step merge
+  const [editId, setEditId] = useState<number | null>(null);
+  const [eName, setEName] = useState(""); const [eCn, setECn] = useState(""); const [eEn, setEEn] = useState(""); const [eImg, setEImg] = useState(""); const [eSub, setESub] = useState("");
+  const [mergeFrom, setMergeFrom] = useState<{ id: number; name: string } | null>(null);
 
   // 网络诊断
   const [pinging, setPinging] = useState(false);
@@ -150,7 +157,7 @@ export default function Admin() {
   const phase = comp?.phase;
 
   useEffect(() => {
-    if (comp) { setEditTitle(comp.title || ""); setEditDesc(comp.description || ""); setEditShort(comp.shortName || ""); setNUserLimit(comp.nomUserLimit || 0); setNMinVotes(comp.nomMinVotes || 0); }
+    if (comp) { setEditTitle(comp.title || ""); setEditDesc(comp.description || ""); setEditShort(comp.shortName || ""); setEditTitleEn(comp.titleEn || ""); setEditTitleJa(comp.titleJa || ""); setEditDescEn(comp.descEn || ""); setEditDescJa(comp.descJa || ""); setEditShortEn(comp.shortEn || ""); setEditShortJa(comp.shortJa || ""); setNUserLimit(comp.nomUserLimit || 0); setNMinVotes(comp.nomMinVotes || 0); }
   }, [comp?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const estGroups = Math.max(1, Math.floor(size / Math.max(2, groupSize)));
@@ -208,16 +215,28 @@ export default function Admin() {
       {comp && (
         <div className="card">
           <h3>编辑比赛信息</h3>
-          <div className="field"><label>比赛名称</label>
+          <div className="field"><label>比赛名称(中文)</label>
             <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} /></div>
-          <div className="field"><label>简介 / 副标题（可选，显示在投票页标题下方）</label>
+          <div className="row3">
+            <div className="field"><label>名称 EN</label><input value={editTitleEn} onChange={(e) => setEditTitleEn(e.target.value)} placeholder="English title" /></div>
+            <div className="field"><label>名称 JA</label><input value={editTitleJa} onChange={(e) => setEditTitleJa(e.target.value)} placeholder="日本語タイトル" /></div>
+          </div>
+          <div className="field"><label>简介 / 副标题(中文,可选)</label>
             <input value={editDesc} onChange={(e) => setEditDesc(e.target.value)}
               placeholder="例如：2026 春季 · 由你决定最萌角色" /></div>
-          <div className="field"><label>比赛简称（可选，用于规则页等文字，代替「SML」）</label>
+          <div className="row3">
+            <div className="field"><label>简介 EN</label><input value={editDescEn} onChange={(e) => setEditDescEn(e.target.value)} /></div>
+            <div className="field"><label>简介 JA</label><input value={editDescJa} onChange={(e) => setEditDescJa(e.target.value)} /></div>
+          </div>
+          <div className="field"><label>比赛简称(中文,可选,规则页等处代替「SML」)</label>
             <input value={editShort} onChange={(e) => setEditShort(e.target.value)}
               placeholder="例如：B萌、春季杯" /></div>
+          <div className="row3">
+            <div className="field"><label>简称 EN</label><input value={editShortEn} onChange={(e) => setEditShortEn(e.target.value)} /></div>
+            <div className="field"><label>简称 JA</label><input value={editShortJa} onChange={(e) => setEditShortJa(e.target.value)} /></div>
+          </div>
           <button className="btn solid" disabled={busy || !editTitle.trim()}
-            onClick={() => act("update", { title: editTitle, description: editDesc, shortName: editShort })}>保存修改</button>
+            onClick={() => act("update", { title: editTitle, description: editDesc, shortName: editShort, titleEn: editTitleEn, titleJa: editTitleJa, descEn: editDescEn, descJa: editDescJa, shortEn: editShortEn, shortJa: editShortJa })}>保存修改</button>
         </div>
       )}
 
@@ -469,14 +488,50 @@ export default function Admin() {
       {phase === "nomination" && state?.nomination && (
         <div className="card">
           <h3>管理提名池</h3>
-          <p className="hint">移除误加 / 重复的角色，会连同其提名票一起删除，无法撤销。</p>
+          <p className="hint">编辑角色信息、把重复/跨版本角色合并(A 的提名票并入 B 后删除 A、按投票人去重),或移除误加角色。移除/合并会改动票数,无法撤销。</p>
+          {mergeFrom && (
+            <div className="gate-banner" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <span>正在合并「<b>{mergeFrom.name}</b>」→ 点选目标角色的「并入此」</span>
+              <button className="btn" onClick={() => setMergeFrom(null)}>取消合并</button>
+            </div>
+          )}
           {state.nomination.pool.length === 0 ? <p className="hint">暂无提名。</p> : (
             <div className="pool-admin">
               {state.nomination.pool.map((p: any) => (
                 <div className="prow" key={p.id}>
-                  <div className="meta"><div className="nm">{p.nameCn || p.name}</div>{p.nameCn && p.nameCn !== p.name && <div className="sub">{p.name}</div>}</div>
-                  <div className="votecell num"><div className="c">{p.votes}</div><div className="l">提名</div></div>
-                  <button className="btn" disabled={busy} onClick={() => { if (confirm(`确认移除「${p.nameCn || p.name}」？`)) act("remove_candidate", { candidateId: p.id }); }}>移除</button>
+                  {editId === p.id ? (
+                    <div style={{ flex: 1, display: "grid", gap: 6 }}>
+                      <div className="row3">
+                        <div className="field"><label>中文名</label><input value={eCn} onChange={(e) => setECn(e.target.value)} /></div>
+                        <div className="field"><label>原名</label><input value={eName} onChange={(e) => setEName(e.target.value)} /></div>
+                        <div className="field"><label>EN</label><input value={eEn} onChange={(e) => setEEn(e.target.value)} /></div>
+                      </div>
+                      <div className="row3">
+                        <div className="field" style={{ gridColumn: "span 2" }}><label>图片 URL</label><input value={eImg} onChange={(e) => setEImg(e.target.value)} /></div>
+                        <div className="field"><label>所属作品</label><input value={eSub} onChange={(e) => setESub(e.target.value)} /></div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button className="btn solid" disabled={busy} onClick={() => { act("edit_candidate", { candidateId: p.id, name: eName, nameCn: eCn, nameEn: eEn, image: eImg, subjectName: eSub }); setEditId(null); }}>保存</button>
+                        <button className="btn" onClick={() => setEditId(null)}>取消</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="meta"><div className="nm">{p.nameCn || p.name}</div>{p.nameCn && p.nameCn !== p.name && <div className="sub">{p.name}</div>}</div>
+                      <div className="votecell num"><div className="c">{p.votes}</div><div className="l">提名</div></div>
+                      {mergeFrom && mergeFrom.id !== p.id ? (
+                        <button className="btn solid" disabled={busy} onClick={() => { if (confirm(`把「${mergeFrom.name}」的票并入「${p.nameCn || p.name}」并删除前者？`)) { act("merge_candidate", { fromId: mergeFrom.id, toId: p.id }); setMergeFrom(null); } }}>并入此</button>
+                      ) : mergeFrom && mergeFrom.id === p.id ? (
+                        <span className="sub" style={{ alignSelf: "center" }}>合并源</span>
+                      ) : (
+                        <>
+                          <button className="btn" disabled={busy} onClick={() => { setEditId(p.id); setEName(p.name || ""); setECn(p.nameCn || ""); setEEn(p.nameEn || ""); setEImg(p.image || ""); setESub(p.subjectName || ""); }}>编辑</button>
+                          <button className="btn" disabled={busy} onClick={() => setMergeFrom({ id: p.id, name: p.nameCn || p.name })}>合并</button>
+                        </>
+                      )}
+                      <button className="btn" disabled={busy || !!mergeFrom} onClick={() => { if (confirm(`确认移除「${p.nameCn || p.name}」？`)) act("remove_candidate", { candidateId: p.id }); }}>移除</button>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
@@ -580,7 +635,7 @@ export default function Admin() {
       <div className="card">
         <h3>危险操作</h3>
         <p className="hint">删除当前比赛及其全部数据，无法撤销。</p>
-        <button className="btn" disabled={busy} onClick={() => { if (confirm("确认删除当前比赛？")) act("reset"); }}>重置 / 删除当前比赛</button>
+        <button className="btn danger" disabled={busy} onClick={() => { if (confirm("确认删除当前比赛？")) act("reset"); }}>重置 / 删除当前比赛</button>
       </div>
 
       </div>
