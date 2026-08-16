@@ -179,6 +179,7 @@ const D: Record<string, Entry> = {
   "sched.advanceRule": { zh: "各组前 2 名 + 各组最优第三名晋级淘汰赛。", en: "Top 2 of each group plus the best third-placed characters advance.", ja: "各組上位2名＋各組最優秀3位が進出。" },
   "sched.advanceRule2": { zh: "各组前 2 名晋级淘汰赛。", en: "The top 2 of each group advance to the knockout.", ja: "各組上位2名が決勝トーナメントに進出。" },
   "sched.pending": { zh: "赛程尚未确定，开赛后在此显示每个比赛日与每轮的时间和对阵。", en: "Schedule not set yet — once the stage starts, each matchday and round (times and pairings) will appear here.", ja: "日程は未確定です。開始後、各試合日・各ラウンドの時刻と対戦がここに表示されます。" },
+  "sched.tbdMembers": { zh: "分组待抽签", en: "draw pending", ja: "抽選待ち" },
   "sched.mdGroups": { zh: "第 {d}/{n} 比赛日 · {g} 组", en: "Matchday {d}/{n} · Group {g}", ja: "第 {d}/{n} 試合日 · {g} 組" },
   "sched.md": { zh: "第 {d}/{n} 比赛日", en: "Matchday {d}/{n}", ja: "第 {d}/{n} 試合日" },
   "sched.now": { zh: "进行中", en: "live", ja: "進行中" },

@@ -77,6 +77,27 @@ async function fetchT(url: string, opts: RequestInit = {}, ms = 10_000): Promise
   finally { clearTimeout(timer); }
 }
 
+/** 直连 Bangumi 与「经本站代理」两条通道同时发，取先成功的那条。
+ *  慢网络/跨域被拦时不再等到超时才失败，也不必让用户手动切换。 */
+async function firstOk<T>(tasks: (() => Promise<T>)[]): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let left = tasks.length, done = false, lastErr: any = null;
+    if (!left) { reject(new Error("no channel")); return; }
+    tasks.forEach((run) => {
+      run().then((v) => { if (!done) { done = true; resolve(v); } })
+        .catch((e) => { lastErr = e; if (--left === 0 && !done) reject(lastErr); });
+    });
+  });
+}
+/** 搜索/取详情统一入口：direct = 浏览器直连；proxy = /api/bgm 代理。 */
+async function bgmJson(direct: () => Promise<Response>, proxyQS: string, ms = 12_000): Promise<any> {
+  const asJson = async (r: Response) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); };
+  return firstOk<any>([
+    async () => asJson(await direct()),
+    async () => asJson(await fetchT("/api/bgm?" + proxyQS, { cache: "no-store" }, ms)),
+  ]);
+}
+
 function api(path: string, opts: RequestInit = {}) {
   const headers = new Headers(opts.headers);
   if (FP) headers.set("x-fp", FP);
@@ -263,13 +284,13 @@ export default function Page() {
     const kw = q.trim(); if (!kw) return;
     setSearching(true); setSearchErr(""); setHits(null); setSubHits(null); setImportMsg("");
     try {
-      const r = await fetchT("https://api.bgm.tv/v0/search/characters?limit=20", {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=UTF-8", Accept: "application/json" },
-        body: JSON.stringify({ keyword: kw }),
-      });
-      if (!r.ok) { setSearchErr(T("search.fail", { err: "HTTP " + r.status })); setHits([]); return; }
-      const j = await r.json();
+      const j = await bgmJson(
+        () => fetchT("https://api.bgm.tv/v0/search/characters?limit=20", {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=UTF-8", Accept: "application/json" },
+          body: JSON.stringify({ keyword: kw }),
+        }),
+        "kind=chars&q=" + encodeURIComponent(kw));
       const arr = Array.isArray(j?.data) ? j.data : Array.isArray(j?.list) ? j.list : [];
       const seen = new Set<string>();
       const items = arr
@@ -287,10 +308,14 @@ export default function Page() {
     const kw = subQ.trim(); if (!kw) return;
     setSubSearching(true); setImportMsg(""); setSubHits(null); setHits(null); setSearchErr("");
     try {
-      const r = await fetchT(`https://api.bgm.tv/search/subject/${encodeURIComponent(kw)}?type=2&responseGroup=large&max_results=20`, { headers: { Accept: "application/json" } });
-      const ct = r.headers.get("content-type") || "";
-      if (!r.ok || !ct.includes("json")) { setImportMsg(T("subject.neterr")); setSubHits([]); return; }
-      const j = await r.json();
+      const j = await bgmJson(
+        async () => {
+          const rr = await fetchT(`https://api.bgm.tv/search/subject/${encodeURIComponent(kw)}?type=2&responseGroup=large&max_results=20`, { headers: { Accept: "application/json" } });
+          // 老接口偶尔返回 HTML 错误页：视为该通道失败，让代理通道接手
+          if (!(rr.headers.get("content-type") || "").includes("json")) throw new Error("not json");
+          return rr;
+        },
+        "kind=subjects&q=" + encodeURIComponent(kw));
       const list = Array.isArray(j?.list) ? j.list : [];
       const lc = kw.toLowerCase();
       const seen = new Set<string>();
@@ -318,7 +343,9 @@ export default function Page() {
   // ── 日本产地软校验（方案 A）：查 bangumi 作品 tag 是否含「日本」。返回 true/false/null(null=查不了，不阻断) ──
   const subjectHasJP = async (subjectId: string | number): Promise<boolean | null> => {
     try {
-      const d = await (await fetchT(`https://api.bgm.tv/v0/subjects/${encodeURIComponent(String(subjectId))}`, { headers: { Accept: "application/json" } })).json();
+      const d = await bgmJson(
+        () => fetchT(`https://api.bgm.tv/v0/subjects/${encodeURIComponent(String(subjectId))}`, { headers: { Accept: "application/json" } }),
+        "kind=subject&id=" + encodeURIComponent(String(subjectId).replace(/\D/g, "")));
       const names: string[] = [
         ...((Array.isArray(d?.tags) ? d.tags : []).map((t: any) => (typeof t === "string" ? t : t?.name || ""))),
         ...((Array.isArray(d?.meta_tags) ? d.meta_tags : []).map((m: any) => (typeof m === "string" ? m : m?.name || ""))),
@@ -328,7 +355,9 @@ export default function Page() {
   };
   const characterHasJP = async (rawId: string | number): Promise<boolean | null> => {
     try {
-      const subs = await (await fetchT(`https://api.bgm.tv/v0/characters/${encodeURIComponent(String(rawId))}/subjects`, { headers: { Accept: "application/json" } })).json();
+      const subs = await bgmJson(
+        () => fetchT(`https://api.bgm.tv/v0/characters/${encodeURIComponent(String(rawId))}/subjects`, { headers: { Accept: "application/json" } }),
+        "kind=charSubjects&id=" + encodeURIComponent(String(rawId).replace(/\D/g, "")));
       const ids = (Array.isArray(subs) ? subs : []).map((s: any) => s?.id).filter(Boolean).slice(0, 3);
       if (!ids.length) return null;
       for (const id of ids) { const jp = await subjectHasJP(id); if (jp) return true; }
@@ -355,20 +384,22 @@ export default function Page() {
   const importSubject = async (subjectId: string, subjectName: string) => {
     setImportMsg(T("import.progress", { name: subjectName }));
     try {
-      const r = await fetchT(`https://api.bgm.tv/v0/subjects/${encodeURIComponent(subjectId)}/characters`, { headers: { Accept: "application/json" } });
-      if (!r.ok) { setImportMsg(T("import.fail", { err: "HTTP " + r.status })); return; }
-      const arr = await r.json();
+      const arr = await bgmJson(
+        () => fetchT(`https://api.bgm.tv/v0/subjects/${encodeURIComponent(subjectId)}/characters`, { headers: { Accept: "application/json" } }),
+        "kind=subjectChars&id=" + encodeURIComponent(String(subjectId).replace(/\D/g, "")));
       const chars = (Array.isArray(arr) ? arr : [])
         .filter((c: any) => c && c.name && (c.type == null || c.type === 1)) // 只留真正的角色
         .map((c: any) => ({ rawId: c.id, bgmId: "c" + c.id, name: c.name, nameCn: "", nameEn: "", image: c.images?.grid || c.images?.medium || "", subjectName }))
         .slice(0, 60);
       if (!chars.length) { setImportMsg(T("import.fail", { err: "no characters" })); return; }
       // 补中文名：逐个取角色详情 infobox 的「简体中文名」（小并发，尽力而为）
-      for (let i = 0; i < chars.length; i += 6) {
+      for (let i = 0; i < chars.length; i += 8) {
         setImportMsg(T("import.progress", { name: `${subjectName}(${i}/${chars.length})` }));
-        await Promise.all(chars.slice(i, i + 6).map(async (ch: any) => {
+        await Promise.all(chars.slice(i, i + 8).map(async (ch: any) => {
           try {
-            const d = await (await fetchT(`https://api.bgm.tv/v0/characters/${ch.rawId}`, { headers: { Accept: "application/json" } })).json();
+            const d = await bgmJson(
+              () => fetchT(`https://api.bgm.tv/v0/characters/${ch.rawId}`, { headers: { Accept: "application/json" } }),
+              "kind=charDetail&id=" + encodeURIComponent(String(ch.rawId)));
             const box = Array.isArray(d?.infobox) ? d.infobox : [];
             const it = box.find((x: any) => typeof x?.key === "string" && (x.key.includes("简体中文名") || x.key === "中文名"));
             if (it && typeof it.value === "string") ch.nameCn = it.value;

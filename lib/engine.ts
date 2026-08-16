@@ -314,6 +314,35 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
         roundHours: comp.round_hours ?? null,
         postponeDays: comp.postpone_days ?? null,
       };
+
+      // Detailed projection so the rules page can show "which groups run on which day"
+      // before the draw. Pairings/members are unknowable now, but structure + dates are:
+      // groups open in batches of groups_per_day, one batch per matchday.
+      const perDay = comp.groups_per_day && comp.groups_per_day > 0 ? comp.groups_per_day : 2;
+      const isApproval = ((comp.group_mode as any) ?? "approval") === "approval";
+      const mdCount = isApproval ? Math.max(1, Math.ceil(groups / perDay)) : Math.max(1, comp.group_matchday_count ?? 1);
+      const roundMs = (comp.group_round_days || 0) * DAY;
+      const base = comp.nom_ends_at ?? null; // group stage starts when nomination closes
+      for (let d = 1; d <= mdCount; d++) {
+        const start = base != null ? base + (d - 1) * roundMs : null;
+        const end = start != null && roundMs ? start + roundMs : null;
+        const gs = isApproval
+          ? Array.from({ length: groups }, (_, i) => i).filter((g) => groupBatch(g, perDay) === d).map((g) => ({ groupNo: g, members: [] as string[] }))
+          : [];
+        out.group.push({ matchday: d, matchdayCount: mdCount, start, end, current: false, matches: [], groups: gs });
+      }
+      // knockout rounds: 1/8 → … → semi → [bronze] → final, paced by round_hours
+      let cursor = base != null && roundMs ? base + mdCount * roundMs : null;
+      const hrs = comp.round_hours ?? 0;
+      const thirdOn = comp.third_place !== false && out.koTarget >= 4;
+      for (let S = out.koTarget; S >= 2; S = S >> 1) {
+        if (S === 2 && thirdOn) {
+          out.knockout.push({ label: "bronze", contestants: 2, start: cursor, end: cursor != null && hrs ? cursor + hrs * HOUR : null, pending: true, matches: [] });
+          cursor = cursor != null && hrs ? cursor + hrs * HOUR : null;
+        }
+        out.knockout.push({ label: roundLabel(S), contestants: S, start: cursor, end: cursor != null && hrs ? cursor + hrs * HOUR : null, pending: true, matches: [] });
+        cursor = cursor != null && hrs ? cursor + hrs * HOUR : null;
+      }
     }
     return out;
   }

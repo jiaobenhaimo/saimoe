@@ -51,7 +51,7 @@ export default function Rules() {
   type TLNode = { label: string; start: number | null; end: number | null; state: "done" | "current" | "upcoming"; pending?: boolean; detail: TLDetail[] };
   const now = Date.now();
   const nodes: TLNode[] = [];
-  if (known && sched) {
+  if (sched && (known || sched.planned)) {
     const phase = sched.phase;
     const nomEnd = sched.plan?.nomEndsAt ?? null;
     if (nomEnd) nodes.push({ label: T("sched.nomEnd"), start: null, end: nomEnd, state: phase === "nomination" ? "current" : "done", detail: [] });
@@ -60,6 +60,7 @@ export default function Rules() {
         ? (d.groups || []).map((g: any) => {
             const adv = new Set<string>(g.advancers || []);
             const segs: TLSeg[] = [{ t: `${T("group.letter", { L: groupLabel(g.groupNo) })}: `, b: false }];
+            if (!(g.members || []).length) segs.push({ t: T("sched.tbdMembers"), b: false }); // 提名阶段：抽签未进行
             (g.members || []).forEach((nm: string, k: number) => { if (k) segs.push({ t: "、", b: false }); segs.push({ t: nm, b: adv.has(nm) }); });
             return { segs, done: adv.size > 0 };
           })
@@ -114,12 +115,35 @@ export default function Rules() {
         {sched?.planned ? (
           <>
             <p className="rules-p"><b>{T("sched.bracketG", { n: sched.targetSize ?? "?", g: sched.groups ?? "?", s: sched.groupSize ?? "?", k: sched.koTarget ?? "?" })}</b></p>
-            <ol className="tl">
-              <li className="tl-node upcoming"><span className="tl-dot" /><div className="tl-card"><div className="tl-when"><span className="tl-label">{T("sched.nomEnd")}</span><span className="tl-time">{sched.plan?.nomEndsAt ? f(sched.plan.nomEndsAt) : T("sched.cadTbd")}</span></div></div></li>
-              <li className="tl-node upcoming"><span className="tl-dot" /><div className="tl-card"><div className="tl-when"><span className="tl-label">{T("sched.cadGroup")}</span><span className="tl-time">{sched.plan?.groupRoundDays ? T("sched.cadGroupVal", { d: sched.plan.groupRoundDays, c: sched.plan.dayCap === 0 ? "∞" : (sched.plan.dayCap || 4) }) : T("sched.cadManual")}</span></div></div></li>
-              <li className="tl-node upcoming last"><span className="tl-dot" /><div className="tl-card"><div className="tl-when"><span className="tl-label">{T("sched.cadKo")}</span><span className="tl-time">{sched.plan?.roundHours ? T("sched.cadKoVal", { h: sched.plan.roundHours }) : T("sched.cadManual")}</span></div></div></li>
-            </ol>
-            <p className="rules-note">{T("sched.plannedNote")}</p>
+            {nodes.length > 0 ? (
+              <>
+                <ol className={"tl" + (hideDone ? " hide-done" : "")}>
+                  {nodes.map((n, i) => (
+                    <li key={i} className={"tl-node " + n.state + (i === nodes.length - 1 ? " last" : "")}>
+                      <span className="tl-dot" />
+                      <div className="tl-card">
+                        <div className="tl-when">
+                          <span className="tl-label">{n.label}</span>
+                          <span className={"tl-tag " + n.state}>{n.state === "current" ? T("sched.now") : n.state === "done" ? T("sched.doneTag") : T("sched.upcomingTag")}</span>
+                          <span className="tl-time">{fmtRange(n.start, n.end)}</span>
+                        </div>
+                        {n.detail.length > 0 && <div className="tl-body">{n.detail.map((d, j) => <span key={j} className={"pair" + (d.done ? " done" : "")}>{d.segs.map((s, k) => s.b ? <b key={k}>{s.t}</b> : <span key={k}>{s.t}</span>)}</span>)}</div>}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+                <p className="rules-note">{T("sched.plannedNote")}</p>
+              </>
+            ) : (
+              <>
+                <ol className="tl">
+                  <li className="tl-node upcoming"><span className="tl-dot" /><div className="tl-card"><div className="tl-when"><span className="tl-label">{T("sched.nomEnd")}</span><span className="tl-time">{sched.plan?.nomEndsAt ? f(sched.plan.nomEndsAt) : T("sched.cadTbd")}</span></div></div></li>
+                  <li className="tl-node upcoming"><span className="tl-dot" /><div className="tl-card"><div className="tl-when"><span className="tl-label">{T("sched.cadGroup")}</span><span className="tl-time">{sched.plan?.groupRoundDays ? T("sched.cadGroupVal", { d: sched.plan.groupRoundDays, c: sched.plan.dayCap === 0 ? "∞" : (sched.plan.dayCap || 4) }) : T("sched.cadManual")}</span></div></div></li>
+                  <li className="tl-node upcoming last"><span className="tl-dot" /><div className="tl-card"><div className="tl-when"><span className="tl-label">{T("sched.cadKo")}</span><span className="tl-time">{sched.plan?.roundHours ? T("sched.cadKoVal", { h: sched.plan.roundHours }) : T("sched.cadManual")}</span></div></div></li>
+                </ol>
+                <p className="rules-note">{T("sched.plannedNote")}</p>
+              </>
+            )}
           </>
         ) : !known ? (
           <p className="rules-note">{T("sched.pending")}</p>
