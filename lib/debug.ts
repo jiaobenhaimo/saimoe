@@ -99,13 +99,13 @@ export function debugSimulate(o: { count?: number; groups?: number; advance?: nu
   const log: string[] = [];
 
   const seeded = debugSeed(count, "模拟赛 · Simulate");
-  log.push(`创建模拟赛(#${seeded.id})，角色 ${seeded.added} 个`);
+  log.push(`创建模拟赛（#${seeded.id}），角色 ${seeded.added} 个`);
   debugNominate(count * 20);
-  log.push(`灌入提名票(约 ${count * 20} 张)`);
+  log.push(`灌入提名票（约 ${count * 20} 张）`);
 
   startGroups(seeded.id, count, perRound, 0, groupSize, mode, groupsPerDay);
   const gc = getActiveCompetition();
-  log.push(`开小组赛(${mode === "approval" ? "投票晋级" : "循环赛"};${gc?.groups_count ?? "?"} 个 ${groupSize} 人组${mode === "approval" ? `,每天 ${groupsPerDay} 组` : ""})`);
+  log.push(`开小组赛（${mode === "approval" ? "投票晋级" : "循环赛"};${gc?.groups_count ?? "?"} 个 ${groupSize} 人组${mode === "approval" ? `，每天 ${groupsPerDay} 组` : ""}）`);
 
   let guard = 0;
   while (guard++ < 60) {
@@ -113,13 +113,13 @@ export function debugSimulate(o: { count?: number; groups?: number; advance?: nu
     if (!c || c.phase !== "group") break;
     const vr = debugVote(voters);
     const r = advanceGroupMatchday(seeded.id);
-    log.push(`比赛日投票(${vr.matches} ${unit})→ ${r.message}`);
+    log.push(`比赛日投票（${vr.matches} ${unit}）→ ${r.message}`);
     if (r.done) { startKnockout(seeded.id); log.push("小组赛结束 → 生成淘汰赛"); break; }
   }
 
   {
     const cp = getActiveCompetition();
-    if (cp && cp.phase === "playoff") { const vr = debugVote(voters); resolvePlayoff(seeded.id); log.push(`加赛投票(${vr.matches} 场)→ 结算 → 生成淘汰赛`); }
+    if (cp && cp.phase === "playoff") { const vr = debugVote(voters); resolvePlayoff(seeded.id); log.push(`加赛投票（${vr.matches} 场）→ 结算 → 生成淘汰赛`); }
   }
 
   guard = 0;
@@ -128,7 +128,7 @@ export function debugSimulate(o: { count?: number; groups?: number; advance?: nu
     if (!c || c.phase !== "knockout") break;
     const vr = debugVote(voters);
     advanceKnockout(seeded.id);
-    log.push(`淘汰赛投票(${vr.matches} 场)→ 推进一轮`);
+    log.push(`淘汰赛投票（${vr.matches} 场）→ 推进一轮`);
   }
 
   const c = getActiveCompetition();

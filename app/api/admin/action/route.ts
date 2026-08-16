@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminOk } from "@/lib/adminauth";
-import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, editCandidate, mergeCandidates, setBlocklist, setFreeze } from "@/lib/db";
+import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, editCandidate, mergeCandidates, setBlocklist, setFreeze, clearFreezePlan } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline, setPace, setGroupDayCap, resolvePlayoff, canStartKnockout } from "@/lib/engine";
 
@@ -55,20 +55,20 @@ export async function POST(req: NextRequest) {
         thirdPlace: body.thirdPlace === undefined ? undefined : !!body.thirdPlace,
         postponeDays: Number(body.postponeDays) || 1,
       });
-      rec(`设定定时赛程(取前 ${Number(body.size) || "?"} 名；提名截止 ${body.nomEndsAt ? new Date(Number(body.nomEndsAt)).toLocaleString("zh-CN") : "—"})`);
+      rec(`设定定时赛程（取前 ${Number(body.size) || "?"} 名；提名截止 ${body.nomEndsAt ? new Date(Number(body.nomEndsAt)).toLocaleString("zh-CN") : "—"}）`);
       return NextResponse.json({ ok: true });
     }
     if (action === "unschedule") { clearSchedule(comp.id); rec("取消定时赛程"); return NextResponse.json({ ok: true }); }
     if (action === "nom_rules") {
       setNominationRules(comp.id, Number(body.userLimit) || 0, Number(body.minVotes) || 0);
-      rec(`更新提名约束(每人上限 ${Number(body.userLimit) || 0}、最低票 ${Number(body.minVotes) || 0})`);
+      rec(`更新提名约束（每人上限 ${Number(body.userLimit) || 0}、最低票 ${Number(body.minVotes) || 0}）`);
       return NextResponse.json({ ok: true, message: "已更新提名约束。" });
     }
     if (action === "delete_comment") { deleteComment(comp.id, Number(body.commentId)); rec(`删除评论 #${Number(body.commentId)}`); return NextResponse.json({ ok: true }); }
     if (action === "start_groups") {
       if (body.dayCap !== undefined) setGroupDayCap(comp.id, Number(body.dayCap));
       startGroups(comp.id, Number(body.size), Number(body.perRound) || 0, Number(body.roundDays) || 0, Number(body.groupSize) || 0, (body.mode === "rr" || body.mode === "approval") ? body.mode : "", Number(body.groupsPerDay) || 0, body.thirdPlace === undefined ? null : !!body.thirdPlace);
-      rec(`开小组赛(取前 ${Number(body.size)} 名；每组 ${Number(body.groupSize) || comp.group_size || 4} 人；模式 ${body.mode === "rr" ? "循环赛" : "投票晋级"})`);
+      rec(`开小组赛（取前 ${Number(body.size)} 名；每组 ${Number(body.groupSize) || comp.group_size || 4} 人；模式 ${body.mode === "rr" ? "循环赛" : "投票晋级"}）`);
       return NextResponse.json({ ok: true });
     }
     if (action === "start_knockout") { startKnockout(comp.id); rec("结算小组赛 → 生成淘汰赛"); return NextResponse.json({ ok: true }); }
@@ -84,12 +84,12 @@ export async function POST(req: NextRequest) {
     if (action === "set_deadline") {
       setPhaseDeadline(comp.id, Number(body.hours) || 0);
       const on = Number(body.hours) > 0;
-      rec(on ? `设定本阶段截止(还剩 ${Number(body.hours)} 小时)` : "清除本阶段截止");
+      rec(on ? `设定本阶段截止（还剩 ${Number(body.hours)} 小时）` : "清除本阶段截止");
       return NextResponse.json({ ok: true, message: on ? "已设定本阶段截止时间。" : "已清除本阶段截止时间。" });
     }
     if (action === "set_pace") {
       setPace(comp.id, Number(body.groupRoundDays) || 0, Number(body.roundHours) || 0);
-      rec(`更新后续节奏(比赛日 ${Number(body.groupRoundDays) || "—"} 天 / 每轮 ${Number(body.roundHours) || "—"} 小时)`);
+      rec(`更新后续节奏（比赛日 ${Number(body.groupRoundDays) || "—"} 天 / 每轮 ${Number(body.roundHours) || "—"} 小时）`);
       return NextResponse.json({ ok: true, message: "已更新后续赛程节奏。" });
     }
     if (action === "reset") { deleteCompetition(comp.id); rec(`删除比赛 #${comp.id}`); return NextResponse.json({ ok: true }); }
@@ -112,8 +112,13 @@ export async function POST(req: NextRequest) {
     if (action === "merge_candidate") {
       const r = mergeCandidates(comp.id, Number(body.fromId), Number(body.toId));
       if ("error" in r) return NextResponse.json({ error: r.error }, { status: 400 });
-      rec(`合并角色 #${Number(body.fromId)} → #${Number(body.toId)}(迁移 ${r.moved} 票)`);
+      rec(`合并角色 #${Number(body.fromId)} → #${Number(body.toId)}（迁移 ${r.moved} 票）`);
       return NextResponse.json({ ok: true, message: `已合并，迁移 ${r.moved} 张提名票。` });
+    }
+    if (action === "clear_freeze_plan") {
+      clearFreezePlan(comp.id);
+      rec("移除预约的维护计划");
+      return NextResponse.json({ ok: true, message: "已移除维护计划。" });
     }
     if (action === "set_freeze") {
       setFreeze(comp.id, { on: body.on, from: body.from ?? null, to: body.to ?? null, note: body.note });

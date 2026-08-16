@@ -229,7 +229,13 @@ export default function Rules() {
         </div>
       </section>
 
-      <div className="foot"><a href="/">{T("rules.back")}</a></div>
+      <div className="foot"><a href="/">{T("rules.back")}</a>
+        <div className="foot-oss">
+          {T("foot.oss", { repo: "%%REPO%%" }).split("%%REPO%%").map((seg, i) => (
+            <span key={i}>{i > 0 && <a href="https://github.com/jiaobenhaimo/saimoe" target="_blank" rel="noopener noreferrer">jiaobenhaimo/saimoe</a>}{seg}</span>
+          ))}
+        </div>
+      </div>
     </main>
   );
 }

@@ -88,7 +88,7 @@ export default function Admin() {
       const r = await fetch("/api/admin/debug", { method: "POST", headers: { "Content-Type": "application/json", "x-admin-token": token }, body: JSON.stringify({ action, ...extra }) });
       const j = await r.json();
       if (!r.ok) setMsg({ t: j.error || "调试失败", ok: false });
-      else { if (j.log) setDbgLog(j.log); setMsg({ t: j.log ? `模拟完成(${j.log.length} 步)` : `调试 ${action} 完成`, ok: true }); }
+      else { if (j.log) setDbgLog(j.log); setMsg({ t: j.log ? `模拟完成（${j.log.length} 步）` : `调试 ${action} 完成`, ok: true }); }
       await load();
     } finally { setDbgBusy(false); }
   };
@@ -227,7 +227,7 @@ export default function Admin() {
     <main className="wrap admin">
       <div className="eyebrow">Admin</div>
       <h1 className="title" style={{ fontSize: 30 }}>赛事控制台</h1>
-      <p className="subtitle">推进比赛阶段。所有操作需要管理员令牌（环境变量 <code>ADMIN_TOKEN</code>).</p>
+      <p className="subtitle">推进比赛阶段。所有操作需要管理员令牌（环境变量 <code>ADMIN_TOKEN</code>）。</p>
 
       <div className="admin-cards">
 
@@ -306,6 +306,16 @@ export default function Admin() {
           </button>{" "}
           <button className="btn" disabled={busy}
             onClick={() => act("set_freeze", { on: state?.competition?.freeze?.manual ?? false, from: fzFrom ? new Date(fzFrom).getTime() : null, to: fzTo ? new Date(fzTo).getTime() : null, note: fzNote })}>仅保存预约</button>
+          {state?.competition?.freeze?.from != null && (
+            <p className="hint" style={{ marginTop: 10 }}>
+              已预约维护：<b>{fmtAbs(state.competition.freeze.from)}</b>
+              {state.competition.freeze.to != null ? <> 至 <b>{fmtAbs(state.competition.freeze.to)}</b></> : "（需手动恢复）"}
+              {state.competition.freeze.upcoming ? "，尚未开始" : state.competition.freeze.active ? "，正在进行" : "，已过期"}
+              {"　"}
+              <a onClick={() => { if (!busy && confirm("移除这个维护计划？首页的维护公告会一并消失；若正处于维护中，投票会立即恢复。")) { act("clear_freeze_plan"); setFzFrom(""); setFzTo(""); setFzNote(""); } }}
+                style={{ cursor: "pointer" }}>移除维护计划</a>
+            </p>
+          )}
         </div>
       )}
 
@@ -366,7 +376,7 @@ export default function Admin() {
           <h3>② 赛制与分组</h3>
           <p className="hint">这套配置对「立即开始」和「预约定时开赛」都生效——预约后会存下来，自动开赛时按此执行，并在下方「赛程预览」和规则页显示计划。</p>
           <div className="row3">
-            <div className="field"><label>晋级人数（取前 N,含并列）</label>
+            <div className="field"><label>晋级人数（取前 N，含并列）</label>
               <input type="number" min={4} value={size} onChange={(e) => setSize(+e.target.value)} /></div>
             <div className="field"><label>每组人数</label>
               <input type="number" min={2} value={groupSize} onChange={(e) => setGroupSize(+e.target.value)} /></div>
@@ -397,17 +407,17 @@ export default function Admin() {
               ，表示该阶段靠你手动推进，公开赛程里对应的时间会显示「时间待定」。要让规则页展示完整日期，请填入天数/小时。
             </p>
           )}
-          <p className="hint">约 <b>{estGroups}</b> 个 {groupSize} 人组(余数补进弱组成 {groupSize + 1} 人组)，各组前 2 → <b>{estKo}</b> 强淘汰赛。{groupMode === "approval" ? `每人每组最多投 2 票，每天开放 ${groupsPerDay} 个组。` : "组内两两对战，按胜场取前二。"}</p>
+          <p className="hint">约 <b>{estGroups}</b> 个 {groupSize} 人组（余数补进弱组成 {groupSize + 1} 人组），各组前 2 → <b>{estKo}</b> 强淘汰赛。{groupMode === "approval" ? `每人每组最多投 2 票，每天开放 ${groupsPerDay} 个组。` : "组内两两对战，按胜场取前二。"}</p>
           <label className="chk"><input type="checkbox" checked={thirdPlace} onChange={(e) => setThirdPlace(e.target.checked)} /> 进行季军战（半决赛两位败者加打一场定第三名）</label>
           <hr className="sep" />
 
           <h3 style={{ fontSize: 15 }}>立即开始</h3>
           <button className="btn solid" disabled={busy || size < 4}
-            onClick={() => act("start_groups", { size, groupSize, mode: groupMode, groupsPerDay, thirdPlace, perRound, roundDays, dayCap })}>立即结束提名 → 开小组赛(前 {size} 名 → 约 {estGroups} 组 → {estKo} 强)</button>
+            onClick={() => act("start_groups", { size, groupSize, mode: groupMode, groupsPerDay, thirdPlace, perRound, roundDays, dayCap })}>立即结束提名 → 开小组赛（前 {size} 名 → 约 {estGroups} 组 → {estKo} 强）</button>
 
           <hr className="sep" />
           <h3 style={{ fontSize: 15 }}>预约定时开赛</h3>
-          <p className="hint">到提名截止时间自动用上面的配置开小组赛；若届时提名人数不足 {size},自动顺延若干天（后续赛程随之顺延）。</p>
+          <p className="hint">到提名截止时间自动用上面的配置开小组赛；若届时提名人数不足 {size}，自动顺延若干天（后续赛程随之顺延）。</p>
           <div className="row3">
             <div className="field" style={{ gridColumn: "span 2" }}><label>提名截止时间</label>
               <input type="datetime-local" value={nomLocal} onChange={(e) => setNomLocal(e.target.value)} /></div>
@@ -419,7 +429,7 @@ export default function Admin() {
             预约定时赛程
           </button>
           {comp.nomEndsAt
-            ? <p className="hint">已预约(截止 {fmtAbs(comp.nomEndsAt)}).<a onClick={() => act("unschedule")}>取消预约</a></p>
+            ? <p className="hint">已预约（截止 {fmtAbs(comp.nomEndsAt)}）.<a onClick={() => act("unschedule")}>取消预约</a></p>
             : <p className="hint">尚未预约定时开赛。</p>}
         </div>
       )}
@@ -427,7 +437,7 @@ export default function Admin() {
       {phase === "group" && (
         <div className="card">
           <h3>③ 小组赛比赛日</h3>
-          <p className="hint">当前：第 <b>{comp.groupMatchday}/{comp.groupMatchdayCount}</b> 比赛日{comp.groupRoundEndsAt ? `(截止 ${fmtAbs(comp.groupRoundEndsAt)})` : ""};每组每轮 {comp.groupPerRound || "自动"} 场；每比赛日最多 {comp.groupDayCap === 0 ? "无限制" : (comp.groupDayCap || 4)} 场。</p>
+          <p className="hint">当前：第 <b>{comp.groupMatchday}/{comp.groupMatchdayCount}</b> 比赛日{comp.groupRoundEndsAt ? `（截止 ${fmtAbs(comp.groupRoundEndsAt)}）` : ""}；每组每轮 {comp.groupPerRound || "自动"} 场；每比赛日最多 {comp.groupDayCap === 0 ? "无限制" : (comp.groupDayCap || 4)} 场。</p>
           <button className="btn solid" disabled={busy} onClick={() => act("advance_group")}>结算本比赛日 → 下一比赛日</button>
           <hr className="sep" />
           <p className="hint">或直接结束整个小组赛（结算所有剩余比赛日并生成淘汰赛）：</p>
@@ -438,7 +448,7 @@ export default function Admin() {
       {phase === "playoff" && (
         <div className="card">
           <h3>③½ 第三名加赛</h3>
-          <p className="hint">{state.playoff?.contenders ?? "?"} 名并列者进行循环赛，争夺最后 <b>{state.playoff?.slots ?? "?"}</b> 个晋级名额{comp.groupRoundEndsAt ? `(截止 ${fmtAbs(comp.groupRoundEndsAt)})` : ""}.</p>
+          <p className="hint">{state.playoff?.contenders ?? "?"} 名并列者进行循环赛，争夺最后 <b>{state.playoff?.slots ?? "?"}</b> 个晋级名额{comp.groupRoundEndsAt ? `（截止 ${fmtAbs(comp.groupRoundEndsAt)}）` : ""}.</p>
           <button className="btn solid" disabled={busy} onClick={() => act("resolve_playoff")}>结算加赛 → 生成淘汰赛</button>
         </div>
       )}
@@ -460,7 +470,7 @@ export default function Admin() {
         <div className="card">
           <h3>赛程时间控制</h3>
           <p className="hint">
-            直接设定 / 延长 / 清除<b>本阶段</b>({phase === "nomination" ? "提名" : phase === "group" ? `小组赛第 ${comp.groupMatchday}/${comp.groupMatchdayCount} 比赛日` : "本淘汰轮"})的截止时间，到点自动推进。
+            直接设定 / 延长 / 清除<b>本阶段</b>（{phase === "nomination" ? "提名" : phase === "group" ? `小组赛第 ${comp.groupMatchday}/${comp.groupMatchdayCount} 比赛日` : "本淘汰轮"}）的截止时间，到点自动推进。
             当前截止：{(phase === "nomination" ? comp.nomEndsAt : phase === "group" ? comp.groupRoundEndsAt : comp.koRoundEndsAt) ? fmtAbs(phase === "nomination" ? comp.nomEndsAt : phase === "group" ? comp.groupRoundEndsAt : comp.koRoundEndsAt) : "无"}.
           </p>
           <div className="row3">
@@ -569,7 +579,7 @@ export default function Admin() {
       <div className="card">
         <h3>投票门禁 · 已由环境变量启用</h3>
         <p className="hint">
-          门禁由 <code>WX_VOTE_GATE</code> 环境变量控制，当前为<b>开启</b>:只有从公众号「回复投票」拿到专属链接的用户能投票，直连网站的人只读；admin 始终用令牌进后台，不受影响。
+          门禁由 <code>WX_VOTE_GATE</code> 环境变量控制，当前为<b>开启</b>：只有从公众号「回复投票」拿到专属链接的用户能投票，直连网站的人只读；admin 始终用令牌进后台，不受影响。
           <br />需关闭请在部署环境移除 / 置空 <code>WX_VOTE_GATE</code> 后重新部署。请确认已配置 <code>WX_TOKEN</code> / <code>PUBLIC_BASE_URL</code> 并把 <code>/api/wx</code> 接入公众号。
         </p>
       </div>
@@ -577,7 +587,7 @@ export default function Admin() {
       {comp && (
         <div className="card">
           <h3>本轮推送文案</h3>
-          <p className="hint"><b>手动群发</b>:每天可在公众号后台群发 1 条，复制下面「群发」文案粘贴即可（群发是同一条发给所有人，无法带每人专属链接，故用「回复投票领链接」引导）。<b>拉取回复</b>:用户给公众号发消息时，自动回复这条（含该用户专属投票链接）——由服务器在被动回复时生成，下面是样例。</p>
+          <p className="hint"><b>手动群发</b>：每天可在公众号后台群发 1 条，复制下面「群发」文案粘贴即可（群发是同一条发给所有人，无法带每人专属链接，故用「回复投票领链接」引导）。<b>拉取回复</b>：用户给公众号发消息时，自动回复这条（含该用户专属投票链接）——由服务器在被动回复时生成，下面是样例。</p>
           <button className="btn solid" disabled={remindBusy} onClick={loadRemind}>{remindBusy ? "生成中…" : "生成本轮推送文案"}</button>
           {remind && (
             <>
@@ -620,7 +630,7 @@ export default function Admin() {
                 <div className="pool-admin">
                   {obs.gaps.rows.map((r: any) => (
                     <div className="prow" key={r.id}>
-                      <div className="meta"><div className="nm">{r.label}</div><div className="sub">{r.bgmId} · 缺 {r.missing.join("、")}</div></div>
+                      <div className="meta"><div className="nm">{r.label}</div><div className="sub">{r.bgmId} · 缺 {r.missing.join("、")}{r.mergedInto ? ` · 已并入「${r.mergedInto}」（不参赛，优先级低）` : ""}</div></div>
                       {phase === "nomination" && (
                         <button className="btn" disabled={busy} onClick={() => { setActive("content"); setEditId(r.id); const p2 = state?.nomination?.pool?.find((x: any) => x.id === r.id); if (p2) { setEName(p2.name || ""); setECn(p2.nameCn || ""); setEEn(p2.nameEn || ""); setEImg(p2.image || ""); setESub(p2.subjectName || ""); setESubJa(p2.subjectNameJa || ""); setESubEn(p2.subjectNameEn || ""); } }}>编辑</button>
                       )}
@@ -761,7 +771,7 @@ export default function Admin() {
         <div className="card wide">
           <h3>异常投票看板</h3>
           <p className="hint">
-            共 {obs.totals?.votes ?? 0} 票(含元数据 {obs.totals?.withMeta ?? 0})、{obs.totals?.matches ?? 0} 场对局。
+            共 {obs.totals?.votes ?? 0} 票（含元数据 {obs.totals?.withMeta ?? 0}）、{obs.totals?.matches ?? 0} 场对局。
             阈值：同设备 ≥{obs.thresholds?.DEVICE_MIN} 身份 · 同 IP ≥{obs.thresholds?.IP_MIN} 身份 · {Math.round((obs.thresholds?.BURST_WINDOW_MS || 0) / 1000)}s 内 ≥{obs.thresholds?.BURST_MIN} 票 · 覆盖 ≥{Math.round((obs.thresholds?.COVERAGE_PCT || 0) * 100)}%。
             {" "}<a onClick={loadObs}>刷新</a>
           </p>
@@ -800,7 +810,7 @@ export default function Admin() {
       {dbgOn && (
         <div className="card">
           <h3>服务端诊断</h3>
-          <p className="hint">查看服务端环境：Node 版本、数据/备份目录、以及对 <code>api.bgm.tv</code> 的系统 DNS 解析（仅解析，不发起连接）。搜索/导入已改为浏览器端直连 Bangumi,服务端不再访问 Bangumi;若在线搜索失败，请在浏览器控制台排查前端请求。</p>
+          <p className="hint">查看服务端环境：Node 版本、数据/备份目录、以及对 <code>api.bgm.tv</code> 的系统 DNS 解析（仅解析，不发起连接）。搜索/导入已改为浏览器端直连 Bangumi，服务端不再访问 Bangumi；若在线搜索失败，请在浏览器控制台排查前端请求。</p>
           <button className="btn solid" disabled={busy || pinging} onClick={ping}>{pinging ? "检查中…" : "运行诊断"}</button>
           {pingResult && <pre className="ping-result">{JSON.stringify(pingResult, null, 2)}</pre>}
         </div>
@@ -846,7 +856,9 @@ export default function Admin() {
       </div>
 
       {msg && <div className={"msg " + (msg.ok ? "ok" : "err")}>{msg.t}</div>}
-      <div className="foot"><a href="/">← 返回投票页</a></div>
+      <div className="foot"><a href="/">← 返回投票页</a>
+        <div className="foot-oss">本站由开源项目 <a href="https://github.com/jiaobenhaimo/saimoe" target="_blank" rel="noopener noreferrer">jiaobenhaimo/saimoe</a> 驱动，以 GPL-3.0 许可发布，欢迎取用与改造。</div>
+      </div>
     </main>
   );
 }

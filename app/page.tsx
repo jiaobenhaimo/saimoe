@@ -112,7 +112,7 @@ function api(path: string, opts: RequestInit = {}) {
   return fetch(path, { ...opts, headers, cache: "no-store" });
 }
 
-// ── optimistic nomination helpers: 服务器慢时先本地生效，再由 load() 对齐真实数据 ──
+// ── optimistic nomination helpers： 服务器慢时先本地生效，再由 load() 对齐真实数据 ──
 function optimisticNomVote(nom: any, candidateId: number): any {
   if (!nom?.pool) return nom;
   const pool = nom.pool.map((p: any) =>
@@ -181,8 +181,10 @@ function Avatar({ c, lg }: { c: Slim | null; lg?: boolean }) {
 /** 缺当前语言时的统一回退顺序：日语 → 中文 → 英语。
  *  （c.name 是 Bangumi 原名，基本即日文名。） */
 const pick = (lang: Lang, zh?: string | null, ja?: string | null, en?: string | null): string => {
-  const want = lang === "zh" ? zh : lang === "en" ? en : ja;
-  return (want || ja || zh || en || "").trim();
+  // 先 trim 再判空：否则「只有空格」的字段会被当成有值，把回退链截断成空字符串
+  const t = (v?: string | null) => (v || "").trim();
+  const want = lang === "zh" ? t(zh) : lang === "en" ? t(en) : t(ja);
+  return want || t(ja) || t(zh) || t(en);
 };
 const primaryName = (c: Slim, lang: Lang) => pick(lang, c.nameCn, c.name, c.nameEn) || c.name;
 /** 这个名字最终取自哪种语言 —— 用来给元素打 lang，让浏览器挑对汉字字形。 */
@@ -327,7 +329,7 @@ export default function Page() {
     return () => window.removeEventListener("pagehide", onHide);
   }, []);
 
-  // 角色搜索：v0 只有 POST /v0/search/characters。把它发成 CORS「简单请求」(text/plain)绕过预检；
+  // 角色搜索：v0 只有 POST /v0/search/characters。把它发成 CORS「简单请求」（text/plain）绕过预检；
   // 能否成功取决于 Bangumi 是否给 POST 附跨域头，失败则提示改用「搜作品名」导入。
   const search = async () => {
     const kw = q.trim(); if (!kw) return;
@@ -367,7 +369,7 @@ export default function Page() {
     finally { setSearching(false); }
   };
 
-  // 浏览器直接调 Bangumi 老接口 GET /search/subject(GET 支持跨域，无需代理/服务端)
+  // 浏览器直接调 Bangumi 老接口 GET /search/subject（GET 支持跨域，无需代理/服务端）
   const searchSubjects = async () => {
     const kw = subQ.trim(); if (!kw) return;
     setSubSearching(true); setImportMsg(""); setSubHits(null); setHits(null); setSearchErr("");
@@ -430,7 +432,7 @@ export default function Page() {
     } catch { return { zh: "", ja: "" }; }
   };
 
-  // ── 日本产地软校验（方案 A）：查 bangumi 作品 tag 是否含「日本」。返回 true/false/null(null=查不了，不阻断) ──
+  // ── 日本产地软校验（方案 A）：查 bangumi 作品 tag 是否含「日本」。返回 true/false/null（null=查不了，不阻断） ──
   const subjectHasJP = async (subjectId: string | number): Promise<boolean | null> => {
     try {
       const d = await bgmJson(
@@ -477,7 +479,7 @@ export default function Page() {
     const rawId = String(h.bgmId).replace(/^c/, "");
     if (rawId) void characterHasJP(rawId).then((jp) => { if (jp === false) setImportMsg(T("jp.warn.char")); }).catch(() => {});
   };
-  // 浏览器直接调 GET(取角色列表 + 逐个补中文名),再交服务端存储；顺带记录作品名。
+  // 浏览器直接调 GET（取角色列表 + 逐个补中文名），再交服务端存储；顺带记录作品名。
   const importSubject = async (subjectId: string, subjectName: string, subjectNameJa = "") => {
     const deny = blockedReason(subjectName);
     if (deny) { setImportMsg(deny); return; }
@@ -509,7 +511,7 @@ export default function Page() {
       }
       const batch = chars.map((c: any) => ({ bgmId: c.bgmId, name: c.name, nameCn: c.nameCn, nameEn: c.nameEn || "", image: c.image, subjectName: c.subjectName }));
       const j = await post({ batch });
-      const jp = await subjectHasJP(subjectId); // 方案 A:软校验，仅在明确非日本时追加提醒
+      const jp = await subjectHasJP(subjectId); // 方案 A：软校验，仅在明确非日本时追加提醒
       const warn = jp === false ? " " + T("jp.warn.subject") : "";
       setImportMsg((j?.error ? T("import.fail", { err: j.error }) : T("import.done", { name: subjectName, added: j?.added ?? 0, imported: chars.length })) + warn);
       await load();
@@ -986,6 +988,11 @@ export default function Page() {
       <div aria-live="polite" className="sr-only">{liveMsg}</div>
       <div className="foot">
         {T("dataFrom")}
+        <div className="foot-oss">
+          {T("foot.oss", { repo: "%%REPO%%" }).split("%%REPO%%").map((seg, i) => (
+            <span key={i}>{i > 0 && <a href="https://github.com/jiaobenhaimo/saimoe" target="_blank" rel="noopener noreferrer">jiaobenhaimo/saimoe</a>}{seg}</span>
+          ))}
+        </div>
       </div>
     </main>
   );

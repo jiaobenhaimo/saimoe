@@ -37,13 +37,13 @@ export interface Competition {
   group_matchday: number | null; group_matchday_count: number | null;
   group_per_round: number | null; group_round_days: number | null; group_round_ends_at: number | null;
   group_day_cap: number | null;   // 每比赛日最多对局数（null=默认 4）
-  group_size: number | null;      // 每组人数(null=默认 4;余数补进弱组成 G+1 人组)
+  group_size: number | null;      // 每组人数（null=默认 4；余数补进弱组成 G+1 人组）
   group_mode: "approval" | "rr" | null; // 小组赛玩法：approval=每人组内投2票取前二（默认）；rr=两两对阵循环赛
   groups_per_day: number | null;  // approval 模式：每个比赛日开放几个组投票（默认 2）
-  group_started_at: number | null; // 小组赛开赛时间（legacy anchor,仅供旧数据兜底用）
+  group_started_at: number | null; // 小组赛开赛时间（legacy anchor，仅供旧数据兜底用）
   // 每个比赛日"真实"开始的时间戳（在 startGroups / advanceGroupMatchday 发生的那一刻记录），
   // 作为"日期"列的事实来源——已发生的比赛日永远读这里，不会因为之后调整节奏（setPace）
-  // 或提前/延后手动结算而回溯性地改写历史日期。尚未到达的比赛日没有 entry,由 mdDate()
+  // 或提前/延后手动结算而回溯性地改写历史日期。尚未到达的比赛日没有 entry，由 mdDate()
   // 用"最后一个已知比赛日 + 当前节奏"来估算（这部分会随节奏调整而更新，这是正确行为）。
   group_matchday_starts: Record<number, number> | null;
   ko_target: number | null;
@@ -68,7 +68,7 @@ export interface Candidate {
 export interface Matchup {
   id: number; competition_id: number; stage: "group" | "knockout" | "playoff"; round_no: number;
   group_no: number | null; slot: number; a_id: number; b_id: number;
-  winner_id: number | null; decided: boolean; matchday?: number | null; bronze?: boolean; // bronze=true: 季军战（半决赛两败者）
+  winner_id: number | null; decided: boolean; matchday?: number | null; bronze?: boolean; // bronze=true： 季军战（半决赛两败者）
 }
 interface NominationVote { competition_id: number; candidate_id: number; voter_id: string; created_at?: number; device_bucket?: string | null; ip?: string | null; }
 interface MatchVote { matchup_id: number; voter_id: string; choice_id: number; created_at?: number; device_bucket?: string | null; ip?: string | null; }
@@ -440,6 +440,18 @@ export function topLevel(db: DB, cid: number): Candidate[] {
   return list.filter((c) => c.parent_id == null || !ids.has(c.parent_id));
 }
 
+/** 移除预约的维护计划：清掉时间窗与公告文案，但不动「立即停投」开关
+ *  （手动停投和预约是两件事：取消计划不应把正在进行的维护也解除）。 */
+export function clearFreezePlan(cid: number): void {
+  const db = readDb();
+  const c = db.competitions.find((x) => x.id === cid);
+  if (!c) return;
+  c.freeze_from = null;
+  c.freeze_to = null;
+  c.freeze_note = null;
+  writeDb(db);
+}
+
 /** 合并组：上级 id → 自身 + 全部子角色 id。 */
 export function mergeGroups(db: DB, cid: number): Map<number, number[]> {
   const list = db.candidates.filter((c) => c.competition_id === cid);
@@ -623,7 +635,7 @@ const COMMENT_MAX = 300;
 function addCommentOnce(cid: number, matchupId: number, voterId: string, name: string, text: string): { ok: true; comment: Comment } | { error: string } {
   const t = (text || "").trim();
   if (!t) return { error: "评论不能为空。" };
-  if (t.length > COMMENT_MAX) return { error: `评论过长(最多 ${COMMENT_MAX} 字)。` };
+  if (t.length > COMMENT_MAX) return { error: `评论过长（最多 ${COMMENT_MAX} 字）。` };
   const db = readDb();
   if (matchupId) {
     const m = db.matchups.find((x) => x.id === matchupId && x.competition_id === cid);

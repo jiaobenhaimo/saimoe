@@ -17,6 +17,7 @@ const D: Record<string, Entry> = {
   },
   "rulesLink": { zh: "赛制介绍 →", en: "Rules →", ja: "ルール →" },
   "dataFrom": { zh: "数据来自 bangumi.tv", en: "Data from bangumi.tv", ja: "データ提供：bangumi.tv" },
+  "foot.oss": { zh: "本站由开源项目 {repo} 驱动，以 GPL-3.0 许可发布，欢迎取用与改造。", en: "Runs on the open-source project {repo}, released under the GPL-3.0 licence — feel free to use and adapt it.", ja: "本サイトはオープンソースプロジェクト {repo} で動いています。GPL-3.0 ライセンスで公開しており、自由に利用・改変できます。" },
   "gate.readonly": { zh: "只读模式：请在公众号回复「投票」获取你的专属投票链接，再回到本页投票。", en: "Read-only: reply “投票” in the Official Account to get your personal voting link, then come back to vote.", ja: "閲覧のみ：公式アカウントで「投票」と返信して専用投票リンクを取得してから投票してください。" },
   "gate.linkErr": { zh: "投票链接无效或已过期，请在公众号重新回复「投票」获取新链接。", en: "Voting link invalid or expired — reply “投票” in the Official Account for a fresh link.", ja: "投票リンクが無効／期限切れです。公式アカウントで「投票」と再返信して新しいリンクを取得してください。" },
 

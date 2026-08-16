@@ -5,7 +5,7 @@ import { rateLimited } from "@/lib/ratelimit";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Bangumi 代理。浏览器直连 api.bgm.tv 在部分网络下很慢甚至连不上(跨域被拦、丢包),
+// Bangumi 代理。浏览器直连 api.bgm.tv 在部分网络下很慢甚至连不上（跨域被拦、丢包）,
 // 前端会「直连 + 走这里」两条通道赛跑，取先返回的那条。服务端（东京）到 Bangumi 通常
 // 更快更稳，于是慢网络的用户也能搜出结果。
 // 只读、只转发白名单端点，并做短时缓存 + 限流，避免被当成刷接口的跳板。

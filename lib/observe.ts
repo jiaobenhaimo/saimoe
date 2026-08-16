@@ -95,7 +95,7 @@ export function detectAnomalies(cid: number): {
     }
     if (best >= BURST_MIN)
       flags.push({ type: "burst", by: "voter", key: voter, keyShort: short(voter), votes: tsArr.length,
-        detail: `该身份在 ${Math.round(BURST_WINDOW_MS / 1000)} 秒内投出 ${best} 票(共 ${tsArr.length} 票)，疑似脚本` });
+        detail: `该身份在 ${Math.round(BURST_WINDOW_MS / 1000)} 秒内投出 ${best} 票（共 ${tsArr.length} 票），疑似脚本` });
   });
 
   // 4) coverage: one identity voted on nearly every match
@@ -110,7 +110,7 @@ export function detectAnomalies(cid: number): {
       const pct = s.size / totalMatches;
       if (pct >= COVERAGE_PCT)
         flags.push({ type: "coverage", by: "voter", key: voter, keyShort: short(voter), votes: s.size,
-          detail: `该身份投了 ${s.size}/${totalMatches} 场(${Math.round(pct * 100)}%),覆盖率异常高` });
+          detail: `该身份投了 ${s.size}/${totalMatches} 场（${Math.round(pct * 100)}%），覆盖率异常高` });
     });
   }
 
@@ -235,13 +235,14 @@ export function liveTallies(cid: number): {
 export function dataGaps(cid: number): {
   total: number;
   counts: { nameZh: number; nameJa: number; nameEn: number; subjectZh: number; subjectJa: number; subjectEn: number; image: number };
-  rows: { id: number; bgmId: string; label: string; missing: string[] }[];
+  rows: { id: number; bgmId: string; label: string; missing: string[]; mergedInto: string | null }[];
 } {
   const db = readDb();
   const list = db.candidates.filter((c) => c.competition_id === cid);
   const counts = { nameZh: 0, nameJa: 0, nameEn: 0, subjectZh: 0, subjectJa: 0, subjectEn: 0, image: 0 };
   const has = (v?: string | null) => !!(v && String(v).trim());
-  const rows: { id: number; bgmId: string; label: string; missing: string[] }[] = [];
+  const nameById = new Map(list.map((c) => [c.id, c.name_cn || c.name || c.bgm_id]));
+  const rows: { id: number; bgmId: string; label: string; missing: string[]; mergedInto: string | null }[] = [];
   for (const c of list) {
     const missing: string[] = [];
     if (!has(c.name_cn)) { missing.push("中文名"); counts.nameZh++; }
@@ -251,9 +252,13 @@ export function dataGaps(cid: number): {
     if (!has(c.subject_name_ja)) { missing.push("作品日文"); counts.subjectJa++; }
     if (!has(c.subject_name_en)) { missing.push("作品英文"); counts.subjectEn++; }
     if (!has(c.image)) { missing.push("照片"); counts.image++; }
-    if (missing.length) rows.push({ id: c.id, bgmId: c.bgm_id, label: c.name_cn || c.name || c.bgm_id, missing });
+    if (missing.length) rows.push({
+      id: c.id, bgmId: c.bgm_id, label: c.name_cn || c.name || c.bgm_id, missing,
+      // 已并入别人的子角色不参加分组/淘汰赛，补资料的优先级低，标出来并排到最后
+      mergedInto: c.parent_id != null ? (nameById.get(c.parent_id) || null) : null,
+    });
   }
   // 缺得最多的排前面，方便优先补
-  rows.sort((a, b) => b.missing.length - a.missing.length || a.label.localeCompare(b.label));
+  rows.sort((a, b) => Number(!!a.mergedInto) - Number(!!b.mergedInto) || b.missing.length - a.missing.length || a.label.localeCompare(b.label));
   return { total: list.length, counts, rows: rows.slice(0, 300) };
 }

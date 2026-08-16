@@ -59,8 +59,8 @@ export function buildRoundReminder(opts: ReminderOpts = {}): { text: string; has
         for (const m of cur.matches) L.push(`· ${nm(m.a)} vs ${nm(m.b)}`);
       }
       const up: string[] = [];
-      for (const d of sc.group.filter((d) => d.matchday > cur.matchday)) up.push(`· 第 ${d.matchday} 比赛日(${fmt(d.start)} 起)`);
-      for (const r of sc.knockout) up.push(`· ${koZh(r.label)}(${r.start ? fmt(r.start) : "待定"} 起)`);
+      for (const d of sc.group.filter((d) => d.matchday > cur.matchday)) up.push(`· 第 ${d.matchday} 比赛日（${fmt(d.start)} 起）`);
+      for (const r of sc.knockout) up.push(`· ${koZh(r.label)}（${r.start ? fmt(r.start) : "待定"} 起）`);
       if (up.length && upN) { L.push("", "接下来："); L.push(...up.slice(0, upN)); }
     }
   } else if (comp.phase === "knockout") {
@@ -73,7 +73,7 @@ export function buildRoundReminder(opts: ReminderOpts = {}): { text: string; has
       L.push("", "本轮对阵：");
       for (const m of cur.matches) L.push(`· ${nm(m.a)} vs ${nm(m.b)}`);
       const later = sc.knockout.filter((r) => r.contestants < cur.contestants);
-      if (later.length && upN) { L.push("", "接下来："); L.push(...later.slice(0, upN).map((r) => `· ${koZh(r.label)}(${r.start ? fmt(r.start) : "待定"} 起)`)); }
+      if (later.length && upN) { L.push("", "接下来："); L.push(...later.slice(0, upN).map((r) => `· ${koZh(r.label)}（${r.start ? fmt(r.start) : "待定"} 起）`)); }
     }
   } else if (comp.phase === "playoff") {
     hasRound = true;

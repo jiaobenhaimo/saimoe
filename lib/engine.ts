@@ -594,19 +594,19 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
     .filter((r) => r.votes >= minVotes)
     .sort((a, b) => b.votes - a.votes || a.id - b.id);
   if (ranked.length < size) throw new Error(minVotes > 0
-    ? `达到最低提名票(${minVotes})的角色只有 ${ranked.length} 个，不足 ${size} 个。`
+    ? `达到最低提名票（${minVotes}）的角色只有 ${ranked.length} 个，不足 ${size} 个。`
     : `提名池只有 ${ranked.length} 个角色，不足 ${size} 个。`);
 
-  // 并列全取：凑满 size,但票数与第 size 名并列的角色一并纳入（如取前 20 遇并列 → 可能取 23）。
+  // 并列全取：凑满 size，但票数与第 size 名并列的角色一并纳入（如取前 20 遇并列 → 可能取 23）。
   const cutoffVotes = ranked[size - 1].votes;
   const qualifiers = ranked.filter((r) => r.votes >= cutoffVotes); // a >= size
   const a = qualifiers.length;
-  if (a < 4) throw new Error("晋级人数不足 4,无法组成小组。");
+  if (a < 4) throw new Error("晋级人数不足 4，无法组成小组。");
 
   const seedOfId = new Map<number, number>();
   qualifiers.forEach((r, i) => seedOfId.set(r.id, i)); // 排位赛种子 = 提名排名（0 最强）
 
-  // 每组人数 G(默认 4).前 base 名分成整齐的 G 人组，余数补进最弱的若干组 → 那些组变 G+1 人。
+  // 每组人数 G（默认 4）。前 base 名分成整齐的 G 人组，余数补进最弱的若干组 → 那些组变 G+1 人。
   const G = Math.max(2, Math.floor(groupSize > 0 ? groupSize : (comp.group_size ?? 4)));
   const c = a % G;
   const base = a - c;
@@ -616,7 +616,7 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   //   auto-advancers = 2·groups; bracket = nextPow2(2·groups); the rest must cover the fill.
   const koCheck = nextPow2(2 * numGroups);
   if (a < koCheck)
-    throw new Error(`当前配置无法凑成淘汰赛：${a} 人分 ${numGroups} 组，各组前 2 名共 ${2 * numGroups} 人，需要凑满 ${koCheck} 强，可补位人数不足。请增加晋级人数或调大每组人数(如 ${koCheck} 人以上，或每组 ${Math.max(4, Math.ceil(a / Math.max(1, Math.floor(koCheck / 2))))} 人).`);
+    throw new Error(`当前配置无法凑成淘汰赛：${a} 人分 ${numGroups} 组，各组前 2 名共 ${2 * numGroups} 人，需要凑满 ${koCheck} 强，可补位人数不足。请增加晋级人数或调大每组人数（如 ${koCheck} 人以上，或每组 ${Math.max(4, Math.ceil(a / Math.max(1, Math.floor(koCheck / 2))))} 人）。`);
 
   // #2: a fresh draw must never inherit approval votes from a previous (undone) grouping.
   db.approvalVotes = db.approvalVotes.filter((v) => v.competition_id !== cid);
@@ -644,7 +644,7 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   comp.target_size = a;
   comp.groups_count = numGroups;
   comp.group_size = G;
-  comp.ko_target = nextPow2(2 * numGroups); // ≤8 组→16,9-16 组→32,以此类推
+  comp.ko_target = nextPow2(2 * numGroups); // ≤8 组→16,9-16 组→32，以此类推
   comp.group_started_at = Date.now(); // legacy 锚点，仅供旧数据兜底
   comp.group_matchday_starts = { 1: comp.group_started_at }; // 事实来源：第 1 比赛日真实开始的时刻
   comp.nom_ends_at = null;
@@ -711,7 +711,7 @@ export function advanceGroupMatchday(cid: number): { done: boolean; message: str
   }
   comp.group_round_ends_at = null;
   writeDb(db);
-  return { done: true, message: `已结算最后一个比赛日(第 ${cur}/${count})。现在可以开淘汰赛。` };
+  return { done: true, message: `已结算最后一个比赛日（第 ${cur}/${count}）。现在可以开淘汰赛。` };
 }
 
 /** group → knockout (World Cup): winners + runners-up + best remaining → nextPow2(2×组数).
@@ -740,7 +740,7 @@ export function startKnockout(cid: number) {
     const members = db.candidates.filter((cd) => cd.competition_id === cid && cd.group_no === g);
     const stats: Row[] = members.map((mem) => {
       if (approval) {
-        // 投票晋级制：以组内得票数作为排名依据（等价地塞进 wins/vf,复用下方同一套排序/补位）
+        // 投票晋级制：以组内得票数作为排名依据（等价地塞进 wins/vf，复用下方同一套排序/补位）
         const a2 = appr!.get(mem.id) || 0;
         return { id: mem.id, wins: a2, vf: a2, votes: nomCount.get(mem.id) || 0, groupRank: 0 };
       }
@@ -1107,7 +1107,7 @@ export function setNominationRules(cid: number, userLimit: number, minVotes: num
   writeDb(db);
 }
 
-/** 直接设定/延长/清除当前阶段的截止时间(hours<=0 表示清除)。用于运营手动调度控制。 */
+/** 直接设定/延长/清除当前阶段的截止时间（hours<=0 表示清除）。用于运营手动调度控制。 */
 export function setPhaseDeadline(cid: number, hours: number) {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
@@ -1128,7 +1128,7 @@ export function setGroupDayCap(cid: number, cap: number): void {
   writeDb(db);
 }
 
-/** 调整"节奏":后续小组赛比赛日的天数 / 后续淘汰赛每轮的小时数（0 表示不改）。 */
+/** 调整"节奏"：后续小组赛比赛日的天数 / 后续淘汰赛每轮的小时数（0 表示不改）。 */
 export function setPace(cid: number, groupRoundDays: number, roundHours: number) {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);

@@ -709,3 +709,15 @@ html:lang(zh-CN) body, html:lang(zh) body {
     "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "YuGothic",
     "Noto Sans JP", "Source Han Sans JP", "Meiryo", sans-serif;
 }
+
+/* 日语页面里混排的中文名（角色只有中文名时）也要用中文字体，
+   否则「说/门/汉」这类简体字会被套上日文字形。与上面的 [lang="ja"] 对称。 */
+[lang="zh-CN"], [lang="zh"] {
+  font-family: -apple-system, BlinkMacSystemFont, system-ui,
+    "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif;
+}
+
+/* 页脚的开源声明：比"数据来源"再轻一档，不抢视线 */
+.foot-oss { margin-top: 6px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.foot-oss a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
+.foot-oss a:hover { color: var(--rose-deep); }
