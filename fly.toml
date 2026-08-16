@@ -1,23 +1,58 @@
-# fly.toml app configuration file generated for saimoe on 2026-08-16T08:24:25Z
+# fly.toml app configuration file for saimoe
 #
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+# ⚠️ KEEP THIS APP AT EXACTLY 1 MACHINE.
+# The data store is a single JSON file on disk (lib/db.ts), correct for ONE process only.
+# Two Machines do not share a volume, so each would keep its own separate tournament:
+# ballots would land on whichever Machine served the request and neither copy would be
+# the real result — and the two can't be merged afterwards.
+#     fly scale count 1 -a saimoe
 #
+# The round scheduler (instrumentation.ts) is a 60s in-process timer. A stopped Machine
+# runs no timer, so auto-stop would silently freeze the bracket mid-tournament. Hence
+# auto_stop_machines = 'off' with min_machines_running = 1.
 
 app = 'saimoe'
 primary_region = 'nrt'
 
 [build]
 
+[env]
+  PORT = '8080'
+  TZ = 'Asia/Shanghai'          # deadline / 公众号 reminder text renders in local time
+  API_ENABLED = 'true'
+  DATA_DIR = '/data'            # live JSON store — on the persistent volume
+  BACKUP_DIR = '/data/backups'  # snapshots; lib/db.ts auto-restores from the newest valid one
+  BACKUP_KEEP = '48'
+  # Secrets go in `fly secrets set`, never here (this file is committed):
+  #   ADMIN_TOKEN, SESSION_SECRET, PUBLIC_BASE_URL, and WX_TOKEN / WX_VOTE_GATE if using the 公众号 gate.
+
+# Persistent volume. Without it the Machine filesystem is ephemeral and every restart
+# or redeploy starts an empty tournament.
+# Create once:  fly volumes create data --size 1 --region nrt -a saimoe
+[[mounts]]
+  source = 'data'
+  destination = '/data'
+
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = 'stop'
+  auto_stop_machines = 'off'   # never stop: the scheduler must keep ticking
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ['app']
 
+# Liveness probe. /api/health deliberately does not touch the data file, so a slow disk
+# can't trigger a restart loop during a voting spike.
+[[http_service.http_checks]]
+  interval = '30s'
+  timeout = '5s'
+  grace_period = '20s'
+  method = 'GET'
+  path = '/api/health'
+
 [[vm]]
-  memory = '1gb'
+  # Single memory key only — the generated file had both memory = '1gb' and
+  # memory_mb = 256, which conflict. 512MB is a safe size for the Next standalone server.
+  memory = '512mb'
   cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 256
