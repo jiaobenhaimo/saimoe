@@ -238,7 +238,16 @@ export function getState(voterId: string) {
     const runnerUp = comp.phase === "finished" && finalM && finalM.decided ? slim(cmap.get(finalM.winner_id === finalM.a_id ? finalM.b_id : finalM.a_id)) : null;
     const third = bronzeM && bronzeM.decided ? slim(cmap.get(bronzeM.winner_id!)) : null;
     const fourth = bronzeM && bronzeM.decided ? slim(cmap.get(bronzeM.winner_id === bronzeM.a_id ? bronzeM.b_id : bronzeM.a_id)) : null;
-    result.knockout = { rounds, champion, runnerUp, third, fourth, finished: comp.phase === "finished", nextLabel: comp.phase === "knockout" ? (lastIsBronze ? "final" : (lastCount > 1 ? roundLabel(lastCount) : null)) : null };
+    // nextLabel: name the round that opens NEXT. Plain single-elimination lets us derive that
+    // from the current round's match count (each match sends one winner up), but the bronze
+    // match breaks that invariant: after a 2-match semifinal the losers play 季军战 first and
+    // the final is deferred (see advanceKnockout), so a 2-match round must report "bronze".
+    const nextLabel = comp.phase !== "knockout" ? null
+      : lastIsBronze ? "final"
+      : lastCount <= 1 ? null
+      : (lastCount === 2 && comp.third_place !== false) ? "bronze"
+      : roundLabel(lastCount);
+    result.knockout = { rounds, champion, runnerUp, third, fourth, finished: comp.phase === "finished", nextLabel };
   } else if (comp.champion_id) {
     result.knockout = { rounds: [], champion: slim(cmap.get(comp.champion_id)), finished: comp.phase === "finished" };
   }
