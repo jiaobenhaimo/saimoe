@@ -3,7 +3,7 @@ import { adminOk } from "@/lib/adminauth";
 import { ensureSchema, readAudit } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition } from "@/lib/engine";
-import { detectAnomalies, projectTimeline, liveTallies } from "@/lib/observe";
+import { detectAnomalies, projectTimeline, liveTallies, dataGaps } from "@/lib/observe";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,5 +23,6 @@ export async function GET(req: NextRequest) {
   const { flags, thresholds, totals } = detectAnomalies(comp.id);
   const timeline = projectTimeline(comp.id);
   const tallies = liveTallies(comp.id);
-  return NextResponse.json({ competition: { id: comp.id, phase: comp.phase }, flags, thresholds, totals, timeline, tallies, audit });
+  const gaps = dataGaps(comp.id);
+  return NextResponse.json({ competition: { id: comp.id, phase: comp.phase }, flags, thresholds, totals, timeline, tallies, gaps, audit });
 }

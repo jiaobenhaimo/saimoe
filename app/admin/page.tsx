@@ -597,6 +597,42 @@ export default function Admin() {
       {/* ── 内容管理 ── */}
       {comp && (<div className="admin-section">🗂️ 内容管理</div>)}
 
+      {comp && obs?.gaps && (
+        <div className="card wide">
+          <h3>资料缺失盘点 {obs.gaps.rows.length > 0
+            ? <span className="gstatus" style={{ color: "var(--danger)" }}>{obs.gaps.rows.length} 个角色待补</span>
+            : <span className="gstatus" style={{ color: "var(--ok)" }}>全部完整</span>}</h3>
+          <p className="hint">开赛前把缺的补齐：三语名字缺失时前端会按「日语 → 中文 → 英语」回退，缺照片则显示首字母占位。{" "}<a onClick={loadObs}>刷新</a></p>
+          <div className="tally-grid">
+            {([["中文名", obs.gaps.counts.nameZh], ["日文名", obs.gaps.counts.nameJa], ["英文名", obs.gaps.counts.nameEn],
+               ["作品中文", obs.gaps.counts.subjectZh], ["作品日文", obs.gaps.counts.subjectJa], ["作品英文", obs.gaps.counts.subjectEn],
+               ["照片", obs.gaps.counts.image]] as [string, number][]).map(([k, v]) => (
+              <div className="tally-col" key={k}>
+                <div className="tally-h">{k}</div>
+                <div className={"tally-row" + (v > 0 ? " adv" : "")}><span className="nm">缺失</span><span className="v num">{v}</span></div>
+              </div>
+            ))}
+          </div>
+          {obs.gaps.rows.length > 0 && (
+            <details className="done-fold" style={{ marginTop: 12 }}>
+              <summary>逐个查看（{obs.gaps.rows.length}）· 缺得最多的排在前面</summary>
+              <div className="fold-body">
+                <div className="pool-admin">
+                  {obs.gaps.rows.map((r: any) => (
+                    <div className="prow" key={r.id}>
+                      <div className="meta"><div className="nm">{r.label}</div><div className="sub">{r.bgmId} · 缺 {r.missing.join("、")}</div></div>
+                      {phase === "nomination" && (
+                        <button className="btn" disabled={busy} onClick={() => { setActive("content"); setEditId(r.id); const p2 = state?.nomination?.pool?.find((x: any) => x.id === r.id); if (p2) { setEName(p2.name || ""); setECn(p2.nameCn || ""); setEEn(p2.nameEn || ""); setEImg(p2.image || ""); setESub(p2.subjectName || ""); setESubJa(p2.subjectNameJa || ""); setESubEn(p2.subjectNameEn || ""); } }}>编辑</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </details>
+          )}
+        </div>
+      )}
+
       {comp && (
         <div className="card wide">
           <h3>提名黑名单</h3>

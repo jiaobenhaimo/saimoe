@@ -52,7 +52,11 @@ html, body { margin: 0; padding: 0; }
 body {
   background: var(--paper);
   color: var(--ink);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "PingFang SC", "Hiragino Sans GB", "Yu Gothic", "Microsoft YaHei", sans-serif;
+  /* 默认（中文）：拉丁走系统字体，汉字走简中字体。
+     注意 "Hiragino Sans GB" 名字里有 Hiragino，但 GB = 国标，它是**中文**字体，
+     放在日文字体前面会让日语页面的汉字用中文字形，所以只留在中文栈里。 */
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
+    "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
@@ -685,3 +689,23 @@ body { font-size: 15px; line-height: 1.6; }
 .results.pool .prow .meta { min-width: 0; }
 .results.pool .prow .meta .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .results.pool .prow .meta .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+
+/* ═══════════ 中日字形：按语言切换字体栈 ═══════════ */
+/* 中日共用汉字的字形不同（直/骨/今/令/雪/海…）。同一套字体栈无法同时正确，
+   所以按 <html lang> 分流：日语页面必须让日文字体排在简中字体之前。 */
+html:lang(ja) body, :lang(ja) {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
+    "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "YuGothic",
+    "Noto Sans JP", "Source Han Sans JP", "Meiryo", sans-serif;
+}
+html:lang(zh-CN) body, html:lang(zh) body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
+    "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif;
+}
+/* 中文/英文页面里混排的日文原名（角色名回退到日语时），单独用日文字体，
+   否则「今」「直」这类字会显示成中文字形。 */
+[lang="ja"] {
+  font-family: -apple-system, BlinkMacSystemFont, system-ui,
+    "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "YuGothic",
+    "Noto Sans JP", "Source Han Sans JP", "Meiryo", sans-serif;
+}

@@ -229,3 +229,31 @@ export function liveTallies(cid: number): {
     .map((m) => ({ label: m.stage === "group" ? `${groupLabel((m.group_no ?? 0))}组` : m.stage, a: nm(m.a_id), va: count.get(m.id + ":" + m.a_id) || 0, b: nm(m.b_id), vb: count.get(m.id + ":" + m.b_id) || 0, decided: m.decided }));
   return { mode: "match", matches };
 }
+
+/** 资料缺失盘点（admin）。开赛前用来把「缺中文名/缺英文名/缺日文原名/缺作品名/缺图」的角色
+ *  一次列出来，而不是等它们出现在赛程页上才发现。 */
+export function dataGaps(cid: number): {
+  total: number;
+  counts: { nameZh: number; nameJa: number; nameEn: number; subjectZh: number; subjectJa: number; subjectEn: number; image: number };
+  rows: { id: number; bgmId: string; label: string; missing: string[] }[];
+} {
+  const db = readDb();
+  const list = db.candidates.filter((c) => c.competition_id === cid);
+  const counts = { nameZh: 0, nameJa: 0, nameEn: 0, subjectZh: 0, subjectJa: 0, subjectEn: 0, image: 0 };
+  const has = (v?: string | null) => !!(v && String(v).trim());
+  const rows: { id: number; bgmId: string; label: string; missing: string[] }[] = [];
+  for (const c of list) {
+    const missing: string[] = [];
+    if (!has(c.name_cn)) { missing.push("中文名"); counts.nameZh++; }
+    if (!has(c.name)) { missing.push("日文名"); counts.nameJa++; }
+    if (!has(c.name_en)) { missing.push("英文名"); counts.nameEn++; }
+    if (!has(c.subject_name)) { missing.push("作品中文"); counts.subjectZh++; }
+    if (!has(c.subject_name_ja)) { missing.push("作品日文"); counts.subjectJa++; }
+    if (!has(c.subject_name_en)) { missing.push("作品英文"); counts.subjectEn++; }
+    if (!has(c.image)) { missing.push("照片"); counts.image++; }
+    if (missing.length) rows.push({ id: c.id, bgmId: c.bgm_id, label: c.name_cn || c.name || c.bgm_id, missing });
+  }
+  // 缺得最多的排前面，方便优先补
+  rows.sort((a, b) => b.missing.length - a.missing.length || a.label.localeCompare(b.label));
+  return { total: list.length, counts, rows: rows.slice(0, 300) };
+}

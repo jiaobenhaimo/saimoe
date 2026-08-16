@@ -185,6 +185,15 @@ const pick = (lang: Lang, zh?: string | null, ja?: string | null, en?: string | 
   return (want || ja || zh || en || "").trim();
 };
 const primaryName = (c: Slim, lang: Lang) => pick(lang, c.nameCn, c.name, c.nameEn) || c.name;
+/** 这个名字最终取自哪种语言 —— 用来给元素打 lang，让浏览器挑对汉字字形。 */
+const srcLang = (c: Slim | null, lang: Lang): string => {
+  if (!c) return lang === "zh" ? "zh-CN" : lang;
+  const want = lang === "zh" ? c.nameCn : lang === "en" ? c.nameEn : c.name;
+  if (want && want.trim()) return lang === "zh" ? "zh-CN" : lang;
+  if (c.name && c.name.trim()) return "ja";          // Bangumi 原名基本是日文
+  if (c.nameCn && c.nameCn.trim()) return "zh-CN";
+  return "en";
+};
 const label = (c: Slim | null, lang: Lang) => (c ? primaryName(c, lang) : "—");
 // 副行只放「所属作品」。中文/英文界面下不再补显日文角色名：
 // 每行都挂一串日文名把列表挤得很满，而且用户看的是中文名。
@@ -221,6 +230,11 @@ function useLang(): [Lang, (l: Lang) => void] {
       setLang(n.startsWith("ja") ? "ja" : n.startsWith("zh") ? "zh" : "en");
     } catch {}
   }, []);
+  // 让 <html lang> 跟着界面语言走。这不只是无障碍问题：中日共用汉字的字形不同
+  // （直/骨/今/令/雪…），浏览器要靠 lang 才能挑对字形，读屏也要靠它选对语音。
+  useEffect(() => {
+    try { document.documentElement.lang = lang === "zh" ? "zh-CN" : lang === "ja" ? "ja" : "en"; } catch {}
+  }, [lang]);
   const set = (l: Lang) => { setLang(l); try { localStorage.setItem("saimoe_lang", l); } catch {} };
   return [lang, set];
 }
@@ -785,7 +799,7 @@ export default function Page() {
                 <div className="prow" key={p.id}>
                   <div className="rankn num">{i + 1}</div>
                   <Avatar c={p} />
-                  <div className="meta"><div className="nm">{label(p, lang)}</div>
+                  <div className="meta"><div className="nm" lang={srcLang(p, lang)}>{label(p, lang)}</div>
                     <div className="sub">{sub(p, lang)}{(p as any).mergedInto ? " · " + T("nom.mergedInto", { name: (p as any).mergedInto }) : ""}</div></div>
                   <div className="votecell num"><div className="c">{p.votes}</div><div className="l">{T("nom.voteLabel")}</div></div>
                   <button className={"btn" + (p.voted ? " solid" : "") + (nomPending.has("n" + p.id) ? " pending" : "") + (justDone.has("n" + p.id) ? " flash" : "")}
@@ -808,7 +822,7 @@ export default function Page() {
               <div className="prow" key={p.id}>
                 <div className="rankn num">{i + 1}</div>
                 <Avatar c={p} />
-                <div className="meta"><div className="nm">{label(p, lang)}</div><div className="sub">{sub(p, lang)}</div></div>
+                <div className="meta"><div className="nm" lang={srcLang(p, lang)}>{label(p, lang)}</div><div className="sub">{sub(p, lang)}</div></div>
                 <div className="votecell num"><div className="c">{p.votes}</div><div className="l">{T("nom.voteLabel")}</div></div>
               </div>
             ))}
@@ -998,14 +1012,14 @@ function MatchCard({ m, onVote, ko, lang, compact, busy, flash }: { m: Match; on
       <div className="versus">
         <button type="button" className={sideCls(m.a?.id)} onClick={() => clickable && m.a && onVote(m.id, m.a.id)} disabled={!m.a}>
           <Avatar c={m.a} lg />
-          <span className="nm">{label(m.a, lang)}</span>{sub(m.a, lang) && <span className="cn">{sub(m.a, lang)}</span>}
+          <span className="nm" lang={srcLang(m.a, lang)}>{label(m.a, lang)}</span>{sub(m.a, lang) && <span className="cn">{sub(m.a, lang)}</span>}
           <span className="v num">{numA}</span>
           {m.decided && m.winnerId === m.a?.id && <span className="adv-tag">{T("match.advance")}</span>}
         </button>
         <div className="vs">VS</div>
         <button type="button" className={sideCls(m.b?.id)} onClick={() => clickable && m.b && onVote(m.id, m.b.id)} disabled={!m.b}>
           <Avatar c={m.b} lg />
-          <span className="nm">{label(m.b, lang)}</span>{sub(m.b, lang) && <span className="cn">{sub(m.b, lang)}</span>}
+          <span className="nm" lang={srcLang(m.b, lang)}>{label(m.b, lang)}</span>{sub(m.b, lang) && <span className="cn">{sub(m.b, lang)}</span>}
           <span className="v num">{numB}</span>
           {m.decided && m.winnerId === m.b?.id && <span className="adv-tag">{T("match.advance")}</span>}
         </button>

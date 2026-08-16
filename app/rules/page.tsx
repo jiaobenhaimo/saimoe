@@ -12,6 +12,11 @@ function useLang(): [Lang, (l: Lang) => void] {
       setLang(n.startsWith("ja") ? "ja" : n.startsWith("zh") ? "zh" : "en");
     } catch {}
   }, []);
+  // 让 <html lang> 跟着界面语言走。这不只是无障碍问题：中日共用汉字的字形不同
+  // （直/骨/今/令/雪…），浏览器要靠 lang 才能挑对字形，读屏也要靠它选对语音。
+  useEffect(() => {
+    try { document.documentElement.lang = lang === "zh" ? "zh-CN" : lang === "ja" ? "ja" : "en"; } catch {}
+  }, [lang]);
   const set = (l: Lang) => { setLang(l); try { localStorage.setItem("saimoe_lang", l); } catch {} };
   return [lang, set];
 }
