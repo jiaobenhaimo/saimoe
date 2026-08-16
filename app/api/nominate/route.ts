@@ -3,8 +3,9 @@ import { ensureSchema, addCandidate, removeOwnCandidate, sweepOwnOrphans } from 
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition } from "@/lib/engine";
 import { getVoterId } from "@/lib/voter";
+import { getSid } from "@/lib/sid";
 import { rateLimited } from "@/lib/ratelimit";
-import { gateOn } from "@/lib/wxsession";
+import { gateOn, verifyToken, VOTER_COOKIE } from "@/lib/wxsession";
 
 function clientIp(req: NextRequest): string {
   return (req.headers.get("x-forwarded-for") || "").split(",")[0]?.trim() || "unknown";
@@ -20,12 +21,18 @@ export async function POST(req: NextRequest) {
     // off (no strong identity, and legit voters share IPs behind NAT).
     if (rateLimited("nominate:" + clientIp(req), gateOn() ? 30 : 200, 60_000))
       return NextResponse.json({ error: "操作太频繁，请稍后再试。" }, { status: 429 });
+    // per-identity cap on the unforgeable sid (rotating x-fp can't reset it)
+    if (rateLimited("nomv:" + (await getSid()), gateOn() ? 30 : 120, 60_000))
+      return NextResponse.json({ error: "提名太频繁，请稍后再试。" }, { status: 429 });
     ensureSchema();
     const comp = getActiveCompetition();
     if (!comp) return NextResponse.json({ error: "还没有进行中的比赛。" }, { status: 400 });
     if (comp.phase !== "nomination") return NextResponse.json({ error: "提名阶段已结束。" }, { status: 400 });
 
     const vid = await getVoterId();
+    // WeChat gate: when on, only users arriving via a per-user 公众号 link may modify the pool.
+    if (gateOn() && !verifyToken(req.cookies.get(VOTER_COOKIE)?.value))
+      return NextResponse.json({ error: "请在公众号回复「投票」获取链接后再提名。", needLink: true }, { status: 403 });
     const body = await req.json();
 
     // ── page-close beacon: drop the caller's own un-voted (0-vote) self-nominations ──

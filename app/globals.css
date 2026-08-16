@@ -582,12 +582,6 @@ body { font-size: 15px; line-height: 1.6; }
 .more-fold > summary::before { content: "▸"; font-size: 10px; transition: transform .15s ease; }
 .more-fold[open] > summary::before { transform: rotate(90deg); }
 
-/* ═══════════ Admin: two-column layout on wide screens (item 3) ═══════════ */
-@media (min-width: 900px) {
-  .admin .admin-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
-  .admin .admin-cards > .admin-section { grid-column: 1 / -1; }
-  .admin .admin-cards > .card { margin: 0; }
-}
 /* admin live tallies (item 1) */
 .tally-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
 .tally-col { border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
@@ -596,3 +590,21 @@ body { font-size: 15px; line-height: 1.6; }
 .tally-row:first-of-type { border-top: none; }
 .tally-row.adv { background: var(--rose-soft); font-weight: 700; }
 .tally-row .v { font-variant-numeric: tabular-nums; color: var(--rose-deep); }
+
+/* ═══════════ Admin console — sidebar nav + single workspace (方案 A) ═══════════ */
+.admin-status { position: sticky; top: 0; z-index: 20; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 16px; margin-bottom: 14px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; box-shadow: var(--shadow-sm); }
+.admin-status .as-main { font-size: 15px; }
+.admin-status .as-sub { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.admin-shell { display: grid; grid-template-columns: 190px 1fr; gap: 18px; align-items: start; }
+.admin-nav { position: sticky; top: 76px; display: flex; flex-direction: column; gap: 4px; }
+.admin-navbtn { text-align: left; padding: 10px 12px; min-height: 44px; border-radius: var(--r-sm); border: 1px solid transparent; background: transparent; color: var(--ink); font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; }
+.admin-navbtn:hover { background: var(--surface-2); }
+.admin-navbtn.on { background: var(--rose-soft); color: var(--rose-deep); border-color: var(--rose); }
+.admin-work { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.admin-work > .card { margin: 0; }
+.admin-work > .admin-section { margin: 0 0 -4px; }
+@media (max-width: 820px) {
+  .admin-shell { grid-template-columns: 1fr; gap: 12px; }
+  .admin-nav { position: static; flex-direction: row; flex-wrap: wrap; gap: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  .admin-navbtn { flex: 0 0 auto; min-height: 40px; padding: 8px 12px; border: 1px solid var(--line); }
+}

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ensureSchema, toggleNomination, castMatchVote, castApprovalVote } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getVoterId, getDeviceBucket } from "@/lib/voter";
+import { getSid } from "@/lib/sid";
 import { getActiveCompetition } from "@/lib/engine";
 import { rateLimited } from "@/lib/ratelimit";
 import { verifyToken, gateOn, VOTER_COOKIE } from "@/lib/wxsession";
@@ -32,10 +33,12 @@ export async function POST(req: NextRequest) {
       voterId = "wx:" + openid;
     }
 
-    // Rate limiting. Always cap per-identity (fingerprint/openid). The per-IP cap is only a
-    // coarse abuse guard; when the WeChat gate is OFF there's no strong identity and many
-    // legitimate voters share one IP (campus/dorm NAT), so we loosen the IP cap a lot.
-    if (rateLimited("votev:" + voterId, 60, 60_000))
+    // Rate limiting. The per-identity cap keys on the server-signed sid (see lib/sid.ts) so
+    // rotating the client `x-fp` header can't reset it. When the WeChat gate is on, the openid
+    // session is an even stronger identity. The per-IP cap is a coarse abuse guard, loosened
+    // when the gate is off since many legitimate voters share one IP (campus/dorm NAT).
+    const rlKey = strict ? voterId : await getSid();
+    if (rateLimited("votev:" + rlKey, 60, 60_000))
       return NextResponse.json({ error: "投票太频繁，请稍后再试。" }, { status: 429 });
     if (rateLimited("vote:" + ip, strict ? 120 : 1000, 60_000))
       return NextResponse.json({ error: "该网络投票过于密集，请稍后再试。" }, { status: 429 });

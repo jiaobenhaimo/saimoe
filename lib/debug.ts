@@ -69,8 +69,10 @@ export function debugVote(voters = 40): { matches: number; votes: number } {
   } else if (comp.phase === "knockout") {
     const r = comp.ko_round ?? 1;
     open = db.matchups.filter((m) => m.competition_id === comp.id && m.stage === "knockout" && m.round_no === r && !m.decided);
+  } else if (comp.phase === "playoff") {
+    open = db.matchups.filter((m) => m.competition_id === comp.id && m.stage === "playoff" && !m.decided);
   } else {
-    throw new Error("当前阶段没有开放的对战(需小组赛或淘汰赛)。");
+    throw new Error("当前阶段没有开放的对战(需小组赛/加赛/淘汰赛)。");
   }
   let votes = 0;
   for (let v = 0; v < voters; v++) {

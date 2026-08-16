@@ -84,7 +84,6 @@ export interface DB {
   approvalVotes: ApprovalVote[];
   comments: Comment[];
   auditLog: AuditEntry[];
-  settings: { wxGate?: boolean };
 }
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
@@ -94,7 +93,7 @@ const FILE = path.join(DATA_DIR, "saimoe.json");
 export function dataFilePath(): string { return FILE; }
 
 function blank(): DB {
-  return { seq: { competition: 0, candidate: 0, matchup: 0, comment: 0, audit: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [], approvalVotes: [], comments: [], auditLog: [], settings: {} };
+  return { seq: { competition: 0, candidate: 0, matchup: 0, comment: 0, audit: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [], approvalVotes: [], comments: [], auditLog: [] };
 }
 function normalize(o: any): DB {
   if (!o || typeof o !== "object") return blank();
@@ -115,7 +114,6 @@ function normalize(o: any): DB {
     approvalVotes: Array.isArray(o.approvalVotes) ? o.approvalVotes : b.approvalVotes,
     comments: Array.isArray(o.comments) ? o.comments : b.comments,
     auditLog: Array.isArray(o.auditLog) ? o.auditLog : b.auditLog,
-    settings: (o.settings && typeof o.settings === "object") ? o.settings : b.settings,
   };
 }
 
@@ -124,34 +122,119 @@ function normalize(o: any): DB {
  *  always returns a deep clone, so callers can mutate freely before writeDb().
  *  A corrupt/partial file is quarantined (renamed aside) and logged, instead of
  *  silently starting blank and then overwriting the damaged data. */
+/** Newest valid snapshot in BACKUP_DIR, or null. Parsed before being trusted, so a
+ *  truncated/corrupt snapshot is skipped in favour of an older good one.
+ *  (Env read directly rather than importing lib/backup, which imports this module.) */
+function loadLatestBackup(): DB | null {
+  const dir = process.env.BACKUP_DIR || "/mnt/sml-data";
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir).filter((f) => f.startsWith("saimoe-") && f.endsWith(".json")).sort().reverse();
+  } catch { return null; }
+  for (const n of names) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(dir, n), "utf8"));
+      if (parsed && typeof parsed === "object" && Array.isArray(parsed.competitions)) {
+        console.error(`saimoe: restoring data from backup ${n}`);
+        return normalize(parsed);
+      }
+    } catch { /* try the next-older snapshot */ }
+  }
+  return null;
+}
+
+/** Recover the live store: newest good backup if there is one, else an empty store.
+ *  Persists the restored copy so subsequent writes build on it rather than on blank. */
+function recover(): DB {
+  const restored = loadLatestBackup();
+  if (!restored) return blank();
+  try { persist(restored); } catch (e) { console.error("saimoe: could not persist restored data", e); }
+  return restored;
+}
+
 let cache: { mtimeMs: number; db: DB } | null = null;
+/** Snapshot → mtime it was read at. WeakMap so snapshots stay garbage-collectable.
+ *  Lets writeDb() tell "this snapshot is stale" from "the cache moved on". */
+const readStamp = new WeakMap<DB, number>();
 export function readDb(): DB {
   try {
     const st = fs.statSync(FILE);
-    if (cache && cache.mtimeMs === st.mtimeMs) return structuredClone(cache.db);
+    if (cache && cache.mtimeMs === st.mtimeMs) {
+      const clone = structuredClone(cache.db);
+      readStamp.set(clone, st.mtimeMs);
+      return clone;
+    }
     const db = normalize(JSON.parse(fs.readFileSync(FILE, "utf8")));
     cache = { mtimeMs: st.mtimeMs, db };
-    return structuredClone(db);
+    const clone = structuredClone(db);
+    readStamp.set(clone, st.mtimeMs);
+    return clone;
   } catch (e) {
+    const missing = (e as NodeJS.ErrnoException)?.code === "ENOENT";
     try {
-      if (fs.existsSync(FILE)) {
+      if (!missing && fs.existsSync(FILE)) {
         const ts = new Date().toISOString().replace(/[:.]/g, "-");
         const quarantined = FILE + ".corrupt-" + ts;
         fs.renameSync(FILE, quarantined);
         console.error("saimoe: data file unreadable, moved to " + quarantined, e);
       }
     } catch {}
-    return blank();
+    // Ephemeral DATA_DIR (fresh container) or a corrupt file: rebuild from the
+    // persistent backup mount rather than starting an empty tournament.
+    const db = recover();
+    const clone = structuredClone(db);
+    try { readStamp.set(clone, fs.statSync(FILE).mtimeMs); } catch {}
+    return clone;
   }
 }
-/** Persist the store atomically (write temp file, then rename), and refresh the cache. */
-export function writeDb(db: DB): void {
+/** Persist the store atomically (write temp file, then rename), and refresh the cache.
+ *
+ *  Lost-update guard: every mutation is read-modify-write over the whole file. Today that's
+ *  safe because each mutating helper does its readDb()→writeDb() synchronously (Node's single
+ *  thread can't interleave sync fs calls), but the moment someone adds an `await` between the
+ *  two, concurrent requests would silently overwrite each other's votes. So we verify the file
+ *  hasn't changed since the read that produced this snapshot and throw loudly if it has,
+ *  instead of quietly dropping votes. */
+/** Raw durable write: temp file → fsync → rename → fsync(dir). Without the fsyncs a
+ *  power loss can leave the rename visible but the bytes unwritten (empty/short file). */
+function persist(db: DB): void {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const tmp = FILE + "." + process.pid + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(db));
+  const fd = fs.openSync(tmp, "w");
+  try {
+    fs.writeFileSync(fd, JSON.stringify(db));
+    fs.fsyncSync(fd);
+  } finally { fs.closeSync(fd); }
   fs.renameSync(tmp, FILE);
-  try { cache = { mtimeMs: fs.statSync(FILE).mtimeMs, db: structuredClone(db) }; }
-  catch { cache = null; }
+  try { const dfd = fs.openSync(DATA_DIR, "r"); try { fs.fsyncSync(dfd); } finally { fs.closeSync(dfd); } } catch {}
+  try {
+    const m = fs.statSync(FILE).mtimeMs;
+    cache = { mtimeMs: m, db: structuredClone(db) };
+    readStamp.set(db, m); // snapshot is now current → sequential writes of it are fine
+  } catch { cache = null; }
+}
+
+export function writeDb(db: DB): void {
+  const stamp = readStamp.get(db);
+  if (stamp !== undefined) {
+    let cur: number | null = null;
+    try { cur = fs.statSync(FILE).mtimeMs; } catch { cur = null; }
+    if (cur !== null && cur !== stamp)
+      throw new Error("saimoe: concurrent modification detected (data file changed since read) — write aborted to avoid losing votes. Retry the operation.");
+  }
+  persist(db);
+}
+
+/** Re-run a read-modify-write helper if it lost a write race, so a concurrent voter
+ *  gets their vote recorded instead of an error. Each attempt re-reads fresh state. */
+export function retryOnConflict<T>(fn: () => T, tries = 5): T {
+  for (let i = 0; ; i++) {
+    try { return fn(); }
+    catch (e) {
+      const conflict = e instanceof Error && e.message.includes("concurrent modification");
+      if (!conflict || i >= tries - 1) throw e;
+    }
+  }
 }
 /** Kept for API compatibility with the old DB layer; just ensures the dir exists. */
 export function ensureSchema(): void {
@@ -170,13 +253,13 @@ export function createCompetition(title: string): number {
 
 export function deleteCompetition(cid: number): void {
   const db = readDb();
-  const candIds = new Set(db.candidates.filter((c) => c.competition_id === cid).map((c) => c.id));
   const matchIds = new Set(db.matchups.filter((m) => m.competition_id === cid).map((m) => m.id));
   db.competitions = db.competitions.filter((c) => c.id !== cid);
   db.candidates = db.candidates.filter((c) => c.competition_id !== cid);
   db.matchups = db.matchups.filter((m) => m.competition_id !== cid);
-  db.nominationVotes = db.nominationVotes.filter((v) => v.competition_id !== cid && !candIds.has(v.candidate_id));
+  db.nominationVotes = db.nominationVotes.filter((v) => v.competition_id !== cid);
   db.matchVotes = db.matchVotes.filter((v) => !matchIds.has(v.matchup_id));
+  db.approvalVotes = db.approvalVotes.filter((v) => v.competition_id !== cid);
   db.comments = db.comments.filter((c) => c.competition_id !== cid);
   writeDb(db);
 }
@@ -292,6 +375,7 @@ export function removeCandidate(cid: number, candidateId: number): boolean {
   if (!db.candidates.some((c) => c.id === candidateId && c.competition_id === cid)) return false;
   db.candidates = db.candidates.filter((c) => c.id !== candidateId);
   db.nominationVotes = db.nominationVotes.filter((v) => v.candidate_id !== candidateId);
+  db.approvalVotes = db.approvalVotes.filter((v) => !(v.competition_id === cid && v.candidate_id === candidateId));
   const ids = new Set(db.matchups.filter((m) => m.competition_id === cid && (m.a_id === candidateId || m.b_id === candidateId)).map((m) => m.id));
   db.matchups = db.matchups.filter((m) => !(m.competition_id === cid && (m.a_id === candidateId || m.b_id === candidateId)));
   db.matchVotes = db.matchVotes.filter((v) => !ids.has(v.matchup_id));
@@ -300,7 +384,7 @@ export function removeCandidate(cid: number, candidateId: number): boolean {
 }
 
 /** Toggle a nomination vote. Returns null if the candidate doesn't exist. */
-export function toggleNomination(cid: number, candidateId: number, voterId: string, meta?: VoteMeta): { voted: boolean } | { error: string } | null {
+function toggleNominationOnce(cid: number, candidateId: number, voterId: string, meta?: VoteMeta): { voted: boolean } | { error: string } | null {
   const db = readDb();
   const cand = db.candidates.find((c) => c.id === candidateId && c.competition_id === cid);
   if (!cand) return null;
@@ -337,7 +421,7 @@ export function approvalTally(db: DB, cid: number): Map<number, number> {
 
 /** Toggle a group-stage approval vote (approval mode). Enforces ≤2 picks per (voter, group),
  *  ≤1 per candidate, and that the group is in the currently-open batch. */
-export function castApprovalVote(cid: number, candidateId: number, voterId: string, meta?: VoteMeta): { picked: boolean; count: number } | { error: string; status: number } {
+function castApprovalVoteOnce(cid: number, candidateId: number, voterId: string, meta?: VoteMeta): { picked: boolean; count: number } | { error: string; status: number } {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
   if (!comp || comp.phase !== "group") return { error: "当前不在小组赛阶段。", status: 400 };
@@ -363,7 +447,7 @@ export function castApprovalVote(cid: number, candidateId: number, voterId: stri
 }
 
 /** Cast / change / retract a matchup vote. */
-export function castMatchVote(cid: number, matchupId: number, voterId: string, choiceId: number, meta?: VoteMeta): { choice: number | null } | { error: string; status: number } {
+function castMatchVoteOnce(cid: number, matchupId: number, voterId: string, choiceId: number, meta?: VoteMeta): { choice: number | null } | { error: string; status: number } {
   const db = readDb();
   const m = db.matchups.find((x) => x.id === matchupId && x.competition_id === cid);
   if (!m) return { error: "对战不存在。", status: 404 };
@@ -393,7 +477,7 @@ export function castMatchVote(cid: number, matchupId: number, voterId: string, c
 
 // ── comments (per-match discussion) ──
 const COMMENT_MAX = 300;
-export function addComment(cid: number, matchupId: number, voterId: string, name: string, text: string): { ok: true; comment: Comment } | { error: string } {
+function addCommentOnce(cid: number, matchupId: number, voterId: string, name: string, text: string): { ok: true; comment: Comment } | { error: string } {
   const t = (text || "").trim();
   if (!t) return { error: "评论不能为空。" };
   if (t.length > COMMENT_MAX) return { error: `评论过长(最多 ${COMMENT_MAX} 字)。` };
@@ -476,3 +560,10 @@ export function invalidateVotes(cid: number, by: "bucket" | "ip" | "voter", key:
   if (removed) writeDb(db);
   return removed;
 }
+
+// ── public vote/comment writers: retry once-per-conflict so a lost write race becomes a
+//    successful retry instead of a user-visible error (see retryOnConflict above). ──
+export const toggleNomination = (...a: Parameters<typeof toggleNominationOnce>) => retryOnConflict(() => toggleNominationOnce(...a));
+export const castApprovalVote = (...a: Parameters<typeof castApprovalVoteOnce>) => retryOnConflict(() => castApprovalVoteOnce(...a));
+export const castMatchVote = (...a: Parameters<typeof castMatchVoteOnce>) => retryOnConflict(() => castMatchVoteOnce(...a));
+export const addComment = (...a: Parameters<typeof addCommentOnce>) => retryOnConflict(() => addCommentOnce(...a));

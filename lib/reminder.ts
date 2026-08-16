@@ -1,4 +1,5 @@
 import { readDb } from "./db";
+import { groupLabel } from "./i18n";
 import { getActiveCompetition, projectSchedule, type SchedMatch } from "./engine";
 
 /**
@@ -52,7 +53,7 @@ export function buildRoundReminder(opts: ReminderOpts = {}): { text: string; has
       if (cur.end) L.push(`投票截止:${fmt(cur.end)}`);
       if (sc.mode === "approval") {
         L.push("", "本轮开放投票的组(每人每组 2 票,取前二晋级):");
-        for (const g of (cur.groups || [])) L.push(`· ${String.fromCharCode(65 + g.groupNo)} 组:${g.members.join("、")}`);
+        for (const g of (cur.groups || [])) L.push(`· ${groupLabel(g.groupNo)} 组:${g.members.join("、")}`);
       } else {
         L.push("", "本轮对阵:");
         for (const m of cur.matches) L.push(`· ${nm(m.a)} vs ${nm(m.b)}`);

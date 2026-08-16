@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { adminOk } from "@/lib/adminauth";
 import { ensureSchema } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { buildRoundReminder } from "@/lib/reminder";
@@ -8,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 function authed(req: NextRequest): boolean {
   const token = req.headers.get("x-admin-token");
-  return !!process.env.ADMIN_TOKEN && token === process.env.ADMIN_TOKEN;
+  return adminOk(token);
 }
 
 export async function GET(req: NextRequest) {

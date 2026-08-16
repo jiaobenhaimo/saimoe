@@ -1,4 +1,5 @@
 import { readDb, approvalTally } from "./db";
+import { groupLabel } from "./i18n";
 
 // ── tunable detection thresholds (env-overridable) ────────────────────────────
 function envNum(key: string, dflt: number): number {
@@ -169,6 +170,7 @@ export function projectTimeline(cid: number): TimelineItem[] {
     for (let r = 1; r <= koRoundsTotal; r++) {
       cursor = cursor && comp.round_hours ? cursor + comp.round_hours * HOUR : null;
       items.push({ label: `${koLabel(koTarget >> (r - 1))} 结算`, at: cursor, note: cursor ? "" : "需设定每轮时长" });
+      if ((koTarget >> (r - 1)) === 2 && comp.third_place !== false && koTarget >= 4) items.push({ label: "季军战 结算", at: cursor, note: "与决赛同期" });
     }
     items.push({ label: "决出冠军 🏆", at: null, note: "最后一轮结算后" });
     return items;
@@ -176,13 +178,16 @@ export function projectTimeline(cid: number): TimelineItem[] {
 
   if (comp.phase === "knockout") {
     const koMs = db.matchups.filter((m) => m.competition_id === cid && m.stage === "knockout");
-    const maxRound = koMs.length ? Math.max(...koMs.map((m) => m.round_no)) : 1;
-    let contenders = Math.max(2, koMs.filter((m) => m.round_no === maxRound).length * 2);
+    const normal = koMs.filter((m) => !(m as any).bronze); // #13: bronze shares the final round — don't let it inflate the count
+    const hasBronze = koMs.some((m) => (m as any).bronze);
+    const maxRound = normal.length ? Math.max(...normal.map((m) => m.round_no)) : 1;
+    let contenders = Math.max(2, normal.filter((m) => m.round_no === maxRound).length * 2);
     cursor = comp.ko_round_ends_at ?? null;
     let first = true;
     while (contenders >= 2) {
       if (!first) cursor = cursor && comp.round_hours ? cursor + comp.round_hours * HOUR : null;
       items.push({ label: `${koLabel(contenders)} 结算`, at: cursor, note: cursor ? "" : "需设定每轮时长" });
+      if (contenders === 2 && hasBronze) items.push({ label: "季军战 结算", at: cursor, note: "与决赛同期" });
       first = false;
       contenders = contenders >> 1;
     }
@@ -221,6 +226,6 @@ export function liveTallies(cid: number): {
   const stages = comp.phase === "group" ? ["group"] : comp.phase === "knockout" ? ["knockout"] : comp.phase === "playoff" ? ["playoff"] : [];
   const matches = db.matchups
     .filter((m) => m.competition_id === cid && stages.includes(m.stage))
-    .map((m) => ({ label: m.stage === "group" ? `${String.fromCharCode(65 + (m.group_no ?? 0))}组` : m.stage, a: nm(m.a_id), va: count.get(m.id + ":" + m.a_id) || 0, b: nm(m.b_id), vb: count.get(m.id + ":" + m.b_id) || 0, decided: m.decided }));
+    .map((m) => ({ label: m.stage === "group" ? `${groupLabel((m.group_no ?? 0))}组` : m.stage, a: nm(m.a_id), va: count.get(m.id + ":" + m.a_id) || 0, b: nm(m.b_id), vb: count.get(m.id + ":" + m.b_id) || 0, decided: m.decided }));
   return { mode: "match", matches };
 }

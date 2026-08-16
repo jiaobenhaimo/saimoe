@@ -1,7 +1,14 @@
 // Engine smoke test — run with `npm test` (tsx scripts/smoke.mts). Exercises the core
 // competition flow and guards against regressions (day cap, matchday dates, undo,
 // pick'em removal, knockout progression). Uses a throwaway DATA_DIR.
-process.env.DATA_DIR = process.env.SMOKE_DATA_DIR || "/tmp/saimoe-smoke";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+// Fresh dir per run (unless SMOKE_DATA_DIR is pinned by CI) so a pass never depends on
+// leftover state from a previous local run; cleaned up on exit.
+const OWN_DIR = !process.env.SMOKE_DATA_DIR;
+process.env.DATA_DIR = process.env.SMOKE_DATA_DIR || mkdtempSync(join(tmpdir(), "saimoe-smoke-"));
+if (OWN_DIR) process.on("exit", () => { try { rmSync(process.env.DATA_DIR!, { recursive: true, force: true }); } catch {} });
 
 // Dynamic imports so DATA_DIR is set before lib/db reads it (ESM hoists static imports).
 const db = await import("../lib/db");

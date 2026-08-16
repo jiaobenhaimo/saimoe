@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { t, roundLabelT, LANGS, type Lang } from "@/lib/i18n";
+import { t, roundLabelT, LANGS, groupLabel, type Lang } from "@/lib/i18n";
 
 function useLang(): [Lang, (l: Lang) => void] {
   const [lang, setLang] = useState<Lang>("zh");
@@ -59,7 +59,7 @@ export default function Rules() {
       const detail: TLDetail[] = sched.mode === "approval"
         ? (d.groups || []).map((g: any) => {
             const adv = new Set<string>(g.advancers || []);
-            const segs: TLSeg[] = [{ t: `${T("group.letter", { L: String.fromCharCode(65 + g.groupNo) })}: `, b: false }];
+            const segs: TLSeg[] = [{ t: `${T("group.letter", { L: groupLabel(g.groupNo) })}: `, b: false }];
             (g.members || []).forEach((nm: string, k: number) => { if (k) segs.push({ t: "、", b: false }); segs.push({ t: nm, b: adv.has(nm) }); });
             return { segs, done: adv.size > 0 };
           })
@@ -110,7 +110,7 @@ export default function Rules() {
             <p className="rules-p"><b>{T("sched.bracketG", { n: sched.targetSize ?? "?", g: sched.groups ?? "?", s: sched.groupSize ?? "?", k: sched.koTarget ?? "?" })}</b></p>
             <ol className="tl">
               <li className="tl-node upcoming"><span className="tl-dot" /><div className="tl-card"><div className="tl-when"><span className="tl-label">{T("sched.nomEnd")}</span><span className="tl-time">{sched.plan?.nomEndsAt ? f(sched.plan.nomEndsAt) : T("sched.cadTbd")}</span></div></div></li>
-              <li className="tl-node upcoming"><span className="tl-dot" /><div className="tl-card"><div className="tl-when"><span className="tl-label">{T("sched.cadGroup")}</span><span className="tl-time">{sched.plan?.groupRoundDays ? T("sched.cadGroupVal", { d: sched.plan.groupRoundDays, c: sched.plan.dayCap || 4 }) : T("sched.cadManual")}</span></div></div></li>
+              <li className="tl-node upcoming"><span className="tl-dot" /><div className="tl-card"><div className="tl-when"><span className="tl-label">{T("sched.cadGroup")}</span><span className="tl-time">{sched.plan?.groupRoundDays ? T("sched.cadGroupVal", { d: sched.plan.groupRoundDays, c: sched.plan.dayCap === 0 ? "∞" : (sched.plan.dayCap || 4) }) : T("sched.cadManual")}</span></div></div></li>
               <li className="tl-node upcoming last"><span className="tl-dot" /><div className="tl-card"><div className="tl-when"><span className="tl-label">{T("sched.cadKo")}</span><span className="tl-time">{sched.plan?.roundHours ? T("sched.cadKoVal", { h: sched.plan.roundHours }) : T("sched.cadManual")}</span></div></div></li>
             </ol>
             <p className="rules-note">{T("sched.plannedNote")}</p>

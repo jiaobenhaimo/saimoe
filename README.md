@@ -68,7 +68,8 @@ app/
   api/nominate        POST 提名 / 整部作品导入
   api/vote            POST 提名投票 / 对战投票
   api/admin/action    POST 赛程推进 + 编辑信息(需令牌)
-  api/img             GET  Bangumi 图片代理(绕防盗链)
+  api/wx              GET/POST 微信公众号验签 + 被动回复(带专属投票链接)
+  api/v               GET  公众号链接换取投票会话 cookie
   api/health          GET  健康检查(不读数据,探针用)
 lib/
   db.ts               本地 JSON 存储(读改写 + 原子落盘)

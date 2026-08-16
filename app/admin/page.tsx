@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { groupLabel } from "@/lib/i18n";
 
 function fmtAbs(ms?: number | null): string {
   if (!ms) return "";
@@ -64,7 +65,7 @@ export default function Admin() {
   const [dbgLog, setDbgLog] = useState<string[]>([]);
   const [dbgCount, setDbgCount] = useState(8);
   const [dbgVoters, setDbgVoters] = useState(30);
-  useEffect(() => { fetch("/api/admin/debug").then((r) => r.json()).then((j) => setDbgOn(!!j.enabled)).catch(() => {}); }, []);
+  useEffect(() => { if (!authed || !token) return; fetch("/api/admin/debug", { headers: { "x-admin-token": token } }).then((r) => r.json()).then((j) => setDbgOn(!!j.enabled)).catch(() => {}); }, [authed, token]);
   const dbgAct = async (action: string, extra: Record<string, unknown> = {}) => {
     if (dbgBusy) return;
     setDbgBusy(true); localStorage.setItem("adminToken", token); setMsg(null); setDbgLog([]);
@@ -143,7 +144,7 @@ export default function Admin() {
   const ping = async () => {
     setPinging(true); setPingResult(null);
     try {
-      const r = await fetch("/api/diag", { cache: "no-store" });
+      const r = await fetch("/api/diag", { headers: { "x-admin-token": token }, cache: "no-store" });
       setPingResult(await r.json());
     } catch (e: any) {
       setPingResult({ error: "请求失败：" + (e?.message || e) });
@@ -168,6 +169,17 @@ export default function Admin() {
 
   const comp = state?.competition;
   const phase = comp?.phase;
+  const [active, setActive] = useState<string>("overview");
+  const phaseLabel = phase === "nomination" ? "提名期" : phase === "group" ? "小组赛" : phase === "playoff" ? "加赛" : phase === "knockout" ? "淘汰赛" : phase === "finished" ? "已结束" : "未开赛";
+  const NAV: [string, string][] = [
+    ["overview", "📊 概览"],
+    ["advance", "🎬 赛程推进"],
+    ["setup", "🗓️ 赛制设置"],
+    ["content", "🗂️ 内容管理"],
+    ...(state?.voteGate?.on ? ([["wx", "📣 公众号"]] as [string, string][]) : []),
+    ["monitor", "🛡️ 监控"],
+    ["danger", "⚠️ 危险区"],
+  ];
 
   useEffect(() => {
     if (comp) { setEditTitle(comp.title || ""); setEditDesc(comp.description || ""); setEditShort(comp.shortName || ""); setEditTitleEn(comp.titleEn || ""); setEditTitleJa(comp.titleJa || ""); setEditDescEn(comp.descEn || ""); setEditDescJa(comp.descJa || ""); setEditShortEn(comp.shortEn || ""); setEditShortJa(comp.shortJa || ""); setNUserLimit(comp.nomUserLimit || 0); setNMinVotes(comp.nomMinVotes || 0); }
@@ -202,7 +214,21 @@ export default function Admin() {
       {!authed ? (
         <div className="card"><p className="hint" style={{ margin: 0 }}>输入管理员令牌并解锁后,这里会显示全部管理选项。</p></div>
       ) : (<>
+      <div className="admin-status">
+        <div className="as-main">{comp ? <>《{comp.title}》 · <b>{phaseLabel}</b></> : "暂无比赛"}</div>
+        {comp && phase === "nomination" && comp.nomEndsAt && <div className="as-sub">提名截止 {fmtAbs(comp.nomEndsAt)}</div>}
+        {comp && phase === "group" && <div className="as-sub">第 {comp.groupMatchday}/{comp.groupMatchdayCount} 比赛日{comp.groupRoundEndsAt ? ` · ${fmtAbs(comp.groupRoundEndsAt)} 结算` : ""}</div>}
+        {comp && phase === "knockout" && comp.koRoundEndsAt && <div className="as-sub">本轮 {fmtAbs(comp.koRoundEndsAt)} 推进</div>}
+      </div>
+      <div className="admin-shell">
+        <nav className="admin-nav">
+          {NAV.map(([k, label]) => (
+            <button key={k} type="button" className={"admin-navbtn" + (active === k ? " on" : "")} onClick={() => setActive(k)}>{label}</button>
+          ))}
+        </nav>
+        <div className="admin-work">
 
+      {active === "overview" && (<>
       <div className="admin-section">📊 概览</div>
       <div className="card">
         <h3>当前状态</h3>
@@ -221,6 +247,8 @@ export default function Admin() {
       </div>
 
       {/* ── 赛程推进（按阶段顺序） ── */}
+      </>)}
+      {active === "advance" && (<>
       <div className="admin-section">🎬 赛程推进</div>
 
       {(!comp || phase === "finished") && (
@@ -284,8 +312,6 @@ export default function Admin() {
               <input type="number" min={4} value={size} onChange={(e) => setSize(+e.target.value)} /></div>
             <div className="field"><label>每组人数</label>
               <input type="number" min={2} value={groupSize} onChange={(e) => setGroupSize(+e.target.value)} /></div>
-            <div className="field"><label>每比赛日最多对局数(0=无限制)</label>
-              <input type="number" min={0} value={dayCap} onChange={(e) => setDayCap(+e.target.value)} /></div>
           </div>
           <div className="row3">
             <div className="field"><label>小组赛玩法</label>
@@ -337,7 +363,7 @@ export default function Admin() {
       {phase === "group" && (
         <div className="card">
           <h3>③ 小组赛比赛日</h3>
-          <p className="hint">当前：第 <b>{comp.groupMatchday}/{comp.groupMatchdayCount}</b> 比赛日{comp.groupRoundEndsAt ? `（截止 ${fmtAbs(comp.groupRoundEndsAt)}）` : ""}；每组每轮 {comp.groupPerRound || "自动"} 场；每比赛日最多 {comp.groupDayCap || 4} 场。</p>
+          <p className="hint">当前：第 <b>{comp.groupMatchday}/{comp.groupMatchdayCount}</b> 比赛日{comp.groupRoundEndsAt ? `（截止 ${fmtAbs(comp.groupRoundEndsAt)}）` : ""}；每组每轮 {comp.groupPerRound || "自动"} 场；每比赛日最多 {comp.groupDayCap === 0 ? "无限制" : (comp.groupDayCap || 4)} 场。</p>
           <button className="btn solid" disabled={busy} onClick={() => act("advance_group")}>结算本比赛日 → 下一比赛日</button>
           <hr className="sep" />
           <p className="hint">或直接结束整个小组赛（结算所有剩余比赛日并生成淘汰赛）：</p>
@@ -361,6 +387,8 @@ export default function Admin() {
         </div>
       )}
 
+      </>)}
+      {active === "setup" && (<>
       {/* ── 赛程设置与预览 ── */}
       {comp && (<div className="admin-section">🗓️ 赛程设置与预览</div>)}
 
@@ -420,7 +448,7 @@ export default function Admin() {
           <p className="rules-p"><b>取前 {sched.targetSize} 名 → 约 {sched.groups} 个 {sched.groupSize} 人组 → {sched.koTarget} 强淘汰赛</b><br />各组前 2 + 各组最优第三名晋级淘汰赛。</p>
           <ul className="sched-list">
             <li><div className="sched-when">提名截止<span className="sched-time">{sched.plan?.nomEndsAt ? fmtAbs(sched.plan.nomEndsAt) : "未预约"}</span></div></li>
-            <li><div className="sched-when">小组赛<span className="sched-time">{sched.plan?.groupRoundDays ? `每 ${sched.plan.groupRoundDays} 天一个比赛日` : "手动推进"} · 每日≤{sched.plan?.dayCap || 4} 场</span></div></li>
+            <li><div className="sched-when">小组赛<span className="sched-time">{sched.plan?.groupRoundDays ? `每 ${sched.plan.groupRoundDays} 天一个比赛日` : "手动推进"} · 每日≤{sched.plan?.dayCap === 0 ? "无限制" : (sched.plan?.dayCap || 4)} 场</span></div></li>
             <li><div className="sched-when">淘汰赛<span className="sched-time">{sched.plan?.roundHours ? `每轮 ${sched.plan.roundHours} 小时` : "手动推进"}</span></div></li>
             <li><div className="sched-when">人数不足顺延<span className="sched-time">{sched.plan?.postponeDays || 1} 天</span></div></li>
           </ul>
@@ -440,7 +468,7 @@ export default function Admin() {
                   <div className="sched-pairs">
                     {sched.mode === "approval"
                       ? (d.groups || []).map((g: any, i: number) => (
-                        <span key={i} className="pair">{String.fromCharCode(65 + g.groupNo)} 组:{g.members.join("、")}</span>
+                        <span key={i} className="pair">{groupLabel(g.groupNo)} 组:{g.members.join("、")}</span>
                       ))
                       : d.matches.map((m: any, i: number) => (
                         <span key={i} className={"pair" + (m.decided ? " done" : "")}>{nm(m.a)} <i>vs</i> {nm(m.b)}{m.decided && winnerOf(m) ? <b> · {nm(winnerOf(m))} 晋级</b> : null}</span>
@@ -468,6 +496,8 @@ export default function Admin() {
         </div>
       )}
 
+      </>)}
+      {active === "wx" && (<>
       {/* ── 公众号 / 投票通道:仅当 .env 启用门禁(WX_VOTE_GATE)时出现 ── */}
       {state?.voteGate?.on && (<>
       <div className="admin-section">📣 公众号 / 投票通道</div>
@@ -498,6 +528,8 @@ export default function Admin() {
       )}
       </>)}
 
+      </>)}
+      {active === "content" && (<>
       {/* ── 内容管理 ── */}
       {comp && (<div className="admin-section">🗂️ 内容管理</div>)}
 
@@ -555,10 +587,10 @@ export default function Admin() {
         </div>
       )}
 
-      {(phase === "group" || phase === "knockout" || phase === "finished") && (
+      {(phase === "group" || phase === "playoff" || phase === "knockout" || phase === "finished") && (
         <div className="card">
           <h3>撤销 / 重算</h3>
-          <p className="hint">撤回上一步阶段推进（回到上一阶段 / 上一轮），或按当前票数重算当前轮。谨慎使用。</p>
+          <p className="hint">撤回上一步阶段推进(回到上一阶段 / 上一轮),或按当前票数重算当前轮。谨慎使用。</p>
           <button className="btn" disabled={busy} onClick={() => act("undo")}>撤回上一步</button>{" "}
           <button className="btn" disabled={busy} onClick={() => act("resettle")}>按当前票数重算本轮</button>
         </div>
@@ -573,6 +605,8 @@ export default function Admin() {
         </div>
       )}
 
+      </>)}
+      {active === "monitor" && (<>
       {/* ── 监控与诊断 ── */}
       <div className="admin-section">🛡️ 监控与诊断</div>
 
@@ -584,7 +618,7 @@ export default function Admin() {
             <div className="tally-grid">
               {(tallies.groups || []).map((g: any) => (
                 <div className="tally-col" key={g.group}>
-                  <div className="tally-h">{String.fromCharCode(65 + g.group)} 组</div>
+                  <div className="tally-h">{groupLabel(g.group)} 组</div>
                   {g.rows.map((r: any, i: number) => (
                     <div className={"tally-row" + (i < 2 ? " adv" : "")} key={r.name}><span className="nm">{r.name}</span><span className="v num">{r.votes}</span></div>
                   ))}
@@ -676,6 +710,8 @@ export default function Admin() {
         </div>
       )}
 
+      </>)}
+      {active === "danger" && (<>
       {/* ── 危险区 ── */}
       <div className="admin-section">⚠️ 危险区</div>
       <div className="card">
@@ -684,6 +720,9 @@ export default function Admin() {
         <button className="btn danger" disabled={busy} onClick={() => { if (confirm("确认删除当前比赛？")) act("reset"); }}>重置 / 删除当前比赛</button>
       </div>
 
+      </>)}
+      </div>
+      </div>
       </>)}
       </div>
 

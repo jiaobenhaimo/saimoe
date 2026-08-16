@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { adminOk } from "@/lib/adminauth";
 import { ensureSchema } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { debugSeed, debugNominate, debugVote, debugSimulate } from "@/lib/debug";
@@ -8,14 +9,15 @@ export const dynamic = "force-dynamic";
 
 function authed(req: NextRequest): boolean {
   const token = req.headers.get("x-admin-token");
-  return !!process.env.ADMIN_TOKEN && token === process.env.ADMIN_TOKEN;
+  return adminOk(token);
 }
 function debugOn(): boolean {
   return process.env.DEBUG_MODE === "true";
 }
 
-// GET → let the admin UI know whether the debug panel should show.
-export async function GET() {
+// GET → let the (authenticated) admin UI know whether the debug panel should show.
+export async function GET(req: NextRequest) {
+  if (!authed(req)) return NextResponse.json({ error: "未授权:管理员令牌不正确。" }, { status: 401 });
   return NextResponse.json({ enabled: debugOn() });
 }
 
