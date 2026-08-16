@@ -69,11 +69,11 @@ export function getState(voterId: string) {
   const liveWinner = (m: Matchup): number | null => {
     if (m.decided) return m.winner_id;
     const a = votesA(m), b = votesB(m);
-    // 与 decide() 一致:平票判种子高者,种子相同判 A 方
+    // 与 decide() 一致：平票判种子高者，种子相同判 A 方
     if (a !== b) return a > b ? m.a_id : m.b_id;
     return seedOf(m.a_id) <= seedOf(m.b_id) ? m.a_id : m.b_id;
   };
-  // 赛中不公布任何票数/得票率;结算后(decided)才公布绝对票数与占比。
+  // 赛中不公布任何票数/得票率；结算后（decided）才公布绝对票数与占比。
   const shapeMatch = (m: Matchup) => {
     const va = votesA(m), vb = votesB(m), total = va + vb;
     const revealed = m.decided;
@@ -172,7 +172,7 @@ export function getState(voterId: string) {
       if (known != null) return known;
       if (!comp.group_round_days) return null;
       if (maxKnownDay > 0) return gtStarts[maxKnownDay] + (d - maxKnownDay) * roundMs;
-      if (comp.group_started_at != null) return comp.group_started_at + (d - 1) * roundMs; // legacy 兜底(迁移前的老数据)
+      if (comp.group_started_at != null) return comp.group_started_at + (d - 1) * roundMs; // legacy 兜底（迁移前的老数据）
       return null;
     };
     const groups = [...byGroup.entries()]
@@ -232,7 +232,7 @@ export function getState(voterId: string) {
     const lastCount = lastList.length;
     const lastIsBronze = lastList.some((m) => (m as any).bronze);
     const champion = comp.champion_id ? slim(cmap.get(comp.champion_id)) : null;
-    // 名次:决赛(非季军战、2 人的那轮)败者=亚军;季军战胜者=季军、败者=殿军
+    // 名次：决赛（非季军战、2 人的那轮）败者=亚军；季军战胜者=季军、败者=殿军
     const finalM = koMs.filter((m) => !(m as any).bronze).sort((a, b) => b.round_no - a.round_no)[0] || null;
     const bronzeM = koMs.find((m) => (m as any).bronze);
     const runnerUp = comp.phase === "finished" && finalM && finalM.decided ? slim(cmap.get(finalM.winner_id === finalM.a_id ? finalM.b_id : finalM.a_id)) : null;
@@ -268,7 +268,7 @@ function roundLabel(contestants: number): string {
 // knockout pairings only exist for rounds already generated (they depend on winners),
 // so future knockout rounds carry projected times but no pairings (pending = true).
 export type SchedSide = { id: number; name: string; nameCn: string | null } | null;
-export interface SchedMatch { a: SchedSide; b: SchedSide; decided: boolean; winnerId: number | null; }
+export interface SchedMatch { a: SchedSide; b: SchedSide; decided: boolean; winnerId: number | null; groupNo?: number | null; }
 export interface SchedGroupDay { matchday: number; matchdayCount: number; start: number | null; end: number | null; current: boolean; matches: SchedMatch[]; groups?: { groupNo: number; members: string[]; advancers?: string[] }[]; }
 export interface SchedKoRound { label: string; contestants: number; start: number | null; end: number | null; pending: boolean; matches: SchedMatch[]; }
 export interface SchedulePreview {
@@ -367,7 +367,7 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
       const matches = gms
         .filter((m) => (m.matchday ?? 1) === d)
         .sort((a, b) => (a.group_no ?? 0) - (b.group_no ?? 0) || a.slot - b.slot)
-        .map((m) => ({ a: nameOf(m.a_id), b: nameOf(m.b_id), decided: m.decided, winnerId: m.winner_id }));
+        .map((m) => ({ a: nameOf(m.a_id), b: nameOf(m.b_id), decided: m.decided, winnerId: m.winner_id, groupNo: m.group_no ?? null }));
       out.group.push({ matchday: d, matchdayCount: mdCount, start, end, current: comp.phase === "group" && d === curMd, matches });
     }
   }
@@ -494,7 +494,7 @@ function seedLookup(db: DB, cid: number): (id: number) => number {
 function decide(m: Matchup, counts: Map<string, number>, seedOf: (id: number) => number) {
   const a = counts.get(m.id + ":" + m.a_id) || 0;
   const b = counts.get(m.id + ":" + m.b_id) || 0;
-  // 平票 / 零票:判给种子更高者(seed 序号更小);种子相同则判 A 方。
+  // 平票 / 零票：判给种子更高者（seed 序号更小）；种子相同则判 A 方。
   if (a !== b) m.winner_id = a > b ? m.a_id : m.b_id;
   else m.winner_id = seedOf(m.a_id) <= seedOf(m.b_id) ? m.a_id : m.b_id;
   m.decided = true;
@@ -546,19 +546,19 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
     .filter((r) => r.votes >= minVotes)
     .sort((a, b) => b.votes - a.votes || a.id - b.id);
   if (ranked.length < size) throw new Error(minVotes > 0
-    ? `达到最低提名票(${minVotes})的角色只有 ${ranked.length} 个,不足 ${size} 个。`
-    : `提名池只有 ${ranked.length} 个角色,不足 ${size} 个。`);
+    ? `达到最低提名票(${minVotes})的角色只有 ${ranked.length} 个，不足 ${size} 个。`
+    : `提名池只有 ${ranked.length} 个角色，不足 ${size} 个。`);
 
-  // 并列全取:凑满 size,但票数与第 size 名并列的角色一并纳入(如取前 20 遇并列 → 可能取 23)。
+  // 并列全取：凑满 size,但票数与第 size 名并列的角色一并纳入（如取前 20 遇并列 → 可能取 23）。
   const cutoffVotes = ranked[size - 1].votes;
   const qualifiers = ranked.filter((r) => r.votes >= cutoffVotes); // a >= size
   const a = qualifiers.length;
   if (a < 4) throw new Error("晋级人数不足 4,无法组成小组。");
 
   const seedOfId = new Map<number, number>();
-  qualifiers.forEach((r, i) => seedOfId.set(r.id, i)); // 排位赛种子 = 提名排名(0 最强)
+  qualifiers.forEach((r, i) => seedOfId.set(r.id, i)); // 排位赛种子 = 提名排名（0 最强）
 
-  // 每组人数 G(默认 4)。前 base 名分成整齐的 G 人组,余数补进最弱的若干组 → 那些组变 G+1 人。
+  // 每组人数 G(默认 4).前 base 名分成整齐的 G 人组，余数补进最弱的若干组 → 那些组变 G+1 人。
   const G = Math.max(2, Math.floor(groupSize > 0 ? groupSize : (comp.group_size ?? 4)));
   const c = a % G;
   const base = a - c;
@@ -568,7 +568,7 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   //   auto-advancers = 2·groups; bracket = nextPow2(2·groups); the rest must cover the fill.
   const koCheck = nextPow2(2 * numGroups);
   if (a < koCheck)
-    throw new Error(`当前配置无法凑成淘汰赛:${a} 人分 ${numGroups} 组,各组前 2 名共 ${2 * numGroups} 人,需要凑满 ${koCheck} 强,可补位人数不足。请增加晋级人数或调大每组人数(如 ${koCheck} 人以上,或每组 ${Math.max(4, Math.ceil(a / Math.max(1, Math.floor(koCheck / 2))))} 人)。`);
+    throw new Error(`当前配置无法凑成淘汰赛：${a} 人分 ${numGroups} 组，各组前 2 名共 ${2 * numGroups} 人，需要凑满 ${koCheck} 强，可补位人数不足。请增加晋级人数或调大每组人数(如 ${koCheck} 人以上，或每组 ${Math.max(4, Math.ceil(a / Math.max(1, Math.floor(koCheck / 2))))} 人).`);
 
   // #2: a fresh draw must never inherit approval votes from a previous (undone) grouping.
   db.approvalVotes = db.approvalVotes.filter((v) => v.competition_id !== cid);
@@ -578,13 +578,13 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   const groups: number[][] = Array.from({ length: numGroups }, () => []);
   topIds.forEach((id, i) => groups[Math.floor(i / G)].push(id));
 
-  // 余下 c 名补进「最弱」的 c 个组(成员种子和最大者最弱;并列随机)→ 这些组变 G+1 人
+  // 余下 c 名补进「最弱」的 c 个组（成员种子和最大者最弱；并列随机）→ 这些组变 G+1 人
   const leftovers = qualifiers.slice(base).map((r) => r.id);
   const strength = groups.map((g, idx) => ({ idx, sum: g.reduce((t, id) => t + (seedOfId.get(id) || 0), 0), r: Math.random() }));
   strength.sort((x, y) => y.sum - x.sum || x.r - y.r);
   leftovers.forEach((id, i) => groups[strength[i % strength.length].idx].push(id));
 
-  // 落位:非晋级者淘汰
+  // 落位：非晋级者淘汰
   const chosen = new Set(qualifiers.map((r) => r.id));
   for (const cand of compCands) if (!chosen.has(cand.id)) { cand.group_no = null; cand.eliminated = true; }
   groups.forEach((g, gi) => g.forEach((id) => {
@@ -597,8 +597,8 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   comp.groups_count = numGroups;
   comp.group_size = G;
   comp.ko_target = nextPow2(2 * numGroups); // ≤8 组→16,9-16 组→32,以此类推
-  comp.group_started_at = Date.now(); // legacy 锚点,仅供旧数据兜底
-  comp.group_matchday_starts = { 1: comp.group_started_at }; // 事实来源:第 1 比赛日真实开始的时刻
+  comp.group_started_at = Date.now(); // legacy 锚点，仅供旧数据兜底
+  comp.group_matchday_starts = { 1: comp.group_started_at }; // 事实来源：第 1 比赛日真实开始的时刻
   comp.nom_ends_at = null;
 
   const MODE: "approval" | "rr" = mode === "rr" || mode === "approval" ? mode : ((comp.group_mode as any) ?? "approval");
@@ -606,7 +606,7 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   if (thirdPlace != null) comp.third_place = thirdPlace;
 
   if (MODE === "approval") {
-    // 投票晋级制:不生成对阵。每个「比赛日」开放 groups_per_day 个组的组内投票(每人 2 票)。
+    // 投票晋级制：不生成对阵。每个「比赛日」开放 groups_per_day 个组的组内投票（每人 2 票）。
     const perDay = groupsPerDay > 0 ? Math.floor(groupsPerDay) : (comp.groups_per_day && comp.groups_per_day > 0 ? comp.groups_per_day : 2);
     const RD = roundDays > 0 ? roundDays : (comp.group_round_days ?? 0);
     comp.groups_per_day = perDay;
@@ -620,7 +620,7 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
     return;
   }
 
-  // ── 循环赛(1v1)模式:每组各自 circle method 生成轮次,再全局装箱成「每个比赛日 ≤ DAY_CAP 场」──
+  // ── 循环赛（1v1）模式：每组各自 circle method 生成轮次，再全局装箱成「每个比赛日 ≤ DAY_CAP 场」──
   const K = perRound > 0 ? perRound : (comp.group_per_round ?? 0);
   const RD = roundDays > 0 ? roundDays : (comp.group_round_days ?? 0);
   const DAY_CAP = comp.group_day_cap == null ? GROUP_DAY_CAP : (comp.group_day_cap <= 0 ? Infinity : comp.group_day_cap); // 0 = 无限制
@@ -657,17 +657,17 @@ export function advanceGroupMatchday(cid: number): { done: boolean; message: str
     comp.group_matchday = cur + 1;
     const now = Date.now();
     comp.group_round_ends_at = comp.group_round_days ? now + comp.group_round_days * 86400_000 : null;
-    comp.group_matchday_starts = { ...(comp.group_matchday_starts || {}), [cur + 1]: now }; // 事实来源:真实开始的时刻
+    comp.group_matchday_starts = { ...(comp.group_matchday_starts || {}), [cur + 1]: now }; // 事实来源：真实开始的时刻
     writeDb(db);
     return { done: false, message: `已结算第 ${cur} 个比赛日，进入第 ${cur + 1}/${count} 个比赛日。` };
   }
   comp.group_round_ends_at = null;
   writeDb(db);
-  return { done: true, message: `已结算最后一个比赛日（第 ${cur}/${count}）。现在可以开淘汰赛。` };
+  return { done: true, message: `已结算最后一个比赛日(第 ${cur}/${count})。现在可以开淘汰赛。` };
 }
 
 /** group → knockout (World Cup): winners + runners-up + best remaining → nextPow2(2×组数).
- *  若最后填补名额在「小组胜负 + 提名票」上并列,则对并列者开循环赛加赛决定。 */
+ *  若最后填补名额在「小组胜负 + 提名票」上并列，则对并列者开循环赛加赛决定。 */
 export function startKnockout(cid: number) {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
@@ -692,7 +692,7 @@ export function startKnockout(cid: number) {
     const members = db.candidates.filter((cd) => cd.competition_id === cid && cd.group_no === g);
     const stats: Row[] = members.map((mem) => {
       if (approval) {
-        // 投票晋级制:以组内得票数作为排名依据(等价地塞进 wins/vf,复用下方同一套排序/补位)
+        // 投票晋级制：以组内得票数作为排名依据（等价地塞进 wins/vf,复用下方同一套排序/补位）
         const a2 = appr!.get(mem.id) || 0;
         return { id: mem.id, wins: a2, vf: a2, votes: nomCount.get(mem.id) || 0, groupRank: 0 };
       }
@@ -742,7 +742,7 @@ export function startKnockout(cid: number) {
 
   const advancers = [...autoAdv, ...(fillNeeded > 0 ? fillPool.slice(0, fillNeeded) : [])].sort(seedCmp);
   const bySeed = advancers.map((r) => r.id);
-  if (bySeed.length !== koTarget || !isPow2(bySeed.length)) throw new Error(`可晋级人数 ${bySeed.length} 无法凑成 ${koTarget} 强(检查小组与人数)。`);
+  if (bySeed.length !== koTarget || !isPow2(bySeed.length)) throw new Error(`可晋级人数 ${bySeed.length} 无法凑成 ${koTarget} 强（检查小组与人数）。`);
   buildKnockout(db, comp, cid, bySeed);
   writeDb(db);
 }
@@ -820,7 +820,7 @@ export function advanceKnockout(cid: number) {
   }
   const thirdOn = comp.third_place !== false; // 默认进行季军战
 
-  // 季军战刚打完 → 定出 3/4 名,再用半决赛的两位胜者生成决赛
+  // 季军战刚打完 → 定出 3/4 名，再用半决赛的两位胜者生成决赛
   if (cur.some((m) => m.bronze)) {
     const semi = koMs.filter((m) => m.round_no === round - 1 && !m.bronze);
     const finalists = semi.map((m) => m.winner_id!).filter((x) => x != null) as number[];
@@ -843,7 +843,7 @@ export function advanceKnockout(cid: number) {
   }
   comp.ko_round_ends_at = comp.round_hours ? Date.now() + comp.round_hours * 3600_000 : null;
   if (winners.length === 2 && thirdOn) {
-    // 半决赛结束:两位败者先打季军战(单独一轮/一天),决赛推迟到季军战之后生成
+    // 半决赛结束：两位败者先打季军战（单独一轮/一天），决赛推迟到季军战之后生成
     const losers = cur.map((m) => (m.winner_id === m.a_id ? m.b_id : m.a_id)).filter((x) => x != null) as number[];
     db.matchups.push({ id: ++db.seq.matchup, competition_id: cid, stage: "knockout", round_no: round + 1, group_no: null, slot: 0, a_id: losers[0], b_id: losers[1], winner_id: null, decided: false, bronze: true });
     writeDb(db);
@@ -944,7 +944,7 @@ function dropMatchups(db: DB, cid: number, pred: (m: Matchup) => boolean): void 
   db.matchVotes = db.matchVotes.filter((v) => !removed.has(v.matchup_id));
 }
 
-/** 撤回上一步阶段推进(仅一步):finished→knockout、knockout→上一轮/小组赛、小组赛→提名。 */
+/** 撤回上一步阶段推进（仅一步）：finished→knockout、knockout→上一轮/小组赛、小组赛→提名。 */
 export function undoLastTransition(cid: number): string {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
@@ -1005,12 +1005,12 @@ export function undoLastTransition(cid: number): string {
     comp.group_matchday = comp.group_matchday_count ?? 1;
     comp.group_round_ends_at = null;
     writeDb(db);
-    return "已撤回:加赛 → 回到小组赛(末比赛日)。";
+    return "已撤回：加赛 → 回到小组赛（末比赛日）。";
   }
   throw new Error("当前阶段没有可撤销的步骤。");
 }
 
-/** 按当前票数重算当前轮:group 锁定小组赛、knockout 结算当前轮、finished 重算决赛。 */
+/** 按当前票数重算当前轮：group 锁定小组赛、knockout 结算当前轮、finished 重算决赛。 */
 export function resettleCurrentRound(cid: number): string {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
@@ -1045,12 +1045,12 @@ export function resettleCurrentRound(cid: number): string {
     const seedOf = seedLookup(db, cid);
     for (const m of db.matchups) if (m.competition_id === cid && m.stage === "playoff") decide(m, counts, seedOf);
     writeDb(db);
-    return "已重算:加赛按当前票数结算(如需进入淘汰赛请再点『结算加赛 → 生成淘汰赛』)。";
+    return "已重算：加赛按当前票数结算（如需进入淘汰赛请再点『结算加赛 → 生成淘汰赛』）。";
   }
   throw new Error("当前阶段无需重算。");
 }
 
-/** 设置提名约束:每人提名上限(userLimit,0=不限)、进入小组赛的最低提名票(minVotes,0=不限)。 */
+/** 设置提名约束：每人提名上限（userLimit,0=不限）、进入小组赛的最低提名票（minVotes,0=不限）。 */
 export function setNominationRules(cid: number, userLimit: number, minVotes: number) {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
@@ -1072,7 +1072,7 @@ export function setPhaseDeadline(cid: number, hours: number) {
   writeDb(db);
 }
 
-/** 设置每比赛日最多对局数(0/负数 → 默认 4)。 */
+/** 设置每比赛日最多对局数（0/负数 → 默认 4）。 */
 export function setGroupDayCap(cid: number, cap: number): void {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
@@ -1081,7 +1081,7 @@ export function setGroupDayCap(cid: number, cap: number): void {
   writeDb(db);
 }
 
-/** 调整"节奏":后续小组赛比赛日的天数 / 后续淘汰赛每轮的小时数(0 表示不改)。 */
+/** 调整"节奏":后续小组赛比赛日的天数 / 后续淘汰赛每轮的小时数（0 表示不改）。 */
 export function setPace(cid: number, groupRoundDays: number, roundHours: number) {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);

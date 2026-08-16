@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     ensureSchema();
     const vid = await getVoterId();
     const ip = clientIp(req);
-    // 反刷:每个身份每分钟最多 10 条;IP 上限仅作粗粒度防滥用,门禁关闭时放宽(NAT 共享)
+    // 反刷：每个身份每分钟最多 10 条；IP 上限仅作粗粒度防滥用，门禁关闭时放宽（NAT 共享）
     if (rateLimited("cmt:" + vid, 10, 60_000) || rateLimited("cmtip:" + ip, gateOn() ? 20 : 120, 60_000))
       return NextResponse.json({ error: "评论太频繁，请稍后再试。" }, { status: 429 });
     const comp = getActiveCompetition();

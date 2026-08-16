@@ -22,7 +22,7 @@ export interface Competition {
   title_en?: string | null; title_ja?: string | null; desc_en?: string | null; desc_ja?: string | null; short_en?: string | null; short_ja?: string | null;
   target_size: number | null; groups_count: number | null;
   champion_id: number | null; ko_round: number | null; created_at: number;
-  third_place?: boolean | null; // 是否进行季军战(默认 true)
+  third_place?: boolean | null; // 是否进行季军战（默认 true）
   // ── timed schedule (epoch ms; null = not scheduled) ──
   nom_ends_at: number | null; group_ends_at: number | null; ko_round_ends_at: number | null;
   auto_size: number | null;
@@ -32,15 +32,15 @@ export interface Competition {
   // ── group stage matchdays (round-robin split into rounds) ──
   group_matchday: number | null; group_matchday_count: number | null;
   group_per_round: number | null; group_round_days: number | null; group_round_ends_at: number | null;
-  group_day_cap: number | null;   // 每比赛日最多对局数(null=默认 4)
+  group_day_cap: number | null;   // 每比赛日最多对局数（null=默认 4）
   group_size: number | null;      // 每组人数(null=默认 4;余数补进弱组成 G+1 人组)
-  group_mode: "approval" | "rr" | null; // 小组赛玩法:approval=每人组内投2票取前二(默认);rr=两两对阵循环赛
-  groups_per_day: number | null;  // approval 模式:每个比赛日开放几个组投票(默认 2)
-  group_started_at: number | null; // 小组赛开赛时间(legacy anchor,仅供旧数据兜底用)
-  // 每个比赛日"真实"开始的时间戳(在 startGroups / advanceGroupMatchday 发生的那一刻记录),
-  // 作为"日期"列的事实来源——已发生的比赛日永远读这里,不会因为之后调整节奏(setPace)
+  group_mode: "approval" | "rr" | null; // 小组赛玩法：approval=每人组内投2票取前二（默认）；rr=两两对阵循环赛
+  groups_per_day: number | null;  // approval 模式：每个比赛日开放几个组投票（默认 2）
+  group_started_at: number | null; // 小组赛开赛时间（legacy anchor,仅供旧数据兜底用）
+  // 每个比赛日"真实"开始的时间戳（在 startGroups / advanceGroupMatchday 发生的那一刻记录），
+  // 作为"日期"列的事实来源——已发生的比赛日永远读这里，不会因为之后调整节奏（setPace）
   // 或提前/延后手动结算而回溯性地改写历史日期。尚未到达的比赛日没有 entry,由 mdDate()
-  // 用"最后一个已知比赛日 + 当前节奏"来估算(这部分会随节奏调整而更新,这是正确行为)。
+  // 用"最后一个已知比赛日 + 当前节奏"来估算（这部分会随节奏调整而更新，这是正确行为）。
   group_matchday_starts: Record<number, number> | null;
   ko_target: number | null;
   ko_seed_ids: number[] | null; playoff_slots: number | null;
@@ -55,7 +55,7 @@ export interface Candidate {
 export interface Matchup {
   id: number; competition_id: number; stage: "group" | "knockout" | "playoff"; round_no: number;
   group_no: number | null; slot: number; a_id: number; b_id: number;
-  winner_id: number | null; decided: boolean; matchday?: number | null; bronze?: boolean; // bronze=true: 季军战(半决赛两败者)
+  winner_id: number | null; decided: boolean; matchday?: number | null; bronze?: boolean; // bronze=true: 季军战（半决赛两败者）
 }
 interface NominationVote { competition_id: number; candidate_id: number; voter_id: string; created_at?: number; device_bucket?: string | null; ip?: string | null; }
 interface MatchVote { matchup_id: number; voter_id: string; choice_id: number; created_at?: number; device_bucket?: string | null; ip?: string | null; }
@@ -281,7 +281,7 @@ export function removeOwnCandidate(cid: number, candidateId: number, voterId: st
   if (!c) return { error: "角色不存在。" };
   if ((c.added_by || "") !== voterId) return { error: "只能移除你自己提名的角色。" };
   const votes = db.nominationVotes.filter((v) => v.competition_id === cid && v.candidate_id === candidateId).length;
-  if (votes > 0) return { error: "已经有人投票,无法移除。" };
+  if (votes > 0) return { error: "已经有人投票，无法移除。" };
   db.candidates = db.candidates.filter((x) => x.id !== candidateId);
   db.nominationVotes = db.nominationVotes.filter((v) => v.candidate_id !== candidateId);
   writeDb(db);
@@ -430,7 +430,7 @@ function castApprovalVoteOnce(cid: number, candidateId: number, voterId: string,
   if (!cand || cand.group_no == null) return { error: "角色不存在或未分组。", status: 404 };
   const perDay = comp.groups_per_day && comp.groups_per_day > 0 ? comp.groups_per_day : 2;
   const cur = comp.group_matchday ?? 1;
-  if (groupBatch(cand.group_no, perDay) !== cur) return { error: "本组当前未开放投票,请等待对应比赛日。", status: 400 };
+  if (groupBatch(cand.group_no, perDay) !== cur) return { error: "本组当前未开放投票，请等待对应比赛日。", status: 400 };
 
   const g = cand.group_no;
   const mine = db.approvalVotes.filter((v) => v.competition_id === cid && v.group_no === g && v.voter_id === voterId);
@@ -440,7 +440,7 @@ function castApprovalVoteOnce(cid: number, candidateId: number, voterId: string,
     writeDb(db);
     return { picked: false, count: mine.length - 1 };
   }
-  if (mine.length >= 2) return { error: "每组最多投 2 票,请先取消一个再选。", status: 400 };
+  if (mine.length >= 2) return { error: "每组最多投 2 票，请先取消一个再选。", status: 400 };
   db.approvalVotes.push({ competition_id: cid, group_no: g, candidate_id: candidateId, voter_id: voterId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
   writeDb(db);
   return { picked: true, count: mine.length + 1 };
@@ -452,7 +452,7 @@ function castMatchVoteOnce(cid: number, matchupId: number, voterId: string, choi
   const m = db.matchups.find((x) => x.id === matchupId && x.competition_id === cid);
   if (!m) return { error: "对战不存在。", status: 404 };
   if (m.decided) return { error: "该场已结束，不能再投票。", status: 400 };
-  // 小组赛分轮:只有「当前比赛日」的对战可投票
+  // 小组赛分轮：只有「当前比赛日」的对战可投票
   if (m.stage === "group") {
     const comp = db.competitions.find((c) => c.id === cid);
     const cur = comp?.group_matchday ?? null;

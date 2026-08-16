@@ -6,9 +6,9 @@ import { getActiveCompetition, projectSchedule, type SchedMatch } from "./engine
  * Builds the plain-text reminder that the 公众号 sends about the CURRENT round.
  *
  * Two delivery modes share this one generator:
- *  - Manual mass-send (群发, 1/day, no cert): one text for everyone → it can't carry a
+ *  - Manual mass-send （群发， 1/day, no cert）： one text for everyone → it can't carry a
  *    per-user link, so it ends with a call-to-action to reply「投票」and get one.
- *  - Pull-style passive reply (被动回复): we know the sender's openid, so pass `voteUrl`
+ *  - Pull-style passive reply （被动回复）： we know the sender's openid, so pass `voteUrl`
  *    (a per-user tokenised link) and it's embedded directly.
  *
  * Content: ① current round (pairings) ② preview of upcoming rounds ③ vote link / CTA.
@@ -50,18 +50,18 @@ export function buildRoundReminder(opts: ReminderOpts = {}): { text: string; has
     if (cur) {
       hasRound = true;
       L.push(`【${name}】小组赛 第 ${cur.matchday}/${cur.matchdayCount} 比赛日`);
-      if (cur.end) L.push(`投票截止:${fmt(cur.end)}`);
+      if (cur.end) L.push(`投票截止：${fmt(cur.end)}`);
       if (sc.mode === "approval") {
-        L.push("", "本轮开放投票的组(每人每组 2 票,取前二晋级):");
-        for (const g of (cur.groups || [])) L.push(`· ${groupLabel(g.groupNo)} 组:${g.members.join("、")}`);
+        L.push("", "本轮开放投票的组（每人每组 2 票，取前二晋级）：");
+        for (const g of (cur.groups || [])) L.push(`· ${groupLabel(g.groupNo)} 组：${g.members.join("、")}`);
       } else {
-        L.push("", "本轮对阵:");
+        L.push("", "本轮对阵：");
         for (const m of cur.matches) L.push(`· ${nm(m.a)} vs ${nm(m.b)}`);
       }
       const up: string[] = [];
       for (const d of sc.group.filter((d) => d.matchday > cur.matchday)) up.push(`· 第 ${d.matchday} 比赛日(${fmt(d.start)} 起)`);
       for (const r of sc.knockout) up.push(`· ${koZh(r.label)}(${r.start ? fmt(r.start) : "待定"} 起)`);
-      if (up.length && upN) { L.push("", "接下来:"); L.push(...up.slice(0, upN)); }
+      if (up.length && upN) { L.push("", "接下来："); L.push(...up.slice(0, upN)); }
     }
   } else if (comp.phase === "knockout") {
     const nonPending = sc.knockout.filter((r) => !r.pending);
@@ -69,25 +69,25 @@ export function buildRoundReminder(opts: ReminderOpts = {}): { text: string; has
     if (cur) {
       hasRound = true;
       L.push(`【${name}】淘汰赛 · ${koZh(cur.label)}`);
-      if (cur.end) L.push(`投票截止:${fmt(cur.end)}`);
-      L.push("", "本轮对阵:");
+      if (cur.end) L.push(`投票截止：${fmt(cur.end)}`);
+      L.push("", "本轮对阵：");
       for (const m of cur.matches) L.push(`· ${nm(m.a)} vs ${nm(m.b)}`);
       const later = sc.knockout.filter((r) => r.contestants < cur.contestants);
-      if (later.length && upN) { L.push("", "接下来:"); L.push(...later.slice(0, upN).map((r) => `· ${koZh(r.label)}(${r.start ? fmt(r.start) : "待定"} 起)`)); }
+      if (later.length && upN) { L.push("", "接下来："); L.push(...later.slice(0, upN).map((r) => `· ${koZh(r.label)}(${r.start ? fmt(r.start) : "待定"} 起)`)); }
     }
   } else if (comp.phase === "playoff") {
     hasRound = true;
     L.push(`【${name}】第三名加赛进行中`);
-    L.push("并列者循环赛,争夺最后的晋级名额。");
+    L.push("并列者循环赛，争夺最后的晋级名额。");
   } else if (comp.phase === "nomination") {
     L.push(`【${name}】提名进行中`);
-    if (comp.nom_ends_at) L.push(`提名截止:${fmt(comp.nom_ends_at)}`);
-    L.push("快来把你喜欢的角色加入提名池!");
+    if (comp.nom_ends_at) L.push(`提名截止：${fmt(comp.nom_ends_at)}`);
+    L.push("快来把你喜欢的角色加入提名池！");
   } else if (comp.phase === "finished") {
-    L.push(`【${name}】本届已结束,感谢参与!`);
+    L.push(`【${name}】本届已结束，感谢参与！`);
   }
 
   L.push("");
-  L.push(opts.voteUrl ? `👉 点此投票:${opts.voteUrl}` : "👉 在本公众号回复「投票」获取你的专属投票链接");
+  L.push(opts.voteUrl ? `👉 点此投票：${opts.voteUrl}` : "👉 在本公众号回复「投票」获取你的专属投票链接");
   return { text: L.join("\n"), hasRound, phase: comp.phase };
 }

@@ -69,7 +69,13 @@ export default function Rules() {
             return { segs: [{ t: side(m.a), b: wa }, { t: ` ${T("sched.vs")} `, b: false }, { t: side(m.b), b: wb }], done: m.decided };
           });
       const state: TLNode["state"] = d.current ? "current" : d.end && d.end < now ? "done" : phase === "group" && d.matchday < (sched.groupMatchday ?? 0) ? "done" : "upcoming";
-      nodes.push({ label: T("sched.md", { d: d.matchday, n: d.matchdayCount }), start: d.start, end: d.end, state, detail });
+      const gList = sched.mode === "approval"
+        ? (d.groups || []).map((g: any) => groupLabel(g.groupNo))
+        : [...new Set((d.matches || []).map((m: any) => m.groupNo).filter((g: any) => g != null))].sort((a: any, b: any) => a - b).map((g: any) => groupLabel(g));
+      const mdLabel = gList.length
+        ? T("sched.mdGroups", { d: d.matchday, n: d.matchdayCount, g: gList.join("、") })
+        : T("sched.md", { d: d.matchday, n: d.matchdayCount });
+      nodes.push({ label: mdLabel, start: d.start, end: d.end, state, detail });
     }
     for (const r of (sched.knockout || [])) {
       const detail: TLDetail[] = (r.matches || []).map((m: SMatch) => {

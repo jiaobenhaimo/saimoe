@@ -72,7 +72,7 @@ export function debugVote(voters = 40): { matches: number; votes: number } {
   } else if (comp.phase === "playoff") {
     open = db.matchups.filter((m) => m.competition_id === comp.id && m.stage === "playoff" && !m.decided);
   } else {
-    throw new Error("当前阶段没有开放的对战(需小组赛/加赛/淘汰赛)。");
+    throw new Error("当前阶段没有开放的对战（需小组赛/加赛/淘汰赛）。");
   }
   let votes = 0;
   for (let v = 0; v < voters; v++) {
@@ -99,7 +99,7 @@ export function debugSimulate(o: { count?: number; groups?: number; advance?: nu
   const log: string[] = [];
 
   const seeded = debugSeed(count, "模拟赛 · Simulate");
-  log.push(`创建模拟赛(#${seeded.id}),角色 ${seeded.added} 个`);
+  log.push(`创建模拟赛(#${seeded.id})，角色 ${seeded.added} 个`);
   debugNominate(count * 20);
   log.push(`灌入提名票(约 ${count * 20} 张)`);
 
@@ -132,6 +132,6 @@ export function debugSimulate(o: { count?: number; groups?: number; advance?: nu
   }
 
   const c = getActiveCompetition();
-  log.push(c?.phase === "finished" ? "✅ 已决出冠军" : `结束于阶段:${c?.phase}`);
+  log.push(c?.phase === "finished" ? "✅ 已决出冠军" : `结束于阶段：${c?.phase}`);
   return { log };
 }

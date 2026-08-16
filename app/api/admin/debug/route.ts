@@ -17,7 +17,7 @@ function debugOn(): boolean {
 
 // GET → let the (authenticated) admin UI know whether the debug panel should show.
 export async function GET(req: NextRequest) {
-  if (!authed(req)) return NextResponse.json({ error: "未授权:管理员令牌不正确。" }, { status: 401 });
+  if (!authed(req)) return NextResponse.json({ error: "未授权：管理员令牌不正确。" }, { status: 401 });
   return NextResponse.json({ enabled: debugOn() });
 }
 

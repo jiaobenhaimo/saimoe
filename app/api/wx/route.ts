@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // WeChat Official-Account message callback.
-// Configure in mp.weixin.qq.com → 设置与开发 → 基本配置 → 服务器配置(URL = https://<域名>/api/wx).
+// Configure in mp.weixin.qq.com → 设置与开发 → 基本配置 → 服务器配置(URL = https://<域名>/api/wx)。
 // Env: WX_TOKEN (must match the Token you set there), PUBLIC_BASE_URL (for the vote link).
 // NOTE: the actual WeChat send/receive can only be verified after deployment; the pure
 // pieces (signature check, XML build, token signing, reminder text) are unit-tested.
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     const link = `${BASE()}/v?k=${encodeURIComponent(signToken(m.from, LINK_TTL_MS))}`;
     reply = buildRoundReminder({ voteUrl: link }).text; // ① 本轮 ② 预告 ③ 专属投票链接
   } else {
-    reply = buildRoundReminder({}).text; // 其它消息:也给本轮信息 + 引导回复「投票」领链接
+    reply = buildRoundReminder({}).text; // 其它消息：也给本轮信息 + 引导回复「投票」领链接
   }
   return new Response(textReplyXml(m.from, m.to, reply), { status: 200, headers: { "content-type": "application/xml" } });
 }

@@ -6,11 +6,11 @@ import { adminOk } from "@/lib/adminauth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// 服务端环境诊断:Node 版本、数据/备份目录、以及系统 DNS 解析(用于观察是否被污染)。
+// 服务端环境诊断：Node 版本、数据/备份目录、以及系统 DNS 解析（用于观察是否被污染）。
 // 服务端本身已不再访问 Bangumi(所有 Bangumi 交互都在浏览器端完成),故不做出站 HTTPS 探测。
 export async function GET(req: NextRequest) {
   if (!apiEnabled()) return NextResponse.json({ error: "服务 API 已禁用。", disabled: true }, { status: 503 });
-  if (!adminOk(req.headers.get("x-admin-token"))) return NextResponse.json({ error: "未授权:管理员令牌不正确。" }, { status: 401 });
+  if (!adminOk(req.headers.get("x-admin-token"))) return NextResponse.json({ error: "未授权：管理员令牌不正确。" }, { status: 401 });
 
   const out: any = {
     ts: Date.now(),

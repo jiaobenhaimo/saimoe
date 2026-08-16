@@ -69,11 +69,31 @@ async function computeDeviceBucket(): Promise<string> {
   try { localStorage.setItem("saimoe_db", hash); } catch {}
   return hash;
 }
+/** 带超时的 fetch:Bangumi/网络卡住时不会让按钮一直转，到点报错让用户可重试。 */
+async function fetchT(url: string, opts: RequestInit = {}, ms = 10_000): Promise<Response> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), ms);
+  try { return await fetch(url, { ...opts, signal: ac.signal }); }
+  finally { clearTimeout(timer); }
+}
+
 function api(path: string, opts: RequestInit = {}) {
   const headers = new Headers(opts.headers);
   if (FP) headers.set("x-fp", FP);
   if (DB_BUCKET) headers.set("x-db", DB_BUCKET);
   return fetch(path, { ...opts, headers, cache: "no-store" });
+}
+
+// ── optimistic nomination helpers: 服务器慢时先本地生效，再由 load() 对齐真实数据 ──
+function optimisticNomVote(nom: any, candidateId: number): any {
+  if (!nom?.pool) return nom;
+  const pool = nom.pool.map((p: any) =>
+    p.id === candidateId ? { ...p, voted: !p.voted, votes: Math.max(0, (p.votes || 0) + (p.voted ? -1 : 1)) } : p);
+  return { ...nom, pool, myCount: Math.max(0, (nom.myCount || 0) + (nom.pool.find((p: any) => p.id === candidateId)?.voted ? -1 : 1)) };
+}
+function optimisticNomRemove(nom: any, candidateId: number): any {
+  if (!nom?.pool) return nom;
+  return { ...nom, pool: nom.pool.filter((p: any) => p.id !== candidateId) };
 }
 
 // ── optimistic vote helpers: mutate a shallow copy so the UI reacts before the server replies ──
@@ -103,7 +123,7 @@ function optimisticPlayoff(pl: any, matchupId: number, choiceId: number): any {
   return { ...pl, matchups: flipChoice(pl.matchups, matchupId, choiceId) };
 }
 
-// 浏览器直接加载 Bangumi 图片(用户网络可达,不经服务端);统一转成方形 grid 尺寸。
+// 浏览器直接加载 Bangumi 图片（用户网络可达，不经服务端）；统一转成方形 grid 尺寸。
 function imgSrc(url?: string | null): string {
   if (!url) return "";
   return url.replace(/(\/pic\/crt\/)[a-z](\/)/, "$1g$2");
@@ -119,10 +139,10 @@ function Avatar({ c, lg }: { c: Slim | null; lg?: boolean }) {
   return <img className={"av" + (lg ? " lg" : "")} src={src} alt={c.name} referrerPolicy="no-referrer" loading="lazy" onError={() => setBroke(true)} />;
 }
 
-// 主名按 UI 语言:中文→中文名,英文→英文名,日文→原名;缺失时回退原(日文)名。
+// 主名按 UI 语言：中文→中文名，英文→英文名，日文→原名；缺失时回退原（日文）名。
 const primaryName = (c: Slim, lang: Lang) => lang === "zh" ? (c.nameCn || c.name) : lang === "en" ? (c.nameEn || c.name) : c.name;
 const label = (c: Slim | null, lang: Lang) => (c ? primaryName(c, lang) : "—");
-// 副行:非日文 UI 时补显日文(原)名(若与主名不同),并附作品名。
+// 副行：非日文 UI 时补显日文（原）名（若与主名不同），并附作品名。
 const sub = (c: Slim | null, lang: Lang) => {
   if (!c) return "";
   const primary = primaryName(c, lang);
@@ -167,6 +187,7 @@ function useLang(): [Lang, (l: Lang) => void] {
 export default function Page() {
   const [state, setState] = useState<any>(null);
   const [voting, setVoting] = useState<Set<number>>(new Set()); // ids with an in-flight vote (instant button feedback)
+  const [nomPending, setNomPending] = useState<Set<string>>(new Set()); // pool/搜索结果里正在提交的项（即时反馈）
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState(false);
   const [view, setView] = useState<string | null>(null); // which phase's section to show (null = follow current)
@@ -236,13 +257,13 @@ export default function Page() {
     return () => window.removeEventListener("pagehide", onHide);
   }, []);
 
-  // 角色搜索:v0 只有 POST /v0/search/characters。把它发成 CORS「简单请求」(text/plain)绕过预检;
-  // 能否成功取决于 Bangumi 是否给 POST 附跨域头,失败则提示改用「搜作品名」导入。
+  // 角色搜索：v0 只有 POST /v0/search/characters。把它发成 CORS「简单请求」(text/plain)绕过预检；
+  // 能否成功取决于 Bangumi 是否给 POST 附跨域头，失败则提示改用「搜作品名」导入。
   const search = async () => {
     const kw = q.trim(); if (!kw) return;
     setSearching(true); setSearchErr(""); setHits(null); setSubHits(null); setImportMsg("");
     try {
-      const r = await fetch("https://api.bgm.tv/v0/search/characters?limit=20", {
+      const r = await fetchT("https://api.bgm.tv/v0/search/characters?limit=20", {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=UTF-8", Accept: "application/json" },
         body: JSON.stringify({ keyword: kw }),
@@ -252,21 +273,21 @@ export default function Page() {
       const arr = Array.isArray(j?.data) ? j.data : Array.isArray(j?.list) ? j.list : [];
       const seen = new Set<string>();
       const items = arr
-        .filter((c: any) => c && c.name && (c.type == null || c.type === 1)) // 只留真正的角色(排除机体/舰船/组织团体)
+        .filter((c: any) => c && c.name && (c.type == null || c.type === 1)) // 只留真正的角色（排除机体/舰船/组织团体）
         .map((c: any) => ({ bgmId: "c" + c.id, name: c.name, nameCn: "", nameEn: "", image: c.images?.grid || c.images?.medium || "" }))
         .filter((c: any) => !seen.has(c.bgmId) && (seen.add(c.bgmId), true));
       setHits(items);
       if (items.length === 0) setSearchErr(T("search.trysubject"));
-    } catch { setSearchErr(T("search.fail", { err: "跨域被拦截,请改用搜作品名导入" })); setHits([]); }
+    } catch { setSearchErr(T("search.fail", { err: "跨域被拦截，请改用搜作品名导入" })); setHits([]); }
     finally { setSearching(false); }
   };
 
-  // 浏览器直接调 Bangumi 老接口 GET /search/subject(GET 支持跨域,无需代理/服务端)
+  // 浏览器直接调 Bangumi 老接口 GET /search/subject(GET 支持跨域，无需代理/服务端)
   const searchSubjects = async () => {
     const kw = subQ.trim(); if (!kw) return;
     setSubSearching(true); setImportMsg(""); setSubHits(null); setHits(null); setSearchErr("");
     try {
-      const r = await fetch(`https://api.bgm.tv/search/subject/${encodeURIComponent(kw)}?type=2&responseGroup=large&max_results=20`, { headers: { Accept: "application/json" } });
+      const r = await fetchT(`https://api.bgm.tv/search/subject/${encodeURIComponent(kw)}?type=2&responseGroup=large&max_results=20`, { headers: { Accept: "application/json" } });
       const ct = r.headers.get("content-type") || "";
       if (!r.ok || !ct.includes("json")) { setImportMsg(T("subject.neterr")); setSubHits([]); return; }
       const j = await r.json();
@@ -294,10 +315,10 @@ export default function Page() {
       return await r.json();
     } finally { busyRef.current = false; }
   };
-  // ── 日本产地软校验(方案 A):查 bangumi 作品 tag 是否含「日本」。返回 true/false/null(null=查不了,不阻断) ──
+  // ── 日本产地软校验（方案 A）：查 bangumi 作品 tag 是否含「日本」。返回 true/false/null(null=查不了，不阻断) ──
   const subjectHasJP = async (subjectId: string | number): Promise<boolean | null> => {
     try {
-      const d = await (await fetch(`https://api.bgm.tv/v0/subjects/${encodeURIComponent(String(subjectId))}`, { headers: { Accept: "application/json" } })).json();
+      const d = await (await fetchT(`https://api.bgm.tv/v0/subjects/${encodeURIComponent(String(subjectId))}`, { headers: { Accept: "application/json" } })).json();
       const names: string[] = [
         ...((Array.isArray(d?.tags) ? d.tags : []).map((t: any) => (typeof t === "string" ? t : t?.name || ""))),
         ...((Array.isArray(d?.meta_tags) ? d.meta_tags : []).map((m: any) => (typeof m === "string" ? m : m?.name || ""))),
@@ -307,7 +328,7 @@ export default function Page() {
   };
   const characterHasJP = async (rawId: string | number): Promise<boolean | null> => {
     try {
-      const subs = await (await fetch(`https://api.bgm.tv/v0/characters/${encodeURIComponent(String(rawId))}/subjects`, { headers: { Accept: "application/json" } })).json();
+      const subs = await (await fetchT(`https://api.bgm.tv/v0/characters/${encodeURIComponent(String(rawId))}/subjects`, { headers: { Accept: "application/json" } })).json();
       const ids = (Array.isArray(subs) ? subs : []).map((s: any) => s?.id).filter(Boolean).slice(0, 3);
       if (!ids.length) return null;
       for (const id of ids) { const jp = await subjectHasJP(id); if (jp) return true; }
@@ -317,17 +338,24 @@ export default function Page() {
 
   const nominate = async (h: any) => {
     setImportMsg("");
-    await post({ batch: [{ bgmId: h.bgmId, name: h.name, nameCn: h.nameCn, image: h.image }] });
-    await load();
-    // 软校验:提交后再查产地,非日本(明确 false)才警告;查不了(null)不打扰
+    const key = "a" + h.bgmId;
+    if (nomPending.has(key)) return;
+    setNomPending((s2) => new Set(s2).add(key));
+    try {
+      const j = await post({ batch: [{ bgmId: h.bgmId, name: h.name, nameCn: h.nameCn, image: h.image }] });
+      if (j?.error) setImportMsg(j.error);
+    } catch { setImportMsg(T("net.slow")); }
+    finally { setNomPending((s2) => { const n = new Set(s2); n.delete(key); return n; }); }
+    void load(); // 后台刷新提名池
+    // 软校验（纯浏览器端，慢也不阻塞界面）：非日本（明确 false）才警告；查不了（null）不打扰
     const rawId = String(h.bgmId).replace(/^c/, "");
-    if (rawId) { const jp = await characterHasJP(rawId); if (jp === false) setImportMsg(T("jp.warn.char")); }
+    if (rawId) void characterHasJP(rawId).then((jp) => { if (jp === false) setImportMsg(T("jp.warn.char")); }).catch(() => {});
   };
-  // 浏览器直接调 GET(取角色列表 + 逐个补中文名),再交服务端存储;顺带记录作品名。
+  // 浏览器直接调 GET(取角色列表 + 逐个补中文名),再交服务端存储；顺带记录作品名。
   const importSubject = async (subjectId: string, subjectName: string) => {
     setImportMsg(T("import.progress", { name: subjectName }));
     try {
-      const r = await fetch(`https://api.bgm.tv/v0/subjects/${encodeURIComponent(subjectId)}/characters`, { headers: { Accept: "application/json" } });
+      const r = await fetchT(`https://api.bgm.tv/v0/subjects/${encodeURIComponent(subjectId)}/characters`, { headers: { Accept: "application/json" } });
       if (!r.ok) { setImportMsg(T("import.fail", { err: "HTTP " + r.status })); return; }
       const arr = await r.json();
       const chars = (Array.isArray(arr) ? arr : [])
@@ -335,12 +363,12 @@ export default function Page() {
         .map((c: any) => ({ rawId: c.id, bgmId: "c" + c.id, name: c.name, nameCn: "", nameEn: "", image: c.images?.grid || c.images?.medium || "", subjectName }))
         .slice(0, 60);
       if (!chars.length) { setImportMsg(T("import.fail", { err: "no characters" })); return; }
-      // 补中文名:逐个取角色详情 infobox 的「简体中文名」(小并发,尽力而为)
+      // 补中文名：逐个取角色详情 infobox 的「简体中文名」（小并发，尽力而为）
       for (let i = 0; i < chars.length; i += 6) {
-        setImportMsg(T("import.progress", { name: `${subjectName}（${i}/${chars.length}）` }));
+        setImportMsg(T("import.progress", { name: `${subjectName}(${i}/${chars.length})` }));
         await Promise.all(chars.slice(i, i + 6).map(async (ch: any) => {
           try {
-            const d = await (await fetch(`https://api.bgm.tv/v0/characters/${ch.rawId}`, { headers: { Accept: "application/json" } })).json();
+            const d = await (await fetchT(`https://api.bgm.tv/v0/characters/${ch.rawId}`, { headers: { Accept: "application/json" } })).json();
             const box = Array.isArray(d?.infobox) ? d.infobox : [];
             const it = box.find((x: any) => typeof x?.key === "string" && (x.key.includes("简体中文名") || x.key === "中文名"));
             if (it && typeof it.value === "string") ch.nameCn = it.value;
@@ -351,7 +379,7 @@ export default function Page() {
       }
       const batch = chars.map((c: any) => ({ bgmId: c.bgmId, name: c.name, nameCn: c.nameCn, nameEn: c.nameEn || "", image: c.image, subjectName: c.subjectName }));
       const j = await post({ batch });
-      const jp = await subjectHasJP(subjectId); // 方案 A:软校验,仅在明确非日本时追加提醒
+      const jp = await subjectHasJP(subjectId); // 方案 A:软校验，仅在明确非日本时追加提醒
       const warn = jp === false ? " " + T("jp.warn.subject") : "";
       setImportMsg((j?.error ? T("import.fail", { err: j.error }) : T("import.done", { name: subjectName, added: j?.added ?? 0, imported: chars.length })) + warn);
       await load();
@@ -364,16 +392,35 @@ export default function Page() {
   const nomVote = async (candidateId: number) => {
     setNomErr("");
     if (!canVote) { setNomErr(T("gate.readonly")); return; }
-    const r = await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "nominate", candidateId }) });
-    const j = await r.json().catch(() => ({}));
-    if (j?.error) setNomErr(j.error);
-    await load();
+    const key = "n" + candidateId;
+    if (nomPending.has(key)) return;
+    setNomPending((s2) => new Set(s2).add(key));
+    // 先本地生效：服务端往返慢也不会「点了没反应」
+    setState((prev: any) => prev ? { ...prev, nomination: optimisticNomVote(prev.nomination, candidateId) } : prev);
+    try {
+      const r = await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "nominate", candidateId }) });
+      const j = await r.json().catch(() => ({}));
+      if (j?.error) setNomErr(j.error);
+    } catch { setNomErr(T("net.slow")); }
+    finally {
+      setNomPending((s2) => { const n = new Set(s2); n.delete(key); return n; });
+      void load(); // 后台对齐，不阻塞交互
+    }
   };
   const nomRemove = async (candidateId: number) => {
     setNomErr("");
-    const j = await post({ remove: candidateId });
-    if (j?.error) setNomErr(j.error);
-    await load();
+    const key = "r" + candidateId;
+    if (nomPending.has(key)) return;
+    setNomPending((s2) => new Set(s2).add(key));
+    setState((prev: any) => prev ? { ...prev, nomination: optimisticNomRemove(prev.nomination, candidateId) } : prev);
+    try {
+      const j = await post({ remove: candidateId });
+      if (j?.error) setNomErr(j.error);
+    } catch { setNomErr(T("net.slow")); }
+    finally {
+      setNomPending((s2) => { const n = new Set(s2); n.delete(key); return n; });
+      void load();
+    }
   };
   const matchVote = async (matchupId: number, choiceId: number) => {
     if (!canVote || voting.has(matchupId)) return;
@@ -412,13 +459,13 @@ export default function Page() {
     knockout: !!(state?.playoff || (state?.knockout && state.knockout.rounds?.length)),
     finished: !!champion,
   };
-  // map the live phase onto one of the chips (playoff & finished ride under 淘汰赛)
+  // map the live phase onto one of the chips （playoff & finished ride under 淘汰赛）
   const currentKey = phase === "playoff" || phase === "finished" ? "knockout" : phase;
   const viewKey = (view && hasView[view]) ? view : currentKey;
   const showKey = viewKey === "finished" ? "knockout" : viewKey; // 冠军 chip shows the knockout section (champion + bracket)
   const viewingPast = viewKey !== currentKey;
 
-  // matches open for voting RIGHT NOW (drives the "现在投票" panel), for the current phase only
+  // matches open for voting RIGHT NOW (drives the "现在投票" panel)， for the current phase only
   const openMatches: Match[] =
     phase === "group" ? (state?.group?.mode === "approval" ? [] : (state?.group?.groups ?? []).flatMap((g: any) => g.matchups ?? []).filter((m: Match) => m.live && !m.decided && m.a && m.b))
     : phase === "playoff" ? (state?.playoff?.matchups ?? []).filter((m: Match) => m.live && !m.decided && m.a && m.b)
@@ -426,7 +473,7 @@ export default function Page() {
     : [];
   const openVoted = openMatches.filter((m) => m.myChoice != null).length;
 
-  // 下一批对局(下一比赛日 / 下一轮的预告)
+  // 下一批对局（下一比赛日 / 下一轮的预告）
   const nextMatches: Match[] =
     phase === "group" ? (state?.group?.mode === "approval" ? [] : (state?.group?.groups ?? []).flatMap((g: any) => g.matchups ?? []).filter((m: Match) => (m.matchday ?? 0) === ((state?.group?.matchday ?? 0) + 1) && m.a && m.b))
     : [];
@@ -577,7 +624,7 @@ export default function Page() {
                 <div className="rrow" key={h.bgmId}>
                   <Avatar c={{ id: 0, name: h.name, nameCn: null, image: h.image }} />
                   <div className="meta"><div className="nm">{h.name}</div><div className="sub">{T("nom.charTag")} · #{h.bgmId}</div></div>
-                  <button className="btn" onClick={() => nominate(h)}>{T("nom.plus")}</button>
+                  <button className="btn" disabled={nomPending.has("a" + h.bgmId)} aria-busy={nomPending.has("a" + h.bgmId)} onClick={() => nominate(h)}>{nomPending.has("a" + h.bgmId) ? "…" : T("nom.plus")}</button>
                 </div>
               ))}
             </div>
@@ -599,8 +646,8 @@ export default function Page() {
                   <Avatar c={p} />
                   <div className="meta"><div className="nm">{label(p, lang)}</div><div className="sub">{sub(p, lang)}</div></div>
                   <div className="votecell num"><div className="c">{p.votes}</div><div className="l">{T("nom.voteLabel")}</div></div>
-                  <button className={"btn" + (p.voted ? " solid" : "")} onClick={() => nomVote(p.id)}>{p.voted ? T("nom.voted") : T("nom.vote")}</button>
-                  {p.mine && p.votes === 0 && <button className="btn ghost" onClick={() => nomRemove(p.id)}>{T("nom.remove")}</button>}
+                  <button className={"btn" + (p.voted ? " solid" : "")} disabled={nomPending.has("n" + p.id)} aria-busy={nomPending.has("n" + p.id)} onClick={() => nomVote(p.id)}>{nomPending.has("n" + p.id) ? "…" : p.voted ? T("nom.voted") : T("nom.vote")}</button>
+                  {p.mine && p.votes === 0 && <button className="btn ghost" disabled={nomPending.has("r" + p.id)} onClick={() => nomRemove(p.id)}>{nomPending.has("r" + p.id) ? "…" : T("nom.remove")}</button>}
                 </div>
               ))}
             </div>
@@ -715,7 +762,7 @@ export default function Page() {
         </>
       )}
 
-      {/* ── THIRD-PLACE PLAYOFF (shown within the 淘汰赛 view) ── */}
+      {/* ── THIRD-PLACE PLAYOFF （shown within the 淘汰赛 view） ── */}
       {!loading && comp && showKey === "knockout" && state?.playoff && (
         <>
           <div className="sec"><h2>{T("playoff.title")}</h2><div className="meta2">{T("playoff.desc", { n: state.playoff.slots })}</div></div>
@@ -795,7 +842,7 @@ function MatchCard({ m, onVote, ko, lang, compact }: { m: Match; onVote: (mid: n
   const pill = status === "live" ? T("vote.badge.live") : status === "done" ? T("vote.badge.done") : T("vote.badge.upcoming");
   const sideCls = (id: number | undefined) =>
     "side" + (m.myChoice === id ? " picked" : "") + (m.decided && m.winnerId === id ? " win" : "");
-  // 赛中不显示任何票数/得票率;结算后才公布绝对票数
+  // 赛中不显示任何票数/得票率；结算后才公布绝对票数
   const numA = revealed ? String(m.votesA ?? 0) : "";
   const numB = revealed ? String(m.votesB ?? 0) : "";
 

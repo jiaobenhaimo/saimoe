@@ -62,7 +62,7 @@ export function detectAnomalies(cid: number): {
   byBucket.forEach((g, k) => {
     if (g.voters.size >= DEVICE_MIN)
       flags.push({ type: "device", by: "bucket", key: k, keyShort: short(k), identities: g.voters.size, votes: g.votes,
-        detail: `同一设备指纹关联 ${g.voters.size} 个投票身份、共 ${g.votes} 票(疑似一台设备多浏览器/无痕刷票)` });
+        detail: `同一设备指纹关联 ${g.voters.size} 个投票身份、共 ${g.votes} 票（疑似一台设备多浏览器/无痕刷票）` });
   });
 
   // 2) one IP → many identities (higher bar: NAT legitimately shares an IP)
@@ -75,7 +75,7 @@ export function detectAnomalies(cid: number): {
   byIp.forEach((g, k) => {
     if (g.voters.size >= IP_MIN)
       flags.push({ type: "ip", by: "ip", key: k, keyShort: k, identities: g.voters.size, votes: g.votes,
-        detail: `同一 IP 关联 ${g.voters.size} 个身份、共 ${g.votes} 票(注意:NAT/校园网下多人可能共用 IP)` });
+        detail: `同一 IP 关联 ${g.voters.size} 个身份、共 ${g.votes} 票（注意：NAT/校园网下多人可能共用 IP）` });
   });
 
   // 3) burst: one identity casting many votes inside a short window
@@ -95,7 +95,7 @@ export function detectAnomalies(cid: number): {
     }
     if (best >= BURST_MIN)
       flags.push({ type: "burst", by: "voter", key: voter, keyShort: short(voter), votes: tsArr.length,
-        detail: `该身份在 ${Math.round(BURST_WINDOW_MS / 1000)} 秒内投出 ${best} 票(共 ${tsArr.length} 票),疑似脚本` });
+        detail: `该身份在 ${Math.round(BURST_WINDOW_MS / 1000)} 秒内投出 ${best} 票(共 ${tsArr.length} 票)，疑似脚本` });
   });
 
   // 4) coverage: one identity voted on nearly every match
@@ -145,8 +145,8 @@ export function projectTimeline(cid: number): TimelineItem[] {
   const koRoundsTotal = koTarget ? Math.max(1, Math.round(Math.log2(koTarget))) : 0;
 
   if (comp.phase === "nomination") {
-    items.push({ label: "提名截止", at: comp.nom_ends_at ?? null, note: comp.nom_ends_at ? "" : "未定时(需手动开赛)" });
-    items.push({ label: "小组赛开始", at: null, note: "提名截止后;比赛日数在开赛时确定" });
+    items.push({ label: "提名截止", at: comp.nom_ends_at ?? null, note: comp.nom_ends_at ? "" : "未定时（需手动开赛）" });
+    items.push({ label: "小组赛开始", at: null, note: "提名截止后；比赛日数在开赛时确定" });
     return items;
   }
 
