@@ -17,11 +17,23 @@ export function backupNow(): void {
   try {
     const file = dataFilePath();
     if (!fs.existsSync(file)) return; // nothing to back up yet
+    // Validate before snapshotting: copying a truncated/corrupt live file would poison the
+    // recovery path (db.ts restores from the newest snapshot), so skip and keep last-good.
+    const raw = fs.readFileSync(file, "utf8");
+    let parsed: any;
+    try { parsed = JSON.parse(raw); } catch { console.error("saimoe: skipping backup — live data file is not valid JSON"); return; }
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.competitions)) {
+      console.error("saimoe: skipping backup — live data file has unexpected shape");
+      return;
+    }
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
     const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19); // 2026-08-02T14-30-00
     const name = `saimoe-${ts}.json`;
     const dest = path.join(BACKUP_DIR, name);
-    fs.copyFileSync(file, dest);
+    // temp + rename so a crash mid-copy never leaves a half-written snapshot behind
+    const tmp = dest + ".tmp";
+    fs.writeFileSync(tmp, raw);
+    fs.renameSync(tmp, dest);
     prune(BACKUP_DIR);
   } catch (e) {
     console.error("saimoe: backup failed", e);

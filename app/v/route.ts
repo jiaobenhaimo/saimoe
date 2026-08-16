@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
   }
   const res = NextResponse.redirect(home);
   res.cookies.set(VOTER_COOKIE, signToken(openid, SESSION_TTL_MS), {
-    httpOnly: true, sameSite: "lax", secure: true, path: "/",
+    httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/",
     maxAge: Math.floor(SESSION_TTL_MS / 1000),
   });
   return res;

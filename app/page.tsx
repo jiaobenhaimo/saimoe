@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { t, roundLabelT, LANGS, type Lang } from "@/lib/i18n";
+import { t, roundLabelT, LANGS, groupLabel, type Lang } from "@/lib/i18n";
 
 type Slim = { id: number; name: string; nameCn: string | null; nameEn?: string | null; image: string | null; subjectName?: string | null };
 type PoolItem = Slim & { votes: number; voted: boolean; mine: boolean };
@@ -88,7 +88,7 @@ function optimisticApproval(group: any, candidateId: number): any {
   return { ...group, groups };
 }
 function flipChoice(list: any[] | undefined, matchupId: number, choiceId: number): any[] | undefined {
-  return list?.map((m: any) => m.id === matchupId ? { ...m, myChoice: choiceId } : m);
+  return list?.map((m: any) => m.id === matchupId ? { ...m, myChoice: m.myChoice === choiceId ? null : choiceId } : m);
 }
 function optimisticChoice(group: any, matchupId: number, choiceId: number): any {
   if (!group || group.mode !== "rr") return group;
@@ -182,6 +182,7 @@ export default function Page() {
   const [now, setNow] = useState(() => Date.now());
   const [sel, setSel] = useState<number | null>(null);
   const [nomErr, setNomErr] = useState("");
+  const [voteErr, setVoteErr] = useState(""); // shown during group/knockout (nomErr only renders in the nomination block)
   const [linkErr, setLinkErr] = useState(false);
   useEffect(() => { try { setLinkErr(new URLSearchParams(window.location.search).get("linkerr") === "1"); } catch {} }, []);
   const [lang, setLang] = useLang();
@@ -387,12 +388,13 @@ export default function Page() {
   const approvalVote = async (candidateId: number) => {
     if (!canVote || voting.has(candidateId)) return;
     setVoting((s) => new Set(s).add(candidateId));
+    setVoteErr("");
     // optimistic: toggle my pick locally right away
     setState((prev: any) => prev ? { ...prev, group: optimisticApproval(prev.group, candidateId) } : prev);
     try {
       const r = await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "approval", candidateId }) });
       const j = await r.json().catch(() => ({}));
-      if (j?.error) setNomErr(j.error);
+      if (j?.error) setVoteErr(j.error);
       await load();
     } finally { setVoting((s) => { const n = new Set(s); n.delete(candidateId); return n; }); }
   };
@@ -629,6 +631,7 @@ export default function Page() {
         <>
           {viewingPast && <div className="viewback">{T("view.back")}</div>}
           <div className="sec"><h2>{T("group.title")}</h2><div className="meta2">{comp.koTarget ? T((comp.groupsCount && comp.koTarget <= 2 * comp.groupsCount) ? "group.wc2" : "group.wc", { n: comp.koTarget }) : ""}</div></div>
+          {voteErr && <div className="hint" style={{ color: "var(--rose-deep)", fontWeight: 700 }}>{voteErr}</div>}
           {state.group.matchdayCount > 1 && <div className="hint">{T("group.matchday", { d: state.group.matchday, n: state.group.matchdayCount })}</div>}
           <div className="groupwrap">
             {state.group.mode === "approval"
@@ -644,7 +647,7 @@ export default function Page() {
                   </li>
                 );
                 const header = (
-                  <h3>{T("group.letter", { L: String.fromCharCode(65 + g.group) })}
+                  <h3>{T("group.letter", { L: groupLabel(g.group) })}
                     <span className="gstatus">{g.open ? T("gb.open", { n: g.myPicks, max: state.group.perGroupVotes }) : g.closed ? T("gb.closed") : T("gb.upcoming")}</span></h3>
                 );
                 // finished group: show advancers, tuck the rest behind an expander
@@ -671,7 +674,7 @@ export default function Page() {
                 const doneMs = g.matchups.filter((m: Match) => m.decided);
                 return (
                   <div className="group" key={g.group}>
-                    <h3>{T("group.letter", { L: String.fromCharCode(65 + g.group) })}</h3>
+                    <h3>{T("group.letter", { L: groupLabel(g.group) })}</h3>
                     <table className="stand">
                       <thead><tr><th>{T("th.rank")}</th><th>{T("th.char")}</th><th style={{ textAlign: "right" }}>{T("th.win")}</th><th style={{ textAlign: "right" }}>{T("th.votes")}</th></tr></thead>
                       <tbody>

@@ -1,17 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
+import { adminOk } from "@/lib/adminauth";
 import { apiEnabled } from "@/lib/flags";
 import { getState } from "@/lib/engine";
+import { groupLabel } from "@/lib/i18n";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function authed(req: NextRequest): boolean {
   const token = req.headers.get("x-admin-token");
-  return !!process.env.ADMIN_TOKEN && token === process.env.ADMIN_TOKEN;
+  return adminOk(token);
 }
 
 function esc(s: string): string {
-  const t = String(s ?? "").replace(/"/g, '""');
+  let t = String(s ?? "").replace(/"/g, '""');
+  // formula-injection guard: a leading =,+,-,@ (or tab/CR) can execute in Excel/Sheets — prefix with '
+  if (/^[=+\-@\t\r]/.test(t)) t = "'" + t;
   return /[",\n]/.test(t) ? `"${t}"` : t;
 }
 
@@ -48,13 +52,13 @@ export async function GET(req: NextRequest) {
       rows.push(["阶段", "组", "名次", "角色", "得票", "晋级"]);
       for (const g of state.group.groups) {
         (g.members ?? []).forEach((s: any, i: number) =>
-          rows.push(["小组赛", String.fromCharCode(65 + g.group), String(i + 1), s.nameCn || s.name, String(s.votes ?? ""), s.advancing ? "是" : ""]));
+          rows.push(["小组赛", groupLabel(g.group), String(i + 1), s.nameCn || s.name, String(s.votes ?? ""), s.advancing ? "是" : ""]));
       }
     } else {
       rows.push(["阶段", "组", "名次", "角色", "胜", "得票"]);
       for (const g of state.group.groups) {
         g.standings.forEach((s: any, i: number) =>
-          rows.push(["小组赛", String.fromCharCode(65 + g.group), String(i + 1), s.nameCn || s.name, String(s.wins), String(s.votesFor ?? "")]));
+          rows.push(["小组赛", groupLabel(g.group), String(i + 1), s.nameCn || s.name, String(s.wins), String(s.votesFor ?? "")]));
       }
     }
   } else if (state.nomination) {

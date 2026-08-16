@@ -133,8 +133,12 @@ export function getState(voterId: string) {
       const shaped = rows.map((r, i) => ({ ...r, rank: i, advancing: revealed && i < 2, votes: revealed ? r.votes : null }));
       return { group: g, day: batch, open, closed, upcoming, date: dayDate(batch), members: shaped };
     });
-    const myPickCount = (gNo: number) => db.approvalVotes.filter((v) => v.competition_id === comp.id && v.voter_id === voterId && v.group_no === gNo).length;
-    result.group = { mode: "approval", groups: groups.map((g) => ({ ...g, myPicks: myPickCount(g.group) })), matchday: curMd, matchdayCount: mdCount, groupsPerDay: perDay, perGroupVotes: 2 };
+    // one pass over my votes → per-group pick counts (was: a full approvalVotes scan per group)
+    const myByGroup = new Map<number, number>();
+    for (const v of db.approvalVotes)
+      if (v.competition_id === comp.id && v.voter_id === voterId)
+        myByGroup.set(v.group_no, (myByGroup.get(v.group_no) || 0) + 1);
+    result.group = { mode: "approval", groups: groups.map((g) => ({ ...g, myPicks: myByGroup.get(g.group) || 0 })), matchday: curMd, matchdayCount: mdCount, groupsPerDay: perDay, perGroupVotes: 2 };
   }
 
   // ── group block: returned whenever group matches exist, so it stays viewable in later phases ──
@@ -551,6 +555,15 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   const base = a - c;
   const numGroups = Math.max(1, Math.floor(base / G));
 
+  // #1: fail fast at config time if this (entrants, group size) can't fill the knockout.
+  //   auto-advancers = 2·groups; bracket = nextPow2(2·groups); the rest must cover the fill.
+  const koCheck = nextPow2(2 * numGroups);
+  if (a < koCheck)
+    throw new Error(`当前配置无法凑成淘汰赛:${a} 人分 ${numGroups} 组,各组前 2 名共 ${2 * numGroups} 人,需要凑满 ${koCheck} 强,可补位人数不足。请增加晋级人数或调大每组人数(如 ${koCheck} 人以上,或每组 ${Math.max(4, Math.ceil(a / Math.max(1, Math.floor(koCheck / 2))))} 人)。`);
+
+  // #2: a fresh draw must never inherit approval votes from a previous (undone) grouping.
+  db.approvalVotes = db.approvalVotes.filter((v) => v.competition_id !== cid);
+
   // 前 base 名随机分成 numGroups 个 G 人组
   const topIds = shuffle(qualifiers.slice(0, base).map((r) => r.id));
   const groups: number[][] = Array.from({ length: numGroups }, () => []);
@@ -890,6 +903,30 @@ export function poolSize(cid: number): number {
   return readDb().candidates.filter((c) => c.competition_id === cid).length;
 }
 
+/** #4: how many candidates clear nom_min_votes — the number startGroups actually ranks
+ *  (poolSize counts everyone, which can deadlock auto-open when a threshold is set). */
+export function qualifyingCount(cid: number): number {
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  const minVotes = comp?.nom_min_votes ?? 0;
+  const nomCount = new Map<number, number>();
+  for (const v of db.nominationVotes) if (v.competition_id === cid) nomCount.set(v.candidate_id, (nomCount.get(v.candidate_id) || 0) + 1);
+  return db.candidates.filter((c) => c.competition_id === cid && (nomCount.get(c.id) || 0) >= minVotes).length;
+}
+
+/** #5: can the current grouping actually fill the knockout bracket? Checked before advancing
+ *  the final matchday so we never commit "group done" and then fail to start the knockout. */
+export function canStartKnockout(cid: number): boolean {
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp) return false;
+  const grouped = db.candidates.filter((c) => c.competition_id === cid && c.group_no != null);
+  const numGroups = comp.groups_count ?? (grouped.length ? Math.max(...grouped.map((c) => c.group_no!)) + 1 : 0);
+  if (numGroups <= 0) return false;
+  const koTarget = comp.ko_target ?? nextPow2(2 * numGroups);
+  return grouped.length >= koTarget;
+}
+
 // ── undo / resettle ───────────────────────────────────────────
 
 function dropMatchups(db: DB, cid: number, pred: (m: Matchup) => boolean): void {
@@ -907,6 +944,7 @@ export function undoLastTransition(cid: number): string {
 
   if (comp.phase === "group") {
     dropMatchups(db, cid, (m) => m.stage === "group");
+    db.approvalVotes = db.approvalVotes.filter((v) => v.competition_id !== cid); // #2: don't let stale group votes survive the undo
     for (const c of db.candidates) if (c.competition_id === cid) { c.group_no = null; c.seed = null; c.eliminated = false; }
     comp.phase = "nomination";
     comp.target_size = null; comp.groups_count = null;
@@ -950,6 +988,16 @@ export function undoLastTransition(cid: number): string {
     writeDb(db);
     return "已撤回：冠军 → 回到决赛轮。";
   }
+  if (comp.phase === "playoff") {
+    dropMatchups(db, cid, (m) => m.stage === "playoff");
+    for (const c of db.candidates) if (c.competition_id === cid && c.group_no != null) c.eliminated = false; // playoff eliminated nobody permanently yet
+    comp.ko_seed_ids = null; comp.playoff_slots = null;
+    comp.phase = "group";
+    comp.group_matchday = comp.group_matchday_count ?? 1;
+    comp.group_round_ends_at = null;
+    writeDb(db);
+    return "已撤回:加赛 → 回到小组赛(末比赛日)。";
+  }
   throw new Error("当前阶段没有可撤销的步骤。");
 }
 
@@ -983,6 +1031,12 @@ export function resettleCurrentRound(cid: number): string {
     comp.champion_id = winners[0] ?? null;
     writeDb(db);
     return "已重算：决赛按当前票数结算。";
+  }
+  if (comp.phase === "playoff") {
+    const seedOf = seedLookup(db, cid);
+    for (const m of db.matchups) if (m.competition_id === cid && m.stage === "playoff") decide(m, counts, seedOf);
+    writeDb(db);
+    return "已重算:加赛按当前票数结算(如需进入淘汰赛请再点『结算加赛 → 生成淘汰赛』)。";
   }
   throw new Error("当前阶段无需重算。");
 }

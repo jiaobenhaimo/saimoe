@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { adminOk } from "@/lib/adminauth";
 import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, editCandidate, mergeCandidates } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
-import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline, setPace, setGroupDayCap, resolvePlayoff } from "@/lib/engine";
+import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline, setPace, setGroupDayCap, resolvePlayoff, canStartKnockout } from "@/lib/engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function authed(req: NextRequest): boolean {
   const token = req.headers.get("x-admin-token");
-  return !!process.env.ADMIN_TOKEN && token === process.env.ADMIN_TOKEN;
+  return adminOk(token);
 }
 
 export async function POST(req: NextRequest) {
@@ -72,7 +73,13 @@ export async function POST(req: NextRequest) {
     }
     if (action === "start_knockout") { startKnockout(comp.id); rec("结算小组赛 → 生成淘汰赛"); return NextResponse.json({ ok: true }); }
     if (action === "advance") { advanceKnockout(comp.id); rec("推进淘汰赛一轮"); return NextResponse.json({ ok: true }); }
-    if (action === "advance_group") { const r = advanceGroupMatchday(comp.id); rec(r.message); return NextResponse.json({ ok: true, message: r.message, done: r.done }); }
+    if (action === "advance_group") {
+      const isLast = (comp.group_matchday ?? 1) >= (comp.group_matchday_count ?? 1);
+      if (isLast && !canStartKnockout(comp.id)) return NextResponse.json({ error: "当前分组无法凑成淘汰赛,请先调整(晋级人数/每组人数)。" }, { status: 400 });
+      const r = advanceGroupMatchday(comp.id); rec(r.message);
+      if (r.done) { startKnockout(comp.id); rec("结算小组赛 → 生成淘汰赛"); }
+      return NextResponse.json({ ok: true, message: r.message, done: r.done });
+    }
     if (action === "resolve_playoff") { resolvePlayoff(comp.id); rec("结算第三名加赛 → 生成淘汰赛"); return NextResponse.json({ ok: true, message: "加赛已结算,淘汰赛已生成。" }); }
     if (action === "set_deadline") {
       setPhaseDeadline(comp.id, Number(body.hours) || 0);

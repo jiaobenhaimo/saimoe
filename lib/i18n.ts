@@ -206,6 +206,14 @@ export function t(lang: Lang, key: string, p?: Record<string, string | number>):
 }
 
 /** Translate a round-label code from the server ("final"/"semi"/"quarter"/"top:N"). */
+/** Group label that survives past 26 groups: A..Z, then AA, AB, … (#12). */
+export function groupLabel(n: number): string {
+  let s = "";
+  let x = Math.max(0, Math.floor(n));
+  do { s = String.fromCharCode(65 + (x % 26)) + s; x = Math.floor(x / 26) - 1; } while (x >= 0);
+  return s;
+}
+
 export function roundLabelT(lang: Lang, code: string): string {
   if (code === "final") return t(lang, "round.final");
   if (code === "semi") return t(lang, "round.semi");
