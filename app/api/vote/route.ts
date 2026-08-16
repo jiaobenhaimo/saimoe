@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema, toggleNomination, castMatchVote, castApprovalVote } from "@/lib/db";
+import { ensureSchema, toggleNomination, castMatchVote, castApprovalVote, resolveCandidate, freezeState } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getVoterId, getDeviceBucket } from "@/lib/voter";
 import { getSid } from "@/lib/sid";
@@ -46,12 +46,18 @@ export async function POST(req: NextRequest) {
     const comp = getActiveCompetition();
     if (!comp) return NextResponse.json({ error: "没有进行中的比赛。" }, { status: 400 });
 
+    // 维护冻结：停投期间一律不写票，admin 可安心改数据
+    const fz = freezeState(comp.id);
+    if (fz.active) return NextResponse.json({ error: fz.note || "系统维护中，暂停投票，请稍后再来。", frozen: true }, { status: 503 });
+
     const body = await req.json();
 
     // ── nomination upvote (toggle) ──
     if (body.type === "nominate") {
       if (comp.phase !== "nomination") return NextResponse.json({ error: "提名投票已结束。" }, { status: 400 });
-      const r = toggleNomination(comp.id, Number(body.candidateId), voterId, meta);
+      const cand = resolveCandidate(comp.id, body.bgmId ?? body.candidateId);
+      if (!cand) return NextResponse.json({ error: "角色不存在。" }, { status: 404 });
+      const r = toggleNomination(comp.id, cand.id, voterId, meta);
       if (!r) return NextResponse.json({ error: "角色不存在。" }, { status: 404 });
       if ("error" in r) return NextResponse.json({ error: r.error }, { status: 400 });
       return NextResponse.json({ ok: true, voted: r.voted });
@@ -60,7 +66,9 @@ export async function POST(req: NextRequest) {
     // ── group approval vote (approval mode: ≤2 picks per group) ──
     if (body.type === "approval") {
       if (comp.phase !== "group") return NextResponse.json({ error: "当前不在小组赛阶段。" }, { status: 400 });
-      const r = castApprovalVote(comp.id, Number(body.candidateId), voterId, meta);
+      const cand = resolveCandidate(comp.id, body.bgmId ?? body.candidateId);
+      if (!cand) return NextResponse.json({ error: "角色不存在。" }, { status: 404 });
+      const r = castApprovalVote(comp.id, cand.id, voterId, meta);
       if ("error" in r) return NextResponse.json({ error: r.error }, { status: r.status });
       return NextResponse.json({ ok: true, picked: r.picked, count: r.count });
     }
@@ -68,7 +76,9 @@ export async function POST(req: NextRequest) {
     // ── matchup vote (group or knockout) ──
     if (body.type === "match") {
       if (comp.phase !== "group" && comp.phase !== "knockout" && comp.phase !== "playoff") return NextResponse.json({ error: "当前没有开放的对战。" }, { status: 400 });
-      const r = castMatchVote(comp.id, Number(body.matchupId), voterId, Number(body.choiceId), meta);
+      const pick = resolveCandidate(comp.id, body.choiceBgmId ?? body.choiceId);
+      if (!pick) return NextResponse.json({ error: "无效的选择。" }, { status: 400 });
+      const r = castMatchVote(comp.id, Number(body.matchupId), voterId, pick.id, meta);
       if ("error" in r) return NextResponse.json({ error: r.error }, { status: r.status });
       return NextResponse.json({ ok: true, choice: r.choice });
     }

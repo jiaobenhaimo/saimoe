@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminOk } from "@/lib/adminauth";
-import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, editCandidate, mergeCandidates } from "@/lib/db";
+import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, editCandidate, mergeCandidates, setBlocklist, setFreeze } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline, setPace, setGroupDayCap, resolvePlayoff, canStartKnockout } from "@/lib/engine";
 
@@ -113,6 +113,16 @@ export async function POST(req: NextRequest) {
       if ("error" in r) return NextResponse.json({ error: r.error }, { status: 400 });
       rec(`合并角色 #${Number(body.fromId)} → #${Number(body.toId)}(迁移 ${r.moved} 票)`);
       return NextResponse.json({ ok: true, message: `已合并，迁移 ${r.moved} 张提名票。` });
+    }
+    if (action === "set_freeze") {
+      setFreeze(comp.id, { on: body.on, from: body.from ?? null, to: body.to ?? null, note: body.note });
+      rec(body.on ? "开启停投（维护）" : "更新停投设置");
+      return NextResponse.json({ ok: true, message: "停投设置已保存。" });
+    }
+    if (action === "set_blocklist") {
+      setBlocklist(comp.id, Array.isArray(body.tags) ? body.tags.map(String) : [], Array.isArray(body.subjects) ? body.subjects.map(String) : []);
+      rec("更新黑名单");
+      return NextResponse.json({ ok: true, message: "黑名单已保存。" });
     }
     if (action === "undo") { const message = undoLastTransition(comp.id); rec(`撤回上一步：${message}`); return NextResponse.json({ ok: true, message }); }
     if (action === "resettle") { const message = resettleCurrentRound(comp.id); rec(`重算本轮：${message}`); return NextResponse.json({ ok: true, message }); }

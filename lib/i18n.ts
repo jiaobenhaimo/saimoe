@@ -76,6 +76,11 @@ const D: Record<string, Entry> = {
   "nom.vote": { zh: "投一票", en: "Vote", ja: "投票" },
   "nom.remove": { zh: "移除", en: "Remove", ja: "削除" },
 
+  "freeze.now": { zh: "系统维护中，暂停投票", en: "Maintenance — voting paused", ja: "メンテナンス中：投票を停止しています" },
+  "freeze.plan": { zh: "维护预告：{from} 起暂停投票", en: "Scheduled maintenance: voting pauses from {from}", ja: "メンテナンス予告：{from} から投票を停止" },
+  "freeze.until": { zh: "预计 {to} 恢复", en: "expected back {to}", ja: "{to} 復旧予定" },
+  "nom.mergedInto": { zh: "已并入「{name}」，票数计入该角色", en: "merged into “{name}” — votes count there", ja: "「{name}」に統合：票はそちらに集計" },
+  "jp.filtered": { zh: "已隐藏 {n} 个非日本作品角色", en: "{n} non-Japanese-work characters hidden", ja: "日本作品でないキャラ {n} 件を非表示" },
   "net.slow": { zh: "网络较慢或连接失败，请稍后重试。", en: "Network is slow or unavailable — please retry.", ja: "通信が遅いか失敗しました。しばらくして再試行してください。" },
   "search.trysubject": { zh: "没搜到角色（或跨域受限）。试试下面的「搜作品名」导入。", en: "No character results (or blocked). Try \u201Csearch anime\u201D below.", ja: "キャラが見つかりません。下の「作品名で検索」をお試しください。" },
   "search.fail": { zh: "在线搜索失败（{err}）。", en: "Online search failed ({err}).", ja: "オンライン検索に失敗（{err}）。" },

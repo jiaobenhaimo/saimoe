@@ -1,4 +1,4 @@
-import { readDb, writeDb, commentCounts, approvalTally, groupBatch, type DB, type Competition, type Candidate, type Matchup } from "./db";
+import { readDb, writeDb, commentCounts, approvalTally, groupBatch, type DB, type Competition, type Candidate, type Matchup, nominationTally, freezeOf } from "./db";
 
 // ── reads ─────────────────────────────────────────────────────
 export function getActiveCompetition(): Competition | null {
@@ -25,12 +25,14 @@ export function getState(voterId: string) {
 
   const cands = db.candidates.filter((c) => c.competition_id === comp.id).sort((a, b) => a.id - b.id);
   const slim = (c: Candidate | undefined) =>
-    c ? { id: c.id, name: c.name, nameCn: c.name_cn, nameEn: c.name_en ?? null, image: c.image, subjectName: c.subject_name ?? null } : null;
+    c ? { id: c.id, bgmId: c.bgm_id, aliases: c.aliases || [], name: c.name, nameCn: c.name_cn, nameEn: c.name_en ?? null, image: c.image, subjectName: c.subject_name ?? null } : null;
 
   const base = {
     competition: {
       id: comp.id, title: comp.title, description: comp.description, shortName: comp.short_name ?? "", phase: comp.phase,
       titleEn: comp.title_en ?? "", titleJa: comp.title_ja ?? "", descEn: comp.desc_en ?? "", descJa: comp.desc_ja ?? "", shortEn: comp.short_en ?? "", shortJa: comp.short_ja ?? "",
+      blockedTags: comp.blocked_tags || [], blockedSubjects: comp.blocked_subjects || [],
+      freeze: freezeOf(comp),
       groupsCount: comp.groups_count, championId: comp.champion_id,
       targetSize: comp.target_size ?? null,
       nomEndsAt: comp.nom_ends_at ?? null, groupEndsAt: comp.group_ends_at ?? null, koRoundEndsAt: comp.ko_round_ends_at ?? null,
@@ -46,11 +48,17 @@ export function getState(voterId: string) {
   };
 
   if (comp.phase === "nomination") {
-    const nomCount = new Map<number, number>();
-    for (const v of db.nominationVotes) if (v.competition_id === comp.id) nomCount.set(v.candidate_id, (nomCount.get(v.candidate_id) || 0) + 1);
+    const { total: nomTotal, own: nomOwn } = nominationTally(db, comp.id);
+    const nameById = new Map(cands.map((c) => [c.id, c.name_cn || c.name]));
     const myNomSet = new Set(db.nominationVotes.filter((v) => v.competition_id === comp.id && v.voter_id === voterId).map((v) => v.candidate_id));
     const pool = cands
-      .map((c) => ({ ...slim(c)!, votes: nomCount.get(c.id) || 0, voted: myNomSet.has(c.id), mine: (c.added_by || "") === voterId }))
+      .map((c) => ({
+        ...slim(c)!,
+        // 上级显示合并组汇总票（同一人投多个只算一次）；子角色显示自己的票，另标注并入了谁
+        votes: c.parent_id == null ? (nomTotal.get(c.id) || 0) : (nomOwn.get(c.id) || 0),
+        mergedInto: c.parent_id != null ? (nameById.get(c.parent_id) || null) : null,
+        voted: myNomSet.has(c.id), mine: (c.added_by || "") === voterId,
+      }))
       .sort((x, y) => y.votes - x.votes || x.name.localeCompare(y.name));
     return { ...base, nomination: { pool, userLimit: comp.nom_user_limit ?? 0, minVotes: comp.nom_min_votes ?? 0, myCount: myNomSet.size } };
   }
@@ -91,10 +99,10 @@ export function getState(voterId: string) {
 
   // nomination ranking — kept for the "预选" view (read-only) after nomination closes
   {
-    const nomCount = new Map<number, number>();
-    for (const v of db.nominationVotes) if (v.competition_id === comp.id) nomCount.set(v.candidate_id, (nomCount.get(v.candidate_id) || 0) + 1);
+    const { total: nomTotal2 } = nominationTally(db, comp.id);
     result.nominationRanking = cands
-      .map((c) => ({ ...slim(c)!, votes: nomCount.get(c.id) || 0 }))
+      .filter((c) => c.parent_id == null) // 子角色票已汇总到上级，不重复出现
+      .map((c) => ({ ...slim(c)!, votes: nomTotal2.get(c.id) || 0 }))
       .sort((x, y) => y.votes - x.votes || x.name.localeCompare(y.name));
   }
 
@@ -316,32 +324,38 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
       };
 
       // Detailed projection so the rules page can show "which groups run on which day"
-      // before the draw. Pairings/members are unknowable now, but structure + dates are:
-      // groups open in batches of groups_per_day, one batch per matchday.
+      // before the draw. Only approval mode is predictable: groups open in batches of
+      // groups_per_day, one batch per matchday. Round-robin matchday count comes out of the
+      // circle-method packing at draw time, so we must NOT invent one here.
       const perDay = comp.groups_per_day && comp.groups_per_day > 0 ? comp.groups_per_day : 2;
       const isApproval = ((comp.group_mode as any) ?? "approval") === "approval";
-      const mdCount = isApproval ? Math.max(1, Math.ceil(groups / perDay)) : Math.max(1, comp.group_matchday_count ?? 1);
       const roundMs = (comp.group_round_days || 0) * DAY;
       const base = comp.nom_ends_at ?? null; // group stage starts when nomination closes
-      for (let d = 1; d <= mdCount; d++) {
-        const start = base != null ? base + (d - 1) * roundMs : null;
-        const end = start != null && roundMs ? start + roundMs : null;
-        const gs = isApproval
-          ? Array.from({ length: groups }, (_, i) => i).filter((g) => groupBatch(g, perDay) === d).map((g) => ({ groupNo: g, members: [] as string[] }))
-          : [];
-        out.group.push({ matchday: d, matchdayCount: mdCount, start, end, current: false, matches: [], groups: gs });
-      }
-      // knockout rounds: 1/8 → … → semi → [bronze] → final, paced by round_hours
-      let cursor = base != null && roundMs ? base + mdCount * roundMs : null;
-      const hrs = comp.round_hours ?? 0;
-      const thirdOn = comp.third_place !== false && out.koTarget >= 4;
-      for (let S = out.koTarget; S >= 2; S = S >> 1) {
-        if (S === 2 && thirdOn) {
-          out.knockout.push({ label: "bronze", contestants: 2, start: cursor, end: cursor != null && hrs ? cursor + hrs * HOUR : null, pending: true, matches: [] });
-          cursor = cursor != null && hrs ? cursor + hrs * HOUR : null;
+      // Dates are only meaningful with a pace set; otherwise the operator advances manually
+      // and pretending every stage lands on the same timestamp would be worse than "TBD".
+      const paced = base != null && roundMs > 0;
+      let mdCount = 0;
+      if (isApproval) {
+        mdCount = Math.max(1, Math.ceil(groups / perDay));
+        for (let d = 1; d <= mdCount; d++) {
+          const start = paced ? base! + (d - 1) * roundMs : null;
+          const end = paced ? base! + d * roundMs : null;
+          const gs = Array.from({ length: groups }, (_, i) => i)
+            .filter((g) => groupBatch(g, perDay) === d)
+            .map((g) => ({ groupNo: g, members: [] as string[] }));
+          out.group.push({ matchday: d, matchdayCount: mdCount, start, end, current: false, matches: [], groups: gs });
         }
-        out.knockout.push({ label: roundLabel(S), contestants: S, start: cursor, end: cursor != null && hrs ? cursor + hrs * HOUR : null, pending: true, matches: [] });
-        cursor = cursor != null && hrs ? cursor + hrs * HOUR : null;
+      }
+      // knockout rounds: … → semi → [bronze] → final, paced by round_hours when known
+      const hrs = comp.round_hours ?? 0;
+      let cursor = (paced && isApproval && hrs) ? base! + mdCount * roundMs : null;
+      const koT = out.koTarget ?? 0;
+      const thirdOn = comp.third_place !== false && koT >= 4;
+      const bump = () => { const at = cursor; if (cursor != null) cursor = cursor + hrs * HOUR; return at; };
+      for (let S = koT; S >= 2; S = S >> 1) {
+        if (S === 2 && thirdOn) { const at = bump(); out.knockout.push({ label: "bronze", contestants: 2, start: at, end: at != null ? at + hrs * HOUR : null, pending: true, matches: [] }); }
+        const at = bump();
+        out.knockout.push({ label: roundLabel(S), contestants: S, start: at, end: at != null ? at + hrs * HOUR : null, pending: true, matches: [] });
       }
     }
     return out;
@@ -566,9 +580,8 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   const comp = db.competitions.find((c) => c.id === cid);
   if (!comp || comp.phase !== "nomination") return; // idempotent
 
-  const nomCount = new Map<number, number>();
-  for (const v of db.nominationVotes) if (v.competition_id === cid) nomCount.set(v.candidate_id, (nomCount.get(v.candidate_id) || 0) + 1);
-  const compCands = db.candidates.filter((c) => c.competition_id === cid);
+  const { total: nomCount } = nominationTally(db, cid); // 汇总票：一人投了合并组里多个角色只算一次
+  const compCands = db.candidates.filter((c) => c.competition_id === cid && c.parent_id == null); // 子角色不单独参赛
   const minVotes = comp.nom_min_votes ?? 0;
   const ranked = compCands
     .map((c) => ({ id: c.id, votes: nomCount.get(c.id) || 0 }))
@@ -947,9 +960,8 @@ export function qualifyingCount(cid: number): number {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
   const minVotes = comp?.nom_min_votes ?? 0;
-  const nomCount = new Map<number, number>();
-  for (const v of db.nominationVotes) if (v.competition_id === cid) nomCount.set(v.candidate_id, (nomCount.get(v.candidate_id) || 0) + 1);
-  return db.candidates.filter((c) => c.competition_id === cid && (nomCount.get(c.id) || 0) >= minVotes).length;
+  const { total: nomCount } = nominationTally(db, cid);
+  return db.candidates.filter((c) => c.competition_id === cid && c.parent_id == null && (nomCount.get(c.id) || 0) >= minVotes).length;
 }
 
 /** #5: can the current grouping actually fill the knockout bracket? Checked before advancing

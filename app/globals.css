@@ -608,3 +608,43 @@ body { font-size: 15px; line-height: 1.6; }
   .admin-nav { position: static; flex-direction: row; flex-wrap: wrap; gap: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
   .admin-navbtn { flex: 0 0 auto; min-height: 40px; padding: 8px 12px; border: 1px solid var(--line); }
 }
+
+/* 黑名单等多行输入 */
+.field textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; resize: vertical; }
+.field textarea:focus-visible { outline: 2px solid var(--rose); outline-offset: 1px; }
+
+/* ═══════════ 投票按钮的即时反馈：忙 / 成功 ═══════════ */
+/* 忙：文字保持不动（不再换成「…」造成跳动），右侧叠一个细旋转指示 */
+.btn.pending, .side.pending { position: relative; pointer-events: none; }
+.btn.pending { color: transparent; }
+.btn.pending::after, .side.pending::after {
+  content: ""; position: absolute; top: 50%; left: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border: 2px solid currentColor; border-top-color: transparent; border-radius: 999px;
+  color: var(--rose-deep); animation: spin .6s linear infinite;
+}
+.side.pending::after { top: 12px; left: auto; right: 12px; margin: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 成功：轻微一弹 + 描边亮一下，给「已记录」的确认感 */
+.btn.flash { animation: pop .45s ease; }
+.side.flash { animation: pop .45s ease; }
+@keyframes pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.06); box-shadow: 0 0 0 4px var(--rose-soft); }
+  100% { transform: scale(1); box-shadow: none; }
+}
+
+/* 读屏专用：视觉上隐藏但仍可被朗读 */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .btn.pending::after, .side.pending::after { animation: none; }
+  .btn.flash, .side.flash { animation: none; }
+  .btn.flash { outline: 2px solid var(--rose); outline-offset: 1px; }
+}
+
+/* 投票失败提示：固定浮层，滚到任何位置都看得见（错误出现在页面底部等于没提示） */
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 60; max-width: min(92vw, 460px); padding: 12px 16px; border-radius: var(--r-md);
+  background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-sm); font-size: 14px; font-weight: 600; }
+.toast.err { border-color: var(--danger); color: var(--danger); }

@@ -67,6 +67,36 @@ export async function GET(req: NextRequest) {
     } else if (kind === "subject") {
       if (!/^\d+$/.test(id)) return NextResponse.json({ error: "无效 id。" }, { status: 400 });
       body = await up(`https://api.bgm.tv/v0/subjects/${id}`);
+    } else if (kind === "jpbatch") {
+      // item1：日本作品准入。逐个角色查它关联的「前三部」作品，任一部带「日本」标签即通过。
+      // 放在服务端做：一次请求代替浏览器几十次往返，且判定结果按角色缓存，第二次搜索几乎零成本。
+      const ids = (sp.get("ids") || "").split(",").map((x) => x.trim().replace(/^c/, "")).filter((x) => /^\d+$/.test(x)).slice(0, 40);
+      const out: Record<string, boolean> = {};
+      await Promise.all(ids.map(async (cid2) => {
+        const ck = "jp|" + cid2;
+        const c0 = cached(ck);
+        if (c0 !== null) { out[cid2] = !!c0.ok; return; }
+        try {
+          const subs = await up(`https://api.bgm.tv/v0/characters/${cid2}/subjects`);
+          const top3 = (Array.isArray(subs) ? subs : []).slice(0, 3);
+          if (!top3.length) { out[cid2] = false; put(ck, { ok: false }); return; }
+          const flags = await Promise.all(top3.map(async (t: any) => {
+            const sid = String(t?.id || "").replace(/\D/g, "");
+            if (!sid) return false;
+            const sk = "subj|" + sid;
+            let d = cached(sk);
+            if (d === null) { d = await up(`https://api.bgm.tv/v0/subjects/${sid}`); put(sk, d); }
+            const names = [
+              ...(Array.isArray(d?.tags) ? d.tags.map((x: any) => String(x?.name ?? x)) : []),
+              ...(Array.isArray(d?.meta_tags) ? d.meta_tags.map(String) : []),
+            ].map((x) => x.trim());
+            return names.includes("日本");
+          }));
+          const ok = flags.some(Boolean);
+          out[cid2] = ok; put(ck, { ok });
+        } catch { out[cid2] = true; } // 查不到不误杀（宁可放过，也不因网络问题把人挡掉）
+      }));
+      return NextResponse.json({ jp: out });
     } else if (kind === "charSubjects") {
       if (!/^\d+$/.test(id)) return NextResponse.json({ error: "无效 id。" }, { status: 400 });
       body = await up(`https://api.bgm.tv/v0/characters/${id}/subjects`);

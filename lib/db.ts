@@ -22,7 +22,11 @@ export interface Competition {
   title_en?: string | null; title_ja?: string | null; desc_en?: string | null; desc_ja?: string | null; short_en?: string | null; short_ja?: string | null;
   target_size: number | null; groups_count: number | null;
   champion_id: number | null; ko_round: number | null; created_at: number;
-  third_place?: boolean | null; // 是否进行季军战（默认 true）
+  third_place?: boolean | null;
+  /** item3：黑名单。命中即拒绝进入提名池（tag 取作品标签，作品取名称关键字）。 */
+  blocked_tags?: string[] | null; blocked_subjects?: string[] | null;
+  /** 维护冻结：freeze_on = 立即停投；freeze_from/to = 预约维护窗口（首页公告 + 窗口内停投）。 */
+  freeze_on?: boolean | null; freeze_from?: number | null; freeze_to?: number | null; freeze_note?: string | null; // 是否进行季军战（默认 true）
   // ── timed schedule (epoch ms; null = not scheduled) ──
   nom_ends_at: number | null; group_ends_at: number | null; ko_round_ends_at: number | null;
   auto_size: number | null;
@@ -49,6 +53,11 @@ export interface Candidate {
   id: number; competition_id: number; bgm_id: string; name: string; name_cn: string | null;
   image: string | null; group_no: number | null; seed: number | null; eliminated: boolean;
   subject_name: string | null; added_by: string | null; name_en: string | null;
+  /** 合并进来的旧 bangumi id（item1）：这些 id 都指向本角色，投票/去重都认。 */
+  aliases?: string[] | null;
+  /** 合并后的「上级」角色 id。子角色不删除、仍可投票、提名池分开显示，
+   *  但提名票数汇总到上级；排名/晋级只算上级。null = 自身就是上级。 */
+  parent_id?: number | null;
   // epoch ms a *user* self-nominated this (null for admin/subject-imported bulk → never swept)
   nominated_at?: number | null;
 }
@@ -246,7 +255,7 @@ export function ensureSchema(): void {
 export function createCompetition(title: string): number {
   const db = readDb();
   const id = ++db.seq.competition;
-  db.competitions.push({ id, title, description: null, short_name: null, title_en: null, title_ja: null, desc_en: null, desc_ja: null, short_en: null, short_ja: null, phase: "nomination", target_size: null, groups_count: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_size: null, group_mode: null, groups_per_day: null, group_started_at: null, group_matchday_starts: null, ko_target: null, ko_seed_ids: null, playoff_slots: null, third_place: null });
+  db.competitions.push({ id, title, description: null, short_name: null, title_en: null, title_ja: null, desc_en: null, desc_ja: null, short_en: null, short_ja: null, phase: "nomination", target_size: null, groups_count: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_size: null, group_mode: null, groups_per_day: null, group_started_at: null, group_matchday_starts: null, ko_target: null, ko_seed_ids: null, playoff_slots: null, third_place: null, blocked_tags: [], blocked_subjects: [], freeze_on: null, freeze_from: null, freeze_to: null, freeze_note: null });
   writeDb(db);
   return id;
 }
@@ -267,9 +276,10 @@ export function deleteCompetition(cid: number): void {
 /** Insert a candidate; returns false if (competition, bgm_id) already exists. */
 export function addCandidate(cid: number, bgmId: string, name: string, nameCn: string, image: string, subjectName = "", addedBy = "", nameEn = ""): boolean {
   const db = readDb();
-  if (db.candidates.some((c) => c.competition_id === cid && c.bgm_id === bgmId)) return false;
+  const dup = db.candidates.find((c) => c.competition_id === cid && (c.bgm_id === bgmId || (c.aliases || []).includes(bgmId)));
+  if (dup) return false; // 已存在，或曾作为别名被合并进某个角色
   const id = ++db.seq.candidate;
-  db.candidates.push({ id, competition_id: cid, bgm_id: bgmId, name, name_cn: nameCn || null, image: image || null, group_no: null, seed: null, eliminated: false, subject_name: subjectName || null, added_by: addedBy || null, name_en: nameEn || null, nominated_at: addedBy ? Date.now() : null });
+  db.candidates.push({ id, competition_id: cid, bgm_id: bgmId, name, name_cn: nameCn || null, image: image || null, group_no: null, seed: null, eliminated: false, subject_name: subjectName || null, added_by: addedBy || null, name_en: nameEn || null, aliases: [], parent_id: null, nominated_at: addedBy ? Date.now() : null });
   writeDb(db);
   return true;
 }
@@ -357,17 +367,23 @@ export function mergeCandidates(cid: number, fromId: number, toId: number): { mo
   const A = db.candidates.find((c) => c.id === fromId && c.competition_id === cid);
   const B = db.candidates.find((c) => c.id === toId && c.competition_id === cid);
   if (!A || !B) return { error: "角色不存在。" };
-  const bVoters = new Set(db.nominationVotes.filter((v) => v.competition_id === cid && v.candidate_id === toId).map((v) => v.voter_id));
-  let moved = 0;
-  for (const v of db.nominationVotes) {
-    if (v.competition_id === cid && v.candidate_id === fromId && !bVoters.has(v.voter_id)) {
-      v.candidate_id = toId; bVoters.add(v.voter_id); moved++;
-    }
+  // 目标取其所在合并组的根，避免链式/环形上级
+  let root = B;
+  const seen = new Set<number>([root.id]);
+  while (root.parent_id != null) {
+    const up = db.candidates.find((c) => c.id === root.parent_id && c.competition_id === cid);
+    if (!up || seen.has(up.id)) break;
+    root = up; seen.add(up.id);
   }
-  db.nominationVotes = db.nominationVotes.filter((v) => !(v.competition_id === cid && v.candidate_id === fromId));
-  db.candidates = db.candidates.filter((c) => !(c.id === fromId && c.competition_id === cid));
+  if (root.id === A.id) return { error: "目标角色已经并入该角色，不能反向合并。" };
+  // A 的现有子角色改挂到新的根，保持只有一层
+  for (const c of db.candidates) if (c.competition_id === cid && c.parent_id === A.id) c.parent_id = root.id;
+  A.parent_id = root.id;
+  // 票不搬家、A 也不删除：A 仍可投票并在提名池单独显示，票数在统计时汇总到 root
+  const voters = new Set(
+    db.nominationVotes.filter((v) => v.competition_id === cid && (v.candidate_id === A.id || v.candidate_id === root.id)).map((v) => v.voter_id));
   writeDb(db);
-  return { moved };
+  return { moved: voters.size };
 }
 
 export function removeCandidate(cid: number, candidateId: number): boolean {
@@ -381,6 +397,116 @@ export function removeCandidate(cid: number, candidateId: number): boolean {
   db.matchVotes = db.matchVotes.filter((v) => !ids.has(v.matchup_id));
   writeDb(db);
   return true;
+}
+
+/** 维护冻结状态。active = 现在是否停投；upcoming = 预约窗口（未开始时用于首页公告）。 */
+export interface FreezeInfo { active: boolean; manual: boolean; from: number | null; to: number | null; note: string; upcoming: boolean; }
+/** 纯函数版：调用方已经有 Competition 时用这个，避免再整库读一遍（getState 是热路径）。 */
+export function freezeOf(c: Competition | undefined, now = Date.now()): FreezeInfo {
+  const from = c?.freeze_from ?? null, to = c?.freeze_to ?? null;
+  const manual = !!c?.freeze_on;
+  const inWindow = from != null && now >= from && (to == null || now < to);
+  return { active: manual || inWindow, manual, from, to, note: c?.freeze_note || "", upcoming: from != null && now < from };
+}
+export function freezeState(cid: number, now = Date.now()): FreezeInfo {
+  const c = readDb().competitions.find((x) => x.id === cid);
+  return freezeOf(c, now);
+}
+/** 设置冻结（admin）。 */
+export function setFreeze(cid: number, o: { on?: boolean; from?: number | null; to?: number | null; note?: string }): void {
+  const db = readDb();
+  const c = db.competitions.find((x) => x.id === cid);
+  if (!c) return;
+  if (o.on !== undefined) c.freeze_on = !!o.on;
+  if (o.from !== undefined) c.freeze_from = o.from ?? null;
+  if (o.to !== undefined) c.freeze_to = o.to ?? null;
+  if (o.note !== undefined) c.freeze_note = (o.note || "").trim() || null;
+  writeDb(db);
+}
+
+/** 合并组：上级 id → 自身 + 全部子角色 id。 */
+export function mergeGroups(db: DB, cid: number): Map<number, number[]> {
+  const list = db.candidates.filter((c) => c.competition_id === cid);
+  const g = new Map<number, number[]>();
+  for (const c of list) if (c.parent_id == null) g.set(c.id, [c.id]);
+  for (const c of list) if (c.parent_id != null) {
+    const arr = g.get(c.parent_id);
+    if (arr) arr.push(c.id); else g.set(c.id, [c.id]); // 上级不存在时退化为独立角色
+  }
+  return g;
+}
+
+/** 提名票统计。上级角色按「合并组内不同投票人」计数，所以同一个人把 A 和 B 都投了只算 1 票；
+ *  子角色返回它自己的原始票数，仅用于展示（真正参与排名的是上级）。 */
+export function nominationTally(db: DB, cid: number): { total: Map<number, number>; own: Map<number, number> } {
+  const own = new Map<number, number>();
+  const byCand = new Map<number, Set<string>>();
+  for (const v of db.nominationVotes) {
+    if (v.competition_id !== cid) continue;
+    own.set(v.candidate_id, (own.get(v.candidate_id) || 0) + 1);
+    if (!byCand.has(v.candidate_id)) byCand.set(v.candidate_id, new Set());
+    byCand.get(v.candidate_id)!.add(v.voter_id);
+  }
+  const total = new Map<number, number>();
+  for (const [parent, ids] of mergeGroups(db, cid)) {
+    const voters = new Set<string>();
+    for (const id of ids) for (const vid of (byCand.get(id) || [])) voters.add(vid);
+    total.set(parent, voters.size);
+  }
+  for (const [id, n] of own) if (!total.has(id)) total.set(id, n);
+  return { total, own };
+}
+
+/** item3：读黑名单。 */
+export function getBlocklist(cid: number): { tags: string[]; subjects: string[] } {
+  const c = readDb().competitions.find((x) => x.id === cid);
+  return { tags: c?.blocked_tags || [], subjects: c?.blocked_subjects || [] };
+}
+/** item3：写黑名单（admin）。空行/重复自动清理。 */
+export function setBlocklist(cid: number, tags: string[], subjects: string[]): void {
+  const db = readDb();
+  const c = db.competitions.find((x) => x.id === cid);
+  if (!c) return;
+  const clean = (a: string[]) => [...new Set((a || []).map((x) => String(x).trim()).filter(Boolean))];
+  c.blocked_tags = clean(tags);
+  c.blocked_subjects = clean(subjects);
+  writeDb(db);
+}
+/** item3：某个（作品名、标签集合）是否被拉黑。大小写与空格不敏感，按「包含」匹配。
+ *  批量场景请先 getBlocklist 拿一次，再用 isBlockedBy —— 否则每个角色都要整库读一遍。 */
+export function isBlockedBy(bl: { tags: string[]; subjects: string[] }, subjectName: string, tags: string[] = []): string | null {
+  const { tags: bt, subjects: bs } = bl;
+  const norm = (x: string) => String(x || "").trim().toLowerCase();
+  const sn = norm(subjectName);
+  for (const b of bs) if (sn && norm(b) && sn.includes(norm(b))) return `作品「${b}」在黑名单中`;
+  const tn = (tags || []).map(norm);
+  for (const b of bt) if (norm(b) && tn.some((t) => t === norm(b))) return `标签「${b}」在黑名单中`;
+  return null;
+}
+export function isBlocked(cid: number, subjectName: string, tags: string[] = []): string | null {
+  return isBlockedBy(getBlocklist(cid), subjectName, tags);
+}
+
+/** item1：把任意标识符（内部 id、bangumi id 如 "c123"、或合并留下的别名）解析成候选角色。
+ *  投票接口对外以 bangumi id 为准，合并过的角色用旧 id 也能投到同一个人。 */
+export function resolveCandidate(cid: number, ref: string | number): Candidate | null {
+  const db = readDb();
+  return resolveIn(db, cid, ref);
+}
+function resolveIn(db: DB, cid: number, ref: string | number): Candidate | null {
+  const list = db.candidates.filter((c) => c.competition_id === cid);
+  const raw = String(ref ?? "").trim();
+  if (!raw) return null;
+  if (/^\d+$/.test(raw)) {
+    const n = Number(raw);
+    const byId = list.find((c) => c.id === n);
+    if (byId) return byId;                                  // 内部 id
+    const byBgmNum = list.find((c) => c.bgm_id === "c" + n || c.bgm_id === raw
+      || (c.aliases || []).includes("c" + n) || (c.aliases || []).includes(raw));
+    if (byBgmNum) return byBgmNum;                          // 裸数字当 bangumi id
+    return null;
+  }
+  return list.find((c) => c.bgm_id === raw || (c.aliases || []).includes(raw)) || null;
 }
 
 /** Toggle a nomination vote. Returns null if the candidate doesn't exist. */

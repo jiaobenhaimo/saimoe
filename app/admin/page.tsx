@@ -3,6 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { groupLabel } from "@/lib/i18n";
 
+/** epoch → <input type="datetime-local"> 需要的本地时间字符串。 */
+function toLocalInput(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 function fmtAbs(ms?: number | null): string {
   if (!ms) return "";
   try { return new Date(ms).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }); }
@@ -49,6 +56,13 @@ export default function Admin() {
   const [editId, setEditId] = useState<number | null>(null);
   const [eName, setEName] = useState(""); const [eCn, setECn] = useState(""); const [eEn, setEEn] = useState(""); const [eImg, setEImg] = useState(""); const [eSub, setESub] = useState("");
   const [mergeFrom, setMergeFrom] = useState<{ id: number; name: string } | null>(null);
+  // item3：黑名单（每行一条）
+  const [blkTags, setBlkTags] = useState("");
+  // 停投（维护）
+  const [fzFrom, setFzFrom] = useState("");
+  const [fzTo, setFzTo] = useState("");
+  const [fzNote, setFzNote] = useState("");
+  const [blkSubs, setBlkSubs] = useState("");
 
   // 网络诊断
   const [pinging, setPinging] = useState(false);
@@ -182,7 +196,8 @@ export default function Admin() {
   ];
 
   useEffect(() => {
-    if (comp) { setEditTitle(comp.title || ""); setEditDesc(comp.description || ""); setEditShort(comp.shortName || ""); setEditTitleEn(comp.titleEn || ""); setEditTitleJa(comp.titleJa || ""); setEditDescEn(comp.descEn || ""); setEditDescJa(comp.descJa || ""); setEditShortEn(comp.shortEn || ""); setEditShortJa(comp.shortJa || ""); setNUserLimit(comp.nomUserLimit || 0); setNMinVotes(comp.nomMinVotes || 0); }
+    if (comp) { setEditTitle(comp.title || ""); setEditDesc(comp.description || ""); setEditShort(comp.shortName || ""); setEditTitleEn(comp.titleEn || ""); setEditTitleJa(comp.titleJa || ""); setEditDescEn(comp.descEn || ""); setEditDescJa(comp.descJa || ""); setEditShortEn(comp.shortEn || ""); setEditShortJa(comp.shortJa || ""); setNUserLimit(comp.nomUserLimit || 0); setNMinVotes(comp.nomMinVotes || 0); setBlkTags((comp.blockedTags || []).join("\n")); setBlkSubs((comp.blockedSubjects || []).join("\n"));
+      setFzFrom(comp.freeze?.from ? toLocalInput(comp.freeze.from) : ""); setFzTo(comp.freeze?.to ? toLocalInput(comp.freeze.to) : ""); setFzNote(comp.freeze?.note || ""); }
   }, [comp?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const estGroups = Math.max(1, Math.floor(size / Math.max(2, groupSize)));
@@ -250,6 +265,27 @@ export default function Admin() {
       </>)}
       {active === "advance" && (<>
       <div className="admin-section">🎬 赛程推进</div>
+
+      {comp && (
+        <div className="card">
+          <h3>停止投票（维护）{state?.competition?.freeze?.active && <span className="gstatus" style={{ color: "var(--danger)" }}>进行中</span>}</h3>
+          <p className="hint">开启后用户无法投票/提名（接口一并拦截），方便你安心修数据。也可预约一个维护窗口，首页会提前公告。</p>
+          <div className="row3">
+            <div className="field"><label>维护开始（留空=不预约）</label>
+              <input type="datetime-local" value={fzFrom} onChange={(e) => setFzFrom(e.target.value)} /></div>
+            <div className="field"><label>预计恢复（可留空）</label>
+              <input type="datetime-local" value={fzTo} onChange={(e) => setFzTo(e.target.value)} /></div>
+            <div className="field"><label>公告文案（可留空用默认）</label>
+              <input value={fzNote} onChange={(e) => setFzNote(e.target.value)} placeholder="例如：系统维护中，暂停投票" /></div>
+          </div>
+          <button className={"btn" + (state?.competition?.freeze?.manual ? " danger solid" : " solid")} disabled={busy}
+            onClick={() => act("set_freeze", { on: !state?.competition?.freeze?.manual, from: fzFrom ? new Date(fzFrom).getTime() : null, to: fzTo ? new Date(fzTo).getTime() : null, note: fzNote })}>
+            {state?.competition?.freeze?.manual ? "恢复投票" : "立即停止投票"}
+          </button>{" "}
+          <button className="btn" disabled={busy}
+            onClick={() => act("set_freeze", { on: state?.competition?.freeze?.manual ?? false, from: fzFrom ? new Date(fzFrom).getTime() : null, to: fzTo ? new Date(fzTo).getTime() : null, note: fzNote })}>仅保存预约</button>
+        </div>
+      )}
 
       {(!comp || phase === "finished") && (
         <div className="card">
@@ -532,6 +568,21 @@ export default function Admin() {
       {active === "content" && (<>
       {/* ── 内容管理 ── */}
       {comp && (<div className="admin-section">🗂️ 内容管理</div>)}
+
+      {comp && (
+        <div className="card">
+          <h3>提名黑名单</h3>
+          <p className="hint">命中黑名单的角色无法进入提名池（已在池中的不会自动移除，需手动删）。每行一条，作品按名称「包含」匹配，标签需完全相同。</p>
+          <div className="row3">
+            <div className="field"><label>作品黑名单（按名称包含匹配）</label>
+              <textarea rows={4} value={blkSubs} onChange={(e) => setBlkSubs(e.target.value)} placeholder={"例如：\n某部不参赛的作品\n另一部"} /></div>
+            <div className="field"><label>标签黑名单（作品标签，需完全相同）</label>
+              <textarea rows={4} value={blkTags} onChange={(e) => setBlkTags(e.target.value)} placeholder={"例如：\n里番\n国产"} /></div>
+          </div>
+          <button className="btn solid" disabled={busy}
+            onClick={() => act("set_blocklist", { subjects: blkSubs.split("\n"), tags: blkTags.split("\n") })}>保存黑名单</button>
+        </div>
+      )}
 
       {phase === "nomination" && state?.nomination && (
         <div className="card">

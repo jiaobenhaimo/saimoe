@@ -89,12 +89,19 @@ async function firstOk<T>(tasks: (() => Promise<T>)[]): Promise<T> {
     });
   });
 }
-/** 搜索/取详情统一入口：direct = 浏览器直连；proxy = /api/bgm 代理。 */
+/** 搜索/取详情统一入口：direct = 浏览器直连；proxy = /api/bgm 代理。
+ *  第一次调用两条通道赛跑并「记住赢家」，之后只走赢家（失败才切另一条）。
+ *  这样既拿到快的那条，又不会每次都双倍打 Bangumi——上游限流本身就是搜不出来的原因之一。 */
+let bgmChannel: "direct" | "proxy" | null = null;
 async function bgmJson(direct: () => Promise<Response>, proxyQS: string, ms = 12_000): Promise<any> {
   const asJson = async (r: Response) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); };
+  const viaDirect = async () => asJson(await direct());
+  const viaProxy = async () => asJson(await fetchT("/api/bgm?" + proxyQS, { cache: "no-store" }, ms));
+  if (bgmChannel === "direct") { try { return await viaDirect(); } catch { bgmChannel = "proxy"; return viaProxy(); } }
+  if (bgmChannel === "proxy") { try { return await viaProxy(); } catch { bgmChannel = "direct"; return viaDirect(); } }
   return firstOk<any>([
-    async () => asJson(await direct()),
-    async () => asJson(await fetchT("/api/bgm?" + proxyQS, { cache: "no-store" }, ms)),
+    async () => { const v = await viaDirect(); bgmChannel ??= "direct"; return v; },
+    async () => { const v = await viaProxy(); bgmChannel ??= "proxy"; return v; },
   ]);
 }
 
@@ -147,17 +154,27 @@ function optimisticPlayoff(pl: any, matchupId: number, choiceId: number): any {
 // 浏览器直接加载 Bangumi 图片（用户网络可达，不经服务端）；统一转成方形 grid 尺寸。
 function imgSrc(url?: string | null): string {
   if (!url) return "";
-  return url.replace(/(\/pic\/crt\/)[a-z](\/)/, "$1g$2");
+  // item4：Bangumi 老接口（/search/subject）返回的是 http:// 链接，而本站是 HTTPS，
+  // 浏览器会按「混合内容」直接拦掉，表现就是图片一张都不显示。统一升到 https。
+  let u = url.trim();
+  if (u.startsWith("//")) u = "https:" + u;
+  u = u.replace(/^http:\/\//i, "https://");
+  return u.replace(/(\/pic\/crt\/)[a-z](\/)/, "$1g$2");
+}
+/** 直连图床失败时改走本站代理（部分网络访问不到 lain.bgm.tv）。 */
+function imgProxy(url: string): string {
+  return "/api/img?u=" + encodeURIComponent(url);
 }
 
 function initials(n?: string) { return n?.trim()?.[0]?.toUpperCase() || "?"; }
 
 function Avatar({ c, lg }: { c: Slim | null; lg?: boolean }) {
-  const [broke, setBroke] = useState(false);
+  const [stage, setStage] = useState<0 | 1 | 2>(0); // 0=直连 1=走代理 2=放弃用首字母
   if (!c) return null;
   const src = imgSrc(c.image);
-  if (!src || broke) return <div className={"av-ph" + (lg ? " lg" : "")}>{initials(c.name)}</div>;
-  return <img className={"av" + (lg ? " lg" : "")} src={src} alt={c.name} referrerPolicy="no-referrer" loading="lazy" onError={() => setBroke(true)} />;
+  if (!src || stage === 2) return <div className={"av-ph" + (lg ? " lg" : "")}>{initials(c.name)}</div>;
+  return <img className={"av" + (lg ? " lg" : "")} src={stage === 0 ? src : imgProxy(src)} alt={c.name}
+    referrerPolicy="no-referrer" loading="lazy" onError={() => setStage((v) => (v === 0 ? 1 : 2))} />;
 }
 
 // 主名按 UI 语言：中文→中文名，英文→英文名，日文→原名；缺失时回退原（日文）名。
@@ -209,6 +226,15 @@ export default function Page() {
   const [state, setState] = useState<any>(null);
   const [voting, setVoting] = useState<Set<number>>(new Set()); // ids with an in-flight vote (instant button feedback)
   const [nomPending, setNomPending] = useState<Set<string>>(new Set()); // pool/搜索结果里正在提交的项（即时反馈）
+  const [justDone, setJustDone] = useState<Set<string>>(new Set()); // 刚提交成功的项：短暂高亮一下，给一个「成功了」的确认
+  const [liveMsg, setLiveMsg] = useState(""); // 读屏播报（aria-live）
+  /** 成功后的收尾：闪一下 + 轻微触感 + 播报，让点击有明确回应。 */
+  const settle = useCallback((key: string, msg: string) => {
+    setJustDone((s2) => new Set(s2).add(key));
+    setTimeout(() => setJustDone((s2) => { const n = new Set(s2); n.delete(key); return n; }), 700);
+    if (msg) setLiveMsg(msg);
+    try { (navigator as any).vibrate?.(8); } catch {}
+  }, []);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState(false);
   const [view, setView] = useState<string | null>(null); // which phase's section to show (null = follow current)
@@ -252,6 +278,12 @@ export default function Page() {
     (async () => { FP = await computeFp(); DB_BUCKET = await computeDeviceBucket(); await load(); })();
   }, [load]);
 
+  // 投票失败提示几秒后自动消失，不让旧错误一直挂在屏幕上
+  useEffect(() => {
+    if (!voteErr) return;
+    const t = setTimeout(() => setVoteErr(""), 6000);
+    return () => clearTimeout(t);
+  }, [voteErr]);
   useEffect(() => {
     const t = setInterval(() => { load(); }, 60_000);
     return () => clearInterval(t);
@@ -297,9 +329,24 @@ export default function Page() {
         .filter((c: any) => c && c.name && (c.type == null || c.type === 1)) // 只留真正的角色（排除机体/舰船/组织团体）
         .map((c: any) => ({ bgmId: "c" + c.id, name: c.name, nameCn: "", nameEn: "", image: c.images?.grid || c.images?.medium || "" }))
         .filter((c: any) => !seen.has(c.bgmId) && (seen.add(c.bgmId), true));
-      setHits(items);
-      if (items.length === 0) setSearchErr(T("search.trysubject"));
-    } catch { setSearchErr(T("search.fail", { err: "跨域被拦截，请改用搜作品名导入" })); setHits([]); }
+      // item1：日本作品准入 —— 查每个角色关联的前三部作品是否带「日本」标签，没有就不显示
+      let shown = items;
+      try {
+        const ids = items.map((c: any) => String(c.bgmId).replace(/^c/, "")).filter(Boolean).join(",");
+        if (ids) {
+          const jr = await fetchT("/api/bgm?kind=jpbatch&ids=" + encodeURIComponent(ids), { cache: "no-store" }, 15_000);
+          if (jr.ok) {
+            const jp = (await jr.json())?.jp || {};
+            const keep = items.filter((c: any) => jp[String(c.bgmId).replace(/^c/, "")] !== false);
+            const removed = items.length - keep.length;
+            shown = keep;
+            if (removed > 0) setImportMsg(T("jp.filtered", { n: removed }));
+          }
+        }
+      } catch { /* 判定失败就不过滤，避免因网络问题什么都搜不到 */ }
+      setHits(shown);
+      if (shown.length === 0) setSearchErr(T("search.trysubject"));
+    } catch (e: any) { setSearchErr(T("search.fail", { err: e?.message || "网络不可达，可改用搜作品名导入" })); setHits([]); }
     finally { setSearching(false); }
   };
 
@@ -326,7 +373,8 @@ export default function Page() {
       const mapped = list
         .filter((x: any) => x?.id && !seen.has(String(x.id)) && (seen.add(String(x.id)), true))
         .sort((a: any, b: any) => score(b) - score(a))
-        .map((x: any) => ({ subjectId: String(x.id), name: x.name || "", nameCn: x.name_cn || "", image: x.images?.grid || x.images?.common || "", year: String(x.air_date || "").slice(0, 4) }));
+        .map((x: any) => ({ subjectId: String(x.id), name: x.name || "", nameCn: x.name_cn || "", image: x.images?.grid || x.images?.common || "", year: String(x.air_date || "").slice(0, 4), tags: (Array.isArray(x.tags) ? x.tags : []).map((t: any) => String(t?.name || t)) }))
+        .filter((x: any) => !blockedReason(x.nameCn || x.name, x.tags));
       setSubHits(mapped);
     } catch { setImportMsg(T("subject.neterr")); setSubHits([]); }
     finally { setSubSearching(false); }
@@ -340,6 +388,31 @@ export default function Page() {
       return await r.json();
     } finally { busyRef.current = false; }
   };
+  /** item3：与服务端同一套黑名单判定（前端过滤只为少点无效点击，真正把关在 /api/nominate）。 */
+  const blockedReason = (subjectName: string, tags: string[] = []): string | null => {
+    const bs: string[] = state?.competition?.blockedSubjects || [];
+    const bt: string[] = state?.competition?.blockedTags || [];
+    const n = (x: string) => String(x || "").trim().toLowerCase();
+    const sn = n(subjectName);
+    for (const b of bs) if (sn && n(b) && sn.includes(n(b))) return `作品「${b}」不参与本届`;
+    const tn = tags.map(n);
+    for (const b of bt) if (n(b) && tn.some((t) => t === n(b))) return `标签「${b}」不参与本届`;
+    return null;
+  };
+
+  /** item2：取角色最主要的关联作品名（优先主角作品，其次第一部）。查不到返回空串，不阻断提名。 */
+  const primarySubject = async (rawId: string): Promise<string> => {
+    try {
+      const subs = await bgmJson(
+        () => fetchT(`https://api.bgm.tv/v0/characters/${encodeURIComponent(rawId)}/subjects`, { headers: { Accept: "application/json" } }),
+        "kind=charSubjects&id=" + encodeURIComponent(rawId));
+      const arr = Array.isArray(subs) ? subs : [];
+      if (!arr.length) return "";
+      const main = arr.find((x: any) => String(x?.staff || "").includes("主角")) || arr[0];
+      return String(main?.name_cn || main?.name || "");
+    } catch { return ""; }
+  };
+
   // ── 日本产地软校验（方案 A）：查 bangumi 作品 tag 是否含「日本」。返回 true/false/null(null=查不了，不阻断) ──
   const subjectHasJP = async (subjectId: string | number): Promise<boolean | null> => {
     try {
@@ -371,8 +444,12 @@ export default function Page() {
     if (nomPending.has(key)) return;
     setNomPending((s2) => new Set(s2).add(key));
     try {
-      const j = await post({ batch: [{ bgmId: h.bgmId, name: h.name, nameCn: h.nameCn, image: h.image }] });
+      // item2：单个角色也带上「所属作品」（取关联作品里最主要的一部），列表和赛程里就能显示出处
+      const rawId0 = String(h.bgmId).replace(/^c/, "");
+      const subjectName = h.subjectName || (rawId0 ? await primarySubject(rawId0) : "");
+      const j = await post({ batch: [{ bgmId: h.bgmId, name: h.name, nameCn: h.nameCn, image: h.image, subjectName }] });
       if (j?.error) setImportMsg(j.error);
+      else settle(key, T("nom.plus"));
     } catch { setImportMsg(T("net.slow")); }
     finally { setNomPending((s2) => { const n = new Set(s2); n.delete(key); return n; }); }
     void load(); // 后台刷新提名池
@@ -382,6 +459,8 @@ export default function Page() {
   };
   // 浏览器直接调 GET(取角色列表 + 逐个补中文名),再交服务端存储；顺带记录作品名。
   const importSubject = async (subjectId: string, subjectName: string) => {
+    const deny = blockedReason(subjectName);
+    if (deny) { setImportMsg(deny); return; }
     setImportMsg(T("import.progress", { name: subjectName }));
     try {
       const arr = await bgmJson(
@@ -419,20 +498,23 @@ export default function Page() {
     }
   };
 
-  const canVote = !state?.voteGate?.on || !!state?.voteGate?.canVote;
+  const canVote = (!state?.voteGate?.on || !!state?.voteGate?.canVote) && !state?.competition?.freeze?.active;
   const nomVote = async (candidateId: number) => {
     setNomErr("");
     if (!canVote) { setNomErr(T("gate.readonly")); return; }
     const key = "n" + candidateId;
     if (nomPending.has(key)) return;
+    const before = state; // 失败时回滚到点击前，避免界面停在错误状态
+    const wasVoted = !!state?.nomination?.pool?.find((x: any) => x.id === candidateId)?.voted;
     setNomPending((s2) => new Set(s2).add(key));
     // 先本地生效：服务端往返慢也不会「点了没反应」
     setState((prev: any) => prev ? { ...prev, nomination: optimisticNomVote(prev.nomination, candidateId) } : prev);
     try {
       const r = await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "nominate", candidateId }) });
       const j = await r.json().catch(() => ({}));
-      if (j?.error) setNomErr(j.error);
-    } catch { setNomErr(T("net.slow")); }
+      if (j?.error) { setNomErr(j.error); if (before) setState(before); }
+      else settle(key, wasVoted ? T("nom.vote") : T("nom.voted"));
+    } catch { setNomErr(T("net.slow")); if (before) setState(before); }
     finally {
       setNomPending((s2) => { const n = new Set(s2); n.delete(key); return n; });
       void load(); // 后台对齐，不阻塞交互
@@ -455,16 +537,23 @@ export default function Page() {
   };
   const matchVote = async (matchupId: number, choiceId: number) => {
     if (!canVote || voting.has(matchupId)) return;
+    const before = state;
+    setVoteErr("");
     setVoting((s) => new Set(s).add(matchupId));
     // optimistic: reflect the pick immediately so the UI responds without waiting for the round-trip
     setState((prev: any) => prev ? { ...prev, group: optimisticChoice(prev.group, matchupId, choiceId), knockout: optimisticKo(prev.knockout, matchupId, choiceId), playoff: optimisticPlayoff(prev.playoff, matchupId, choiceId) } : prev);
     try {
-      await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "match", matchupId, choiceId }) });
+      const r = await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "match", matchupId, choiceId }) });
+      const j = await r.json().catch(() => ({}));
+      if (j?.error) { setVoteErr(j.error); if (before) setState(before); }
+      else settle("m" + matchupId, T("vote.badge.done"));
       await load();
-    } finally { setVoting((s) => { const n = new Set(s); n.delete(matchupId); return n; }); }
+    } catch { setVoteErr(T("net.slow")); if (before) setState(before); }
+    finally { setVoting((s) => { const n = new Set(s); n.delete(matchupId); return n; }); }
   };
   const approvalVote = async (candidateId: number) => {
     if (!canVote || voting.has(candidateId)) return;
+    const before = state;
     setVoting((s) => new Set(s).add(candidateId));
     setVoteErr("");
     // optimistic: toggle my pick locally right away
@@ -472,9 +561,11 @@ export default function Page() {
     try {
       const r = await api("/api/vote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "approval", candidateId }) });
       const j = await r.json().catch(() => ({}));
-      if (j?.error) setVoteErr(j.error);
+      if (j?.error) { setVoteErr(j.error); if (before) setState(before); }
+      else settle("g" + candidateId, T("gb.picked"));
       await load();
-    } finally { setVoting((s) => { const n = new Set(s); n.delete(candidateId); return n; }); }
+    } catch { setVoteErr(T("net.slow")); if (before) setState(before); }
+    finally { setVoting((s) => { const n = new Set(s); n.delete(candidateId); return n; }); }
   };
 
   const comp = state?.competition;
@@ -523,6 +614,18 @@ export default function Page() {
   return (
     <main className="wrap">
       <div className="langbar">{LANGS.map((L) => <button key={L.code} type="button" className={"lang" + (lang === L.code ? " on" : "")} onClick={() => setLang(L.code)}>{L.label}</button>)}</div>
+      {state?.competition?.freeze?.active && (
+        <div className="gate-banner" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}>
+          <b>{state.competition.freeze.note || T("freeze.now")}</b>
+          {state.competition.freeze.to ? " · " + T("freeze.until", { to: fmtAbs(state.competition.freeze.to, lang) }) : ""}
+        </div>
+      )}
+      {!state?.competition?.freeze?.active && state?.competition?.freeze?.upcoming && state?.competition?.freeze?.from && (
+        <div className="gate-banner">
+          {T("freeze.plan", { from: fmtAbs(state.competition.freeze.from, lang) })}
+          {state.competition.freeze.to ? " · " + T("freeze.until", { to: fmtAbs(state.competition.freeze.to, lang) }) : ""}
+        </div>
+      )}
       <h1 className="title">{(lang === "en" ? (comp?.titleEn || comp?.title) : lang === "ja" ? (comp?.titleJa || comp?.title) : comp?.title) || T("title")}</h1>
       <p className="subtitle">{(() => {
         const sn = lang === "en" ? (comp?.shortEn || comp?.shortName) : lang === "ja" ? (comp?.shortJa || comp?.shortName) : comp?.shortName;
@@ -655,7 +758,8 @@ export default function Page() {
                 <div className="rrow" key={h.bgmId}>
                   <Avatar c={{ id: 0, name: h.name, nameCn: null, image: h.image }} />
                   <div className="meta"><div className="nm">{h.name}</div><div className="sub">{T("nom.charTag")} · #{h.bgmId}</div></div>
-                  <button className="btn" disabled={nomPending.has("a" + h.bgmId)} aria-busy={nomPending.has("a" + h.bgmId)} onClick={() => nominate(h)}>{nomPending.has("a" + h.bgmId) ? "…" : T("nom.plus")}</button>
+                  <button className={"btn" + (nomPending.has("a" + h.bgmId) ? " pending" : "") + (justDone.has("a" + h.bgmId) ? " flash" : "")}
+                    aria-busy={nomPending.has("a" + h.bgmId)} onClick={() => nominate(h)}>{T("nom.plus")}</button>
                 </div>
               ))}
             </div>
@@ -675,10 +779,12 @@ export default function Page() {
                 <div className="prow" key={p.id}>
                   <div className="rankn num">{i + 1}</div>
                   <Avatar c={p} />
-                  <div className="meta"><div className="nm">{label(p, lang)}</div><div className="sub">{sub(p, lang)}</div></div>
+                  <div className="meta"><div className="nm">{label(p, lang)}</div>
+                    <div className="sub">{sub(p, lang)}{(p as any).mergedInto ? " · " + T("nom.mergedInto", { name: (p as any).mergedInto }) : ""}</div></div>
                   <div className="votecell num"><div className="c">{p.votes}</div><div className="l">{T("nom.voteLabel")}</div></div>
-                  <button className={"btn" + (p.voted ? " solid" : "")} disabled={nomPending.has("n" + p.id)} aria-busy={nomPending.has("n" + p.id)} onClick={() => nomVote(p.id)}>{nomPending.has("n" + p.id) ? "…" : p.voted ? T("nom.voted") : T("nom.vote")}</button>
-                  {p.mine && p.votes === 0 && <button className="btn ghost" disabled={nomPending.has("r" + p.id)} onClick={() => nomRemove(p.id)}>{nomPending.has("r" + p.id) ? "…" : T("nom.remove")}</button>}
+                  <button className={"btn" + (p.voted ? " solid" : "") + (nomPending.has("n" + p.id) ? " pending" : "") + (justDone.has("n" + p.id) ? " flash" : "")}
+                    disabled={!canVote} aria-busy={nomPending.has("n" + p.id)} onClick={() => nomVote(p.id)}>{p.voted ? T("nom.voted") : T("nom.vote")}</button>
+                  {p.mine && p.votes === 0 && <button className={"btn ghost" + (nomPending.has("r" + p.id) ? " pending" : "")} aria-busy={nomPending.has("r" + p.id)} onClick={() => nomRemove(p.id)}>{T("nom.remove")}</button>}
                 </div>
               ))}
             </div>
@@ -709,7 +815,6 @@ export default function Page() {
         <>
           {viewingPast && <div className="viewback">{T("view.back")}</div>}
           <div className="sec"><h2>{T("group.title")}</h2><div className="meta2">{comp.koTarget ? T((comp.groupsCount && comp.koTarget <= 2 * comp.groupsCount) ? "group.wc2" : "group.wc", { n: comp.koTarget }) : ""}</div></div>
-          {voteErr && <div className="hint" style={{ color: "var(--rose-deep)", fontWeight: 700 }}>{voteErr}</div>}
           {state.group.matchdayCount > 1 && <div className="hint">{T("group.matchday", { d: state.group.matchday, n: state.group.matchdayCount })}</div>}
           <div className="groupwrap">
             {state.group.mode === "approval"
@@ -720,7 +825,8 @@ export default function Page() {
                     <div className="meta"><div className="nm">{label(m, lang)}</div>
                       {m.votes != null && <div className="sub">{m.votes} {T("gb.votes")}{m.advancing ? " · " + T("gb.adv") : ""}</div>}</div>
                     {g.open
-                      ? <button className={"btn" + (m.mine ? " solid" : "")} disabled={!canVote || voting.has(m.id)} aria-busy={voting.has(m.id)} onClick={() => approvalVote(m.id)}>{voting.has(m.id) ? "…" : m.mine ? T("gb.picked") : T("gb.pick")}</button>
+                      ? <button className={"btn" + (m.mine ? " solid" : "") + (voting.has(m.id) ? " pending" : "") + (justDone.has("g" + m.id) ? " flash" : "")}
+                        disabled={!canVote} aria-busy={voting.has(m.id)} onClick={() => approvalVote(m.id)}>{m.mine ? T("gb.picked") : T("gb.pick")}</button>
                       : <span className="rankpill">{m.rank + 1}</span>}
                   </li>
                 );
@@ -779,11 +885,11 @@ export default function Page() {
                         ))}
                       </tbody>
                     </table>
-                    {liveMs.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} />)}
+                    {liveMs.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} busy={voting.has(m.id)} flash={justDone.has("m" + m.id)} />)}
                     {doneMs.length > 0 && (
                       <details className="done-fold">
                         <summary>{T("fold.doneMatches", { n: doneMs.length })}</summary>
-                        <div className="fold-body">{doneMs.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} />)}</div>
+                        <div className="fold-body">{doneMs.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} busy={voting.has(m.id)} flash={justDone.has("m" + m.id)} />)}</div>
                       </details>
                     )}
                   </div>
@@ -809,7 +915,7 @@ export default function Page() {
                   ))}
                 </tbody>
               </table>
-              {state.playoff.matchups.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} />)}
+              {state.playoff.matchups.map((m: Match) => <MatchCard key={m.id} m={m} onVote={matchVote} lang={lang} busy={voting.has(m.id)} flash={justDone.has("m" + m.id)} />)}
             </div>
           </div>
         </>
@@ -856,6 +962,8 @@ export default function Page() {
         </>
       )}
 
+      {voteErr && <div className="toast err" role="alert">{voteErr}</div>}
+      <div aria-live="polite" className="sr-only">{liveMsg}</div>
       <div className="foot">
         {T("dataFrom")}
       </div>
@@ -863,7 +971,7 @@ export default function Page() {
   );
 }
 
-function MatchCard({ m, onVote, ko, lang, compact }: { m: Match; onVote: (mid: number, cid: number) => void; ko?: boolean; lang: Lang; compact?: boolean }) {
+function MatchCard({ m, onVote, ko, lang, compact, busy, flash }: { m: Match; onVote: (mid: number, cid: number) => void; ko?: boolean; lang: Lang; compact?: boolean; busy?: boolean; flash?: boolean }) {
   const T = (k: string, p?: Record<string, string | number>) => t(lang, k, p);
   const revealed = m.decided;
   const pa = revealed && m.total ? ((m.votesA || 0) / m.total) * 100 : 50;
@@ -872,7 +980,8 @@ function MatchCard({ m, onVote, ko, lang, compact }: { m: Match; onVote: (mid: n
   const status: "live" | "upcoming" | "done" = m.decided ? "done" : (clickable ? "live" : "upcoming");
   const pill = status === "live" ? T("vote.badge.live") : status === "done" ? T("vote.badge.done") : T("vote.badge.upcoming");
   const sideCls = (id: number | undefined) =>
-    "side" + (m.myChoice === id ? " picked" : "") + (m.decided && m.winnerId === id ? " win" : "");
+    "side" + (m.myChoice === id ? " picked" : "") + (m.decided && m.winnerId === id ? " win" : "")
+    + (busy && m.myChoice === id ? " pending" : "") + (flash && m.myChoice === id ? " flash" : "");
   // 赛中不显示任何票数/得票率；结算后才公布绝对票数
   const numA = revealed ? String(m.votesA ?? 0) : "";
   const numB = revealed ? String(m.votesB ?? 0) : "";

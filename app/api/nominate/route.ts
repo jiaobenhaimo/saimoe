@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema, addCandidate, removeOwnCandidate, sweepOwnOrphans } from "@/lib/db";
+import { ensureSchema, addCandidate, removeOwnCandidate, sweepOwnOrphans, getBlocklist, isBlockedBy, freezeState } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition } from "@/lib/engine";
 import { getVoterId } from "@/lib/voter";
@@ -30,6 +30,10 @@ export async function POST(req: NextRequest) {
     if (comp.phase !== "nomination") return NextResponse.json({ error: "提名阶段已结束。" }, { status: 400 });
 
     const vid = await getVoterId();
+    {
+      const active = getActiveCompetition();
+      if (active) { const fz = freezeState(active.id); if (fz.active) return NextResponse.json({ error: fz.note || "系统维护中，暂停提名，请稍后再来。", frozen: true }, { status: 503 }); }
+    }
     // WeChat gate: when on, only users arriving via a per-user 公众号 link may modify the pool.
     if (gateOn() && !verifyToken(req.cookies.get(VOTER_COOKIE)?.value))
       return NextResponse.json({ error: "请在公众号回复「投票」获取链接后再提名。", needLink: true }, { status: 403 });
@@ -51,6 +55,8 @@ export async function POST(req: NextRequest) {
     // ── client-resolved batch: store pre-fetched candidates (browser did the Bangumi GET; server never touches Bangumi) ──
     if (Array.isArray(body.batch)) {
       let added = 0;
+      const blocked: string[] = [];
+      const bl = getBlocklist(comp.id); // 循环外取一次，避免每个角色都整库读一遍
       for (const c of body.batch.slice(0, 200)) {
         const name = String(c?.name || "").trim();
         if (!name) continue;
@@ -58,10 +64,14 @@ export async function POST(req: NextRequest) {
         const nameCn = String(c?.nameCn || "").trim();
         const image = String(c?.image || "").trim();
         const subjectName = String(c?.subjectName || "").trim();
+        // item3：黑名单拦截（作品名 + 客户端带上来的作品标签）
+        const why = isBlockedBy(bl, subjectName, Array.isArray(c?.tags) ? c.tags.map(String) : []);
+        if (why) { blocked.push(`${nameCn || name}：${why}`); continue; }
         const nameEn = String(c?.nameEn || "").trim();
         if (addCandidate(comp.id, bgmId, name, nameCn, image, subjectName, vid, nameEn)) added++;
       }
-      return NextResponse.json({ ok: true, added, imported: body.batch.length });
+      return NextResponse.json({ ok: true, added, imported: body.batch.length, blocked,
+        ...(blocked.length && !added ? { error: "全部被黑名单拦截：" + blocked.slice(0, 3).join("；") } : {}) });
     }
 
     return NextResponse.json({ error: "缺少角色信息。" }, { status: 400 });
