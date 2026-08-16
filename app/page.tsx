@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { t, roundLabelT, LANGS, groupLabel, type Lang } from "@/lib/i18n";
 
-type Slim = { id: number; name: string; nameCn: string | null; nameEn?: string | null; image: string | null; subjectName?: string | null };
+type Slim = { id: number; name: string; nameCn: string | null; nameEn?: string | null; image: string | null; subjectName?: string | null; subjectNameJa?: string | null; subjectNameEn?: string | null };
 type PoolItem = Slim & { votes: number; voted: boolean; mine: boolean };
 type Match = {
   id: number; stage: string; round: number; group: number | null; slot: number;
@@ -178,16 +178,19 @@ function Avatar({ c, lg }: { c: Slim | null; lg?: boolean }) {
 }
 
 // 主名按 UI 语言：中文→中文名，英文→英文名，日文→原名；缺失时回退原（日文）名。
-const primaryName = (c: Slim, lang: Lang) => lang === "zh" ? (c.nameCn || c.name) : lang === "en" ? (c.nameEn || c.name) : c.name;
+/** 缺当前语言时的统一回退顺序：日语 → 中文 → 英语。
+ *  （c.name 是 Bangumi 原名，基本即日文名。） */
+const pick = (lang: Lang, zh?: string | null, ja?: string | null, en?: string | null): string => {
+  const want = lang === "zh" ? zh : lang === "en" ? en : ja;
+  return (want || ja || zh || en || "").trim();
+};
+const primaryName = (c: Slim, lang: Lang) => pick(lang, c.nameCn, c.name, c.nameEn) || c.name;
 const label = (c: Slim | null, lang: Lang) => (c ? primaryName(c, lang) : "—");
-// 副行：非日文 UI 时补显日文（原）名（若与主名不同），并附作品名。
+// 副行只放「所属作品」。中文/英文界面下不再补显日文角色名：
+// 每行都挂一串日文名把列表挤得很满，而且用户看的是中文名。
 const sub = (c: Slim | null, lang: Lang) => {
   if (!c) return "";
-  const primary = primaryName(c, lang);
-  const parts: string[] = [];
-  if (lang !== "ja" && c.name && c.name !== primary) parts.push(c.name);
-  if (c.subjectName) parts.push(c.subjectName);
-  return parts.join(" · ");
+  return pick(lang, c.subjectName, c.subjectNameJa, c.subjectNameEn);
 };
 
 function fmtRemain(ms: number, lang: Lang): string {
@@ -401,16 +404,16 @@ export default function Page() {
   };
 
   /** item2：取角色最主要的关联作品名（优先主角作品，其次第一部）。查不到返回空串，不阻断提名。 */
-  const primarySubject = async (rawId: string): Promise<string> => {
+  const primarySubject = async (rawId: string): Promise<{ zh: string; ja: string }> => {
     try {
       const subs = await bgmJson(
         () => fetchT(`https://api.bgm.tv/v0/characters/${encodeURIComponent(rawId)}/subjects`, { headers: { Accept: "application/json" } }),
         "kind=charSubjects&id=" + encodeURIComponent(rawId));
       const arr = Array.isArray(subs) ? subs : [];
-      if (!arr.length) return "";
+      if (!arr.length) return { zh: "", ja: "" };
       const main = arr.find((x: any) => String(x?.staff || "").includes("主角")) || arr[0];
-      return String(main?.name_cn || main?.name || "");
-    } catch { return ""; }
+      return { zh: String(main?.name_cn || main?.name || ""), ja: String(main?.name || "") };
+    } catch { return { zh: "", ja: "" }; }
   };
 
   // ── 日本产地软校验（方案 A）：查 bangumi 作品 tag 是否含「日本」。返回 true/false/null(null=查不了，不阻断) ──
@@ -446,8 +449,11 @@ export default function Page() {
     try {
       // item2：单个角色也带上「所属作品」（取关联作品里最主要的一部），列表和赛程里就能显示出处
       const rawId0 = String(h.bgmId).replace(/^c/, "");
-      const subjectName = h.subjectName || (rawId0 ? await primarySubject(rawId0) : "");
-      const j = await post({ batch: [{ bgmId: h.bgmId, name: h.name, nameCn: h.nameCn, image: h.image, subjectName }] });
+      // 查作品名最多等 1.5 秒：拿到就带上，慢就先把角色加进去，不让「添加」被跨境往返拖住
+      const sj = rawId0 && !h.subjectName
+        ? await Promise.race([primarySubject(rawId0), new Promise<{ zh: string; ja: string }>((r) => setTimeout(() => r({ zh: "", ja: "" }), 1500))])
+        : { zh: h.subjectName || "", ja: "" };
+      const j = await post({ batch: [{ bgmId: h.bgmId, name: h.name, nameCn: h.nameCn, image: h.image, subjectName: sj.zh, subjectNameJa: sj.ja }] });
       if (j?.error) setImportMsg(j.error);
       else settle(key, T("nom.plus"));
     } catch { setImportMsg(T("net.slow")); }
@@ -458,7 +464,7 @@ export default function Page() {
     if (rawId) void characterHasJP(rawId).then((jp) => { if (jp === false) setImportMsg(T("jp.warn.char")); }).catch(() => {});
   };
   // 浏览器直接调 GET(取角色列表 + 逐个补中文名),再交服务端存储；顺带记录作品名。
-  const importSubject = async (subjectId: string, subjectName: string) => {
+  const importSubject = async (subjectId: string, subjectName: string, subjectNameJa = "") => {
     const deny = blockedReason(subjectName);
     if (deny) { setImportMsg(deny); return; }
     setImportMsg(T("import.progress", { name: subjectName }));
@@ -468,7 +474,7 @@ export default function Page() {
         "kind=subjectChars&id=" + encodeURIComponent(String(subjectId).replace(/\D/g, "")));
       const chars = (Array.isArray(arr) ? arr : [])
         .filter((c: any) => c && c.name && (c.type == null || c.type === 1)) // 只留真正的角色
-        .map((c: any) => ({ rawId: c.id, bgmId: "c" + c.id, name: c.name, nameCn: "", nameEn: "", image: c.images?.grid || c.images?.medium || "", subjectName }))
+        .map((c: any) => ({ rawId: c.id, bgmId: "c" + c.id, name: c.name, nameCn: "", nameEn: "", image: c.images?.grid || c.images?.medium || "", subjectName, subjectNameJa }))
         .slice(0, 60);
       if (!chars.length) { setImportMsg(T("import.fail", { err: "no characters" })); return; }
       // 补中文名：逐个取角色详情 infobox 的「简体中文名」（小并发，尽力而为）
@@ -744,7 +750,7 @@ export default function Page() {
                 <div className="rrow" key={s.subjectId}>
                   <Avatar c={{ id: 0, name: s.nameCn || s.name, nameCn: null, image: s.image }} />
                   <div className="meta"><div className="nm">{s.nameCn || s.name}</div><div className="sub">{s.nameCn && s.nameCn !== s.name ? s.name + " · " : ""}{T("nom.subjectTag")}{s.year ? " · " + s.year : ""} · #{s.subjectId}</div></div>
-                  <button className="btn" onClick={() => importSubject(s.subjectId, s.nameCn || s.name)}>{T("nom.importAll")}</button>
+                  <button className="btn" onClick={() => importSubject(s.subjectId, s.nameCn || s.name, s.name)}>{T("nom.importAll")}</button>
                 </div>
               ))}
             </div>

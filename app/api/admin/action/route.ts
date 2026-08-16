@@ -103,6 +103,7 @@ export async function POST(req: NextRequest) {
     if (action === "edit_candidate") {
       const ok = editCandidate(comp.id, Number(body.candidateId), {
         name: body.name, nameCn: body.nameCn, nameEn: body.nameEn, image: body.image, subjectName: body.subjectName,
+        subjectNameJa: body.subjectNameJa, subjectNameEn: body.subjectNameEn,
       });
       if (!ok) return NextResponse.json({ error: "角色不存在。" }, { status: 404 });
       rec(`编辑角色信息 #${Number(body.candidateId)}`);

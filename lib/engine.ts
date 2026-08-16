@@ -1,4 +1,4 @@
-import { readDb, writeDb, commentCounts, approvalTally, groupBatch, type DB, type Competition, type Candidate, type Matchup, nominationTally, freezeOf } from "./db";
+import { readDb, writeDb, commentCounts, approvalTally, groupBatch, type DB, type Competition, type Candidate, type Matchup, nominationTally, freezeOf, topLevel } from "./db";
 
 // ── reads ─────────────────────────────────────────────────────
 export function getActiveCompetition(): Competition | null {
@@ -25,7 +25,7 @@ export function getState(voterId: string) {
 
   const cands = db.candidates.filter((c) => c.competition_id === comp.id).sort((a, b) => a.id - b.id);
   const slim = (c: Candidate | undefined) =>
-    c ? { id: c.id, bgmId: c.bgm_id, aliases: c.aliases || [], name: c.name, nameCn: c.name_cn, nameEn: c.name_en ?? null, image: c.image, subjectName: c.subject_name ?? null } : null;
+    c ? { id: c.id, bgmId: c.bgm_id, aliases: c.aliases || [], name: c.name, nameCn: c.name_cn, nameEn: c.name_en ?? null, image: c.image, subjectName: c.subject_name ?? null, subjectNameJa: c.subject_name_ja ?? null, subjectNameEn: c.subject_name_en ?? null } : null;
 
   const base = {
     competition: {
@@ -43,6 +43,9 @@ export function getState(voterId: string) {
       groupPerRound: comp.group_per_round ?? 0, groupRoundDays: comp.group_round_days ?? 0,
       groupDayCap: comp.group_day_cap ?? 4, roundHours: comp.round_hours ?? 0, groupSize: comp.group_size ?? null,
       koTarget: comp.ko_target ?? null,
+      // 供 admin 表单回填：不回填的话，重新打开后台再点一次「预约」就会把这些配置覆盖成默认值
+      autoSize: comp.auto_size ?? null, groupMode: (comp.group_mode as any) ?? null,
+      groupsPerDay: comp.groups_per_day ?? null, thirdPlace: comp.third_place ?? null,
     },
     schedule: projectSchedule(db, comp),
   };
@@ -100,8 +103,9 @@ export function getState(voterId: string) {
   // nomination ranking — kept for the "预选" view (read-only) after nomination closes
   {
     const { total: nomTotal2 } = nominationTally(db, comp.id);
+    const topIds = new Set(topLevel(db, comp.id).map((c) => c.id));
     result.nominationRanking = cands
-      .filter((c) => c.parent_id == null) // 子角色票已汇总到上级，不重复出现
+      .filter((c) => topIds.has(c.id)) // 子角色票已汇总到上级，不重复出现
       .map((c) => ({ ...slim(c)!, votes: nomTotal2.get(c.id) || 0 }))
       .sort((x, y) => y.votes - x.votes || x.name.localeCompare(y.name));
   }
@@ -338,7 +342,9 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
       if (isApproval) {
         mdCount = Math.max(1, Math.ceil(groups / perDay));
         for (let d = 1; d <= mdCount; d++) {
-          const start = paced ? base! + (d - 1) * roundMs : null;
+          // 没设节奏时只有「第 1 比赛日何时开始」是确定的（提名一截止就开赛），
+          // 后面的比赛日靠人工推进，所以留待定 —— 而不是连第一天也标待定。
+          const start = paced ? base! + (d - 1) * roundMs : (d === 1 ? base : null);
           const end = paced ? base! + d * roundMs : null;
           const gs = Array.from({ length: groups }, (_, i) => i)
             .filter((g) => groupBatch(g, perDay) === d)
@@ -581,7 +587,7 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   if (!comp || comp.phase !== "nomination") return; // idempotent
 
   const { total: nomCount } = nominationTally(db, cid); // 汇总票：一人投了合并组里多个角色只算一次
-  const compCands = db.candidates.filter((c) => c.competition_id === cid && c.parent_id == null); // 子角色不单独参赛
+  const compCands = topLevel(db, cid); // 子角色不单独参赛（上级已不存在的会被视为独立）
   const minVotes = comp.nom_min_votes ?? 0;
   const ranked = compCands
     .map((c) => ({ id: c.id, votes: nomCount.get(c.id) || 0 }))
@@ -961,7 +967,7 @@ export function qualifyingCount(cid: number): number {
   const comp = db.competitions.find((c) => c.id === cid);
   const minVotes = comp?.nom_min_votes ?? 0;
   const { total: nomCount } = nominationTally(db, cid);
-  return db.candidates.filter((c) => c.competition_id === cid && c.parent_id == null && (nomCount.get(c.id) || 0) >= minVotes).length;
+  return topLevel(db, cid).filter((c) => (nomCount.get(c.id) || 0) >= minVotes).length;
 }
 
 /** #5: can the current grouping actually fill the knockout bracket? Checked before advancing

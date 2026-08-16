@@ -143,8 +143,7 @@ a { color: var(--rose-deep); }
 .empty .big { font-size: 42px; margin-bottom: 8px; }
 .foot { text-align: center; font-size: 12px; color: var(--muted); margin-top: 26px; line-height: 1.7; }
 
-/* admin */
-.admin { max-width: 560px; }
+/* admin（宽度统一在文件末尾的 admin console 一节定义）*/
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 16px; }
 .card h3 { margin: 0 0 12px; font-size: 15px; }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
@@ -324,16 +323,13 @@ body { font-size: 15px; line-height: 1.6; }
 .btn.ghost { background: transparent; border: 1.5px solid var(--line); color: var(--muted); }
 .btn.ghost:hover { border-color: var(--rose); color: var(--rose-deep); }
 
-/* ─────────── layout polish (admin wider + pool 2-col on desktop) ─────────── */
-.admin { max-width: 980px; }
-.admin-cards { column-count: 2; column-gap: 18px; margin-top: 4px; }
-.admin-cards > .card { break-inside: avoid; display: inline-block; width: 100%; margin: 0 0 18px; vertical-align: top; }
-@media (max-width: 720px) { .admin-cards { column-count: 1; } }
+/* ─────────── layout polish ─────────── */
 
 /* nomination pool: single bordered list on mobile, 2-column card grid on wider screens */
-@media (min-width: 720px) {
-  .results.pool { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; border: none; background: transparent; overflow: visible; }
-  .results.pool .prow { border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; background: var(--surface); }
+@media (min-width: 760px) {
+  /* 列数由可用宽度决定：每列至少 340px，否则宁可单列也不要挤成一团 */
+  .results.pool { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px 14px; border: none; background: transparent; overflow: visible; }
+  .results.pool .prow { border: 1px solid var(--line); border-radius: 12px; margin-bottom: 0; background: var(--surface); }
   .results.pool .prow:hover { background: var(--hover); }
 }
 
@@ -456,13 +452,11 @@ body { font-size: 15px; line-height: 1.6; }
 .phasebar .chip.sel:not(.on){ background:var(--rose-soft); color:var(--rose-deep); box-shadow:none; }
 .phasebar .chip.on.sel{ box-shadow:0 0 0 3px var(--rose-soft); }
 
-/* admin: single-column grouped layout (HIG settings style); section headers span full width in order */
-.admin{ max-width:640px; }
-.admin-cards{ column-count:auto; column-gap:0; display:flex; flex-direction:column; gap:var(--sp-4); margin-top:var(--sp-2); }
-.admin-cards > .card{ display:block; width:auto; margin:0; break-inside:auto; }
+/* admin: 分区式布局；宽度与栅格统一在末尾 admin console 一节 */
+.admin-cards{ display:flex; flex-direction:column; gap:var(--sp-4); margin-top:var(--sp-2); }
+.admin-cards > .card{ display:block; width:auto; margin:0; }
 .admin-section{ margin:var(--sp-2) 0 0; }
 .admin-section:first-of-type{ margin-top:0; }
-@media (max-width:720px){ .admin-cards{ column-count:auto; } }
 
 /* row density: 8pt rhythm + comfortable minimum height */
 .rrow, .prow{ padding:12px 14px; gap:12px; min-height:64px; }
@@ -648,3 +642,46 @@ body { font-size: 15px; line-height: 1.6; }
   z-index: 60; max-width: min(92vw, 460px); padding: 12px 16px; border-radius: var(--r-md);
   background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-sm); font-size: 14px; font-weight: 600; }
 .toast.err { border-color: var(--danger); color: var(--danger); }
+
+/* ═══════════ Admin console：宽屏布局（唯一权威定义） ═══════════ */
+/* 后台是操作台，不是阅读页：给它整块屏幕，而不是正文那条窄栏。
+   .wrap 的 860px 适合读文章，用在这里会把表单挤成一条细缝。 */
+.admin.wrap { max-width: 1440px; padding-left: 24px; padding-right: 24px; }
+
+/* 侧栏稍宽一点，菜单项不再挤；工作区吃掉剩下的全部宽度。
+   必须限定 min-width：这条写在移动端媒体查询之后，不加限定会同权覆盖掉
+   窄屏的单列规则，把手机也压成「220px 侧栏 + 挤扁的工作区」。 */
+@media (min-width: 821px) {
+  .admin-shell { grid-template-columns: 220px minmax(0, 1fr); gap: 24px; }
+}
+
+/* 宽屏时工作区排成两列瀑布式栅格：卡片并排，而不是一列超宽卡片
+   （一列 1200px 宽的表单反而更难用，视线要横扫很远） */
+@media (min-width: 1180px) {
+  .admin-work { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 18px; }
+  .admin-work > .admin-section { grid-column: 1 / -1; }
+  /* 内容多的卡片占满整行，短卡片并排 */
+  .admin-work > .card.wide { grid-column: 1 / -1; }
+}
+/* 超宽屏三列，避免 2K 屏上右侧大片空白 */
+@media (min-width: 1700px) {
+  .admin-work { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* 表单在宽卡片里也保持可读行长，输入框不要拉成一整行那么长 */
+.admin .field input, .admin .field textarea, .admin .field select { max-width: 520px; }
+.admin .row3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+@media (max-width: 460px) { .admin .row3 { grid-template-columns: 1fr; } }
+
+/* 提名池/榜单这类长列表给足高度并可滚动，避免把整页顶得很长 */
+.admin .pool-admin { max-height: 60vh; overflow-y: auto; }
+
+/* 投票页在宽屏上放宽一些：提名池有几十个角色，860px 只能挤两列窄卡。
+   正文类元素各有自己的 max-width（副标题 62ch、规则页 720px），所以不影响阅读舒适度。 */
+@media (min-width: 1100px) {
+  .wrap { max-width: 1100px; }
+}
+/* 提名池行内密度：名字与作品各占一行，票数与按钮靠右不挤压文字 */
+.results.pool .prow .meta { min-width: 0; }
+.results.pool .prow .meta .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.results.pool .prow .meta .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }

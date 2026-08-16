@@ -68,7 +68,9 @@ export async function POST(req: NextRequest) {
         const why = isBlockedBy(bl, subjectName, Array.isArray(c?.tags) ? c.tags.map(String) : []);
         if (why) { blocked.push(`${nameCn || name}：${why}`); continue; }
         const nameEn = String(c?.nameEn || "").trim();
-        if (addCandidate(comp.id, bgmId, name, nameCn, image, subjectName, vid, nameEn)) added++;
+        const subjectNameJa = String(c?.subjectNameJa || "").trim();
+        const subjectNameEn = String(c?.subjectNameEn || "").trim();
+        if (addCandidate(comp.id, bgmId, name, nameCn, image, subjectName, vid, nameEn, subjectNameJa, subjectNameEn)) added++;
       }
       return NextResponse.json({ ok: true, added, imported: body.batch.length, blocked,
         ...(blocked.length && !added ? { error: "全部被黑名单拦截：" + blocked.slice(0, 3).join("；") } : {}) });

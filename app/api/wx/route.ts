@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { ensureSchema } from "@/lib/db";
+import { apiEnabled } from "@/lib/flags";
 import { checkSignature, parseXml, textReplyXml, wantsVote } from "@/lib/wx";
 import { signToken, LINK_TTL_MS } from "@/lib/wxsession";
 import { buildRoundReminder } from "@/lib/reminder";
@@ -18,6 +19,7 @@ const BASE = () => process.env.PUBLIC_BASE_URL || "";
 
 // GET: WeChat server verification handshake — echo back `echostr` if the signature matches.
 export async function GET(req: NextRequest) {
+  if (!apiEnabled()) return new Response("disabled", { status: 503 }); // 总开关关闭时一并停用公众号回调
   const p = req.nextUrl.searchParams;
   const signature = p.get("signature") || "", timestamp = p.get("timestamp") || "", nonce = p.get("nonce") || "", echostr = p.get("echostr") || "";
   if (checkSignature(signature, timestamp, nonce, TOKEN())) {
@@ -28,6 +30,7 @@ export async function GET(req: NextRequest) {
 
 // POST: inbound user message → passive reply. "投票"/关注/菜单 → per-user tokenised link.
 export async function POST(req: NextRequest) {
+  if (!apiEnabled()) return new Response("disabled", { status: 503 }); // 总开关关闭时一并停用公众号回调
   const p = req.nextUrl.searchParams;
   if (!checkSignature(p.get("signature") || "", p.get("timestamp") || "", p.get("nonce") || "", TOKEN())) {
     return new Response("invalid signature", { status: 401 });

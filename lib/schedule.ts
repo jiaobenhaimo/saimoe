@@ -1,5 +1,5 @@
 import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, resolvePlayoff, postponeNomination, qualifyingCount, canStartKnockout } from "./engine";
-import { sweepOrphanNominations } from "./db";
+import { sweepOrphanNominations, freezeOf } from "./db";
 
 /** Grace period before an un-voted self-nomination is swept (minutes). Env-tunable. */
 const ORPHAN_GRACE_MIN = Number(process.env.SAIMOE_ORPHAN_GRACE_MIN) || 30;
@@ -19,6 +19,10 @@ export function runTick(force = false): void {
   try {
     const comp = getActiveCompetition();
     if (!comp) return;
+
+    // 维护冻结期间不做任何自动推进：停投的目的就是让 admin 能在静止的数据上修改，
+    // 若定时器照旧把比赛日推进/开淘汰赛，就等于一边修一边被改。
+    if (freezeOf(comp).active) return;
 
     // garbage-collect abandoned 0-vote self-nominations while nomination is open
     if (comp.phase === "nomination") sweepOrphanNominations(comp.id, ORPHAN_GRACE_MIN * 60_000);

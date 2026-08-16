@@ -55,6 +55,7 @@ export default function Admin() {
   // pool row: inline edit + two-step merge
   const [editId, setEditId] = useState<number | null>(null);
   const [eName, setEName] = useState(""); const [eCn, setECn] = useState(""); const [eEn, setEEn] = useState(""); const [eImg, setEImg] = useState(""); const [eSub, setESub] = useState("");
+  const [eSubJa, setESubJa] = useState(""); const [eSubEn, setESubEn] = useState("");
   const [mergeFrom, setMergeFrom] = useState<{ id: number; name: string } | null>(null);
   // item3：黑名单（每行一条）
   const [blkTags, setBlkTags] = useState("");
@@ -197,7 +198,20 @@ export default function Admin() {
 
   useEffect(() => {
     if (comp) { setEditTitle(comp.title || ""); setEditDesc(comp.description || ""); setEditShort(comp.shortName || ""); setEditTitleEn(comp.titleEn || ""); setEditTitleJa(comp.titleJa || ""); setEditDescEn(comp.descEn || ""); setEditDescJa(comp.descJa || ""); setEditShortEn(comp.shortEn || ""); setEditShortJa(comp.shortJa || ""); setNUserLimit(comp.nomUserLimit || 0); setNMinVotes(comp.nomMinVotes || 0); setBlkTags((comp.blockedTags || []).join("\n")); setBlkSubs((comp.blockedSubjects || []).join("\n"));
-      setFzFrom(comp.freeze?.from ? toLocalInput(comp.freeze.from) : ""); setFzTo(comp.freeze?.to ? toLocalInput(comp.freeze.to) : ""); setFzNote(comp.freeze?.note || ""); }
+      setFzFrom(comp.freeze?.from ? toLocalInput(comp.freeze.from) : ""); setFzTo(comp.freeze?.to ? toLocalInput(comp.freeze.to) : ""); setFzNote(comp.freeze?.note || "");
+      // 赛制与节奏回填（此前不回填：重开后台后表单是默认值，再保存一次就把已设好的节奏覆盖成 0，
+      // 公开赛程于是全变「时间待定」）
+      if (comp.autoSize) setSize(comp.autoSize); else if (comp.targetSize) setSize(comp.targetSize);
+      if (comp.groupSize) setGroupSize(comp.groupSize);
+      if (comp.groupMode) setGroupMode(comp.groupMode);
+      if (comp.groupsPerDay) setGroupsPerDay(comp.groupsPerDay);
+      if (comp.groupPerRound) setPerRound(comp.groupPerRound);
+      setRoundDays(comp.groupRoundDays ?? 0);
+      setDayCap(comp.groupDayCap ?? 4);
+      setRHours(comp.roundHours ?? 24);
+      if (comp.postponeDays != null) setPDays(comp.postponeDays);
+      if (comp.thirdPlace != null) setThirdPlace(!!comp.thirdPlace);
+      setNomLocal(comp.nomEndsAt ? toLocalInput(comp.nomEndsAt) : ""); }
   }, [comp?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const estGroups = Math.max(1, Math.floor(size / Math.max(2, groupSize)));
@@ -271,13 +285,21 @@ export default function Admin() {
           <h3>停止投票（维护）{state?.competition?.freeze?.active && <span className="gstatus" style={{ color: "var(--danger)" }}>进行中</span>}</h3>
           <p className="hint">开启后用户无法投票/提名（接口一并拦截），方便你安心修数据。也可预约一个维护窗口，首页会提前公告。</p>
           <div className="row3">
-            <div className="field"><label>维护开始（留空=不预约）</label>
-              <input type="datetime-local" value={fzFrom} onChange={(e) => setFzFrom(e.target.value)} /></div>
-            <div className="field"><label>预计恢复（可留空）</label>
-              <input type="datetime-local" value={fzTo} onChange={(e) => setFzTo(e.target.value)} /></div>
+            <div className="field"><label>维护开始（日期 + 时分，留空=不预约）</label>
+              <input type="datetime-local" step={60} value={fzFrom} onChange={(e) => setFzFrom(e.target.value)} /></div>
+            <div className="field"><label>自动恢复（日期 + 时分，留空=手动恢复）</label>
+              <input type="datetime-local" step={60} value={fzTo} onChange={(e) => setFzTo(e.target.value)} /></div>
             <div className="field"><label>公告文案（可留空用默认）</label>
               <input value={fzNote} onChange={(e) => setFzNote(e.target.value)} placeholder="例如：系统维护中，暂停投票" /></div>
           </div>
+          {(() => {
+            const from = fzFrom ? new Date(fzFrom).getTime() : null;
+            const to = fzTo ? new Date(fzTo).getTime() : null;
+            if (to != null && from == null) return <p className="hint" style={{ color: "var(--danger)" }}>只填了「恢复时间」不会生效：预约维护必须填写开始时间。</p>;
+            if (from != null && to != null && to <= from) return <p className="hint" style={{ color: "var(--danger)" }}>恢复时间早于或等于开始时间，这样的窗口永远不会触发，请修正。</p>;
+            if (from != null) return <p className="hint">将于 <b>{fmtAbs(from)}</b> 起暂停投票{to != null ? <> ，<b>{fmtAbs(to)}</b> 自动恢复（约 {Math.round((to - from) / 60000)} 分钟）</> : "，需手动恢复"}。</p>;
+            return null;
+          })()}
           <button className={"btn" + (state?.competition?.freeze?.manual ? " danger solid" : " solid")} disabled={busy}
             onClick={() => act("set_freeze", { on: !state?.competition?.freeze?.manual, from: fzFrom ? new Date(fzFrom).getTime() : null, to: fzTo ? new Date(fzTo).getTime() : null, note: fzNote })}>
             {state?.competition?.freeze?.manual ? "恢复投票" : "立即停止投票"}
@@ -297,7 +319,7 @@ export default function Admin() {
       )}
 
       {comp && (
-        <div className="card">
+        <div className="card wide">
           <h3>编辑比赛信息</h3>
           <div className="field"><label>比赛名称（中文）</label>
             <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} /></div>
@@ -369,6 +391,12 @@ export default function Admin() {
             <div className="field"><label>每轮淘汰赛（小时，0=手动）</label>
               <input type="number" min={0} value={rHours} onChange={(e) => setRHours(+e.target.value)} /></div>
           </div>
+          {(roundDays === 0 || rHours === 0) && (
+            <p className="hint" style={{ color: "var(--danger)" }}>
+              注意：{roundDays === 0 ? "「每比赛日天数」为 0" : ""}{roundDays === 0 && rHours === 0 ? "、" : ""}{rHours === 0 ? "「每轮淘汰赛小时」为 0" : ""}
+              ，表示该阶段靠你手动推进，公开赛程里对应的时间会显示「时间待定」。要让规则页展示完整日期，请填入天数/小时。
+            </p>
+          )}
           <p className="hint">约 <b>{estGroups}</b> 个 {groupSize} 人组(余数补进弱组成 {groupSize + 1} 人组)，各组前 2 → <b>{estKo}</b> 强淘汰赛。{groupMode === "approval" ? `每人每组最多投 2 票，每天开放 ${groupsPerDay} 个组。` : "组内两两对战，按胜场取前二。"}</p>
           <label className="chk"><input type="checkbox" checked={thirdPlace} onChange={(e) => setThirdPlace(e.target.checked)} /> 进行季军战（半决赛两位败者加打一场定第三名）</label>
           <hr className="sep" />
@@ -570,7 +598,7 @@ export default function Admin() {
       {comp && (<div className="admin-section">🗂️ 内容管理</div>)}
 
       {comp && (
-        <div className="card">
+        <div className="card wide">
           <h3>提名黑名单</h3>
           <p className="hint">命中黑名单的角色无法进入提名池（已在池中的不会自动移除，需手动删）。每行一条，作品按名称「包含」匹配，标签需完全相同。</p>
           <div className="row3">
@@ -585,9 +613,9 @@ export default function Admin() {
       )}
 
       {phase === "nomination" && state?.nomination && (
-        <div className="card">
+        <div className="card wide">
           <h3>管理提名池</h3>
-          <p className="hint">编辑角色信息、把重复/跨版本角色合并（A 的提名票并入 B 后删除 A、按投票人去重），或移除误加角色。移除/合并会改动票数，无法撤销。</p>
+          <p className="hint">编辑角色信息、把重复/跨版本角色合并，或移除误加角色。<b>合并不会删除角色</b>：被并入的角色仍留在池中、仍可投票、单独显示，但票数汇总到上级角色（同一人投了组内多个只算一票），排名与抽签只算上级。移除会连同其票一起删除，无法撤销。</p>
           {mergeFrom && (
             <div className="gate-banner" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
               <span>正在合并「<b>{mergeFrom.name}</b>」→ 点选目标角色的「并入此」</span>
@@ -607,10 +635,14 @@ export default function Admin() {
                       </div>
                       <div className="row3">
                         <div className="field" style={{ gridColumn: "span 2" }}><label>图片 URL</label><input value={eImg} onChange={(e) => setEImg(e.target.value)} /></div>
-                        <div className="field"><label>所属作品</label><input value={eSub} onChange={(e) => setESub(e.target.value)} /></div>
+                        <div className="field"><label>所属作品（中文）</label><input value={eSub} onChange={(e) => setESub(e.target.value)} /></div>
+                      </div>
+                      <div className="row3">
+                        <div className="field"><label>作品 JA</label><input value={eSubJa} onChange={(e) => setESubJa(e.target.value)} placeholder="日本語タイトル" /></div>
+                        <div className="field"><label>作品 EN</label><input value={eSubEn} onChange={(e) => setESubEn(e.target.value)} placeholder="English title" /></div>
                       </div>
                       <div style={{ display: "flex", gap: 8 }}>
-                        <button className="btn solid" disabled={busy} onClick={() => { act("edit_candidate", { candidateId: p.id, name: eName, nameCn: eCn, nameEn: eEn, image: eImg, subjectName: eSub }); setEditId(null); }}>保存</button>
+                        <button className="btn solid" disabled={busy} onClick={() => { act("edit_candidate", { candidateId: p.id, name: eName, nameCn: eCn, nameEn: eEn, image: eImg, subjectName: eSub, subjectNameJa: eSubJa, subjectNameEn: eSubEn }); setEditId(null); }}>保存</button>
                         <button className="btn" onClick={() => setEditId(null)}>取消</button>
                       </div>
                     </div>
@@ -619,12 +651,12 @@ export default function Admin() {
                       <div className="meta"><div className="nm">{p.nameCn || p.name}</div>{p.nameCn && p.nameCn !== p.name && <div className="sub">{p.name}</div>}</div>
                       <div className="votecell num"><div className="c">{p.votes}</div><div className="l">提名</div></div>
                       {mergeFrom && mergeFrom.id !== p.id ? (
-                        <button className="btn solid" disabled={busy} onClick={() => { if (confirm(`把「${mergeFrom.name}」的票并入「${p.nameCn || p.name}」并删除前者？`)) { act("merge_candidate", { fromId: mergeFrom.id, toId: p.id }); setMergeFrom(null); } }}>并入此</button>
+                        <button className="btn solid" disabled={busy} onClick={() => { if (confirm(`把「${mergeFrom.name}」并入「${p.nameCn || p.name}」？\n\n前者不会被删除，仍可投票并单独显示，但票数会汇总计入后者。`)) { act("merge_candidate", { fromId: mergeFrom.id, toId: p.id }); setMergeFrom(null); } }}>并入此</button>
                       ) : mergeFrom && mergeFrom.id === p.id ? (
                         <span className="sub" style={{ alignSelf: "center" }}>合并源</span>
                       ) : (
                         <>
-                          <button className="btn" disabled={busy} onClick={() => { setEditId(p.id); setEName(p.name || ""); setECn(p.nameCn || ""); setEEn(p.nameEn || ""); setEImg(p.image || ""); setESub(p.subjectName || ""); }}>编辑</button>
+                          <button className="btn" disabled={busy} onClick={() => { setEditId(p.id); setEName(p.name || ""); setECn(p.nameCn || ""); setEEn(p.nameEn || ""); setEImg(p.image || ""); setESub(p.subjectName || ""); setESubJa(p.subjectNameJa || ""); setESubEn(p.subjectNameEn || ""); }}>编辑</button>
                           <button className="btn" disabled={busy} onClick={() => setMergeFrom({ id: p.id, name: p.nameCn || p.name })}>合并</button>
                         </>
                       )}
@@ -662,7 +694,7 @@ export default function Admin() {
       <div className="admin-section">🛡️ 监控与诊断</div>
 
       {comp && tallies && tallies.mode !== "none" && (phase === "group" || phase === "knockout" || phase === "playoff") && (
-        <div className="card">
+        <div className="card wide">
           <h3>实时票数（管理员）</h3>
           <p className="hint">仅管理员可见的当前票数（用户页赛中不公布）。{" "}<a onClick={loadObs}>刷新</a></p>
           {tallies.mode === "approval" ? (
@@ -690,7 +722,7 @@ export default function Admin() {
       )}
 
       {comp && obs && (
-        <div className="card">
+        <div className="card wide">
           <h3>异常投票看板</h3>
           <p className="hint">
             共 {obs.totals?.votes ?? 0} 票(含元数据 {obs.totals?.withMeta ?? 0})、{obs.totals?.matches ?? 0} 场对局。

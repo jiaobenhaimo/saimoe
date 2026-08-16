@@ -53,7 +53,11 @@ export interface Candidate {
   id: number; competition_id: number; bgm_id: string; name: string; name_cn: string | null;
   image: string | null; group_no: number | null; seed: number | null; eliminated: boolean;
   subject_name: string | null; added_by: string | null; name_en: string | null;
+  /** 作品名的日文/英文（subject_name 为中文/默认）。 */
+  subject_name_ja?: string | null; subject_name_en?: string | null;
   /** 合并进来的旧 bangumi id（item1）：这些 id 都指向本角色，投票/去重都认。 */
+  /** 旧版合并（会删除被并入角色）留下的历史 bangumi id。当前合并改为保留角色 + parent_id，
+   *  不再写入这里；保留读取逻辑只为让升级前已合并过的旧数据里的 id 仍能解析。 */
   aliases?: string[] | null;
   /** 合并后的「上级」角色 id。子角色不删除、仍可投票、提名池分开显示，
    *  但提名票数汇总到上级；排名/晋级只算上级。null = 自身就是上级。 */
@@ -274,12 +278,12 @@ export function deleteCompetition(cid: number): void {
 }
 
 /** Insert a candidate; returns false if (competition, bgm_id) already exists. */
-export function addCandidate(cid: number, bgmId: string, name: string, nameCn: string, image: string, subjectName = "", addedBy = "", nameEn = ""): boolean {
+export function addCandidate(cid: number, bgmId: string, name: string, nameCn: string, image: string, subjectName = "", addedBy = "", nameEn = "", subjectNameJa = "", subjectNameEn = ""): boolean {
   const db = readDb();
   const dup = db.candidates.find((c) => c.competition_id === cid && (c.bgm_id === bgmId || (c.aliases || []).includes(bgmId)));
   if (dup) return false; // 已存在，或曾作为别名被合并进某个角色
   const id = ++db.seq.candidate;
-  db.candidates.push({ id, competition_id: cid, bgm_id: bgmId, name, name_cn: nameCn || null, image: image || null, group_no: null, seed: null, eliminated: false, subject_name: subjectName || null, added_by: addedBy || null, name_en: nameEn || null, aliases: [], parent_id: null, nominated_at: addedBy ? Date.now() : null });
+  db.candidates.push({ id, competition_id: cid, bgm_id: bgmId, name, name_cn: nameCn || null, image: image || null, group_no: null, seed: null, eliminated: false, subject_name: subjectName || null, subject_name_ja: subjectNameJa || null, subject_name_en: subjectNameEn || null, added_by: addedBy || null, name_en: nameEn || null, aliases: [], parent_id: null, nominated_at: addedBy ? Date.now() : null });
   writeDb(db);
   return true;
 }
@@ -343,7 +347,7 @@ export function sweepOrphanNominations(cid: number, graceMs: number): number {
 /** Remove a candidate and all its votes (and any matchups referencing it).
  *  Returns false if the candidate doesn't exist. Only call during nomination. */
 /** Edit a candidate's display info (name / cn / en / image / work). Allowed any phase. */
-export function editCandidate(cid: number, id: number, f: { name?: string; nameCn?: string; nameEn?: string; image?: string; subjectName?: string }): boolean {
+export function editCandidate(cid: number, id: number, f: { name?: string; nameCn?: string; nameEn?: string; image?: string; subjectName?: string; subjectNameJa?: string; subjectNameEn?: string }): boolean {
   const db = readDb();
   const c = db.candidates.find((x) => x.id === id && x.competition_id === cid);
   if (!c) return false;
@@ -352,6 +356,8 @@ export function editCandidate(cid: number, id: number, f: { name?: string; nameC
   if (f.nameEn != null) c.name_en = f.nameEn.trim() || null;
   if (f.image != null) c.image = f.image.trim() || null;
   if (f.subjectName != null) c.subject_name = f.subjectName.trim() || null;
+  if (f.subjectNameJa != null) c.subject_name_ja = f.subjectNameJa.trim() || null;
+  if (f.subjectNameEn != null) c.subject_name_en = f.subjectNameEn.trim() || null;
   writeDb(db);
   return true;
 }
@@ -389,6 +395,9 @@ export function mergeCandidates(cid: number, fromId: number, toId: number): { mo
 export function removeCandidate(cid: number, candidateId: number): boolean {
   const db = readDb();
   if (!db.candidates.some((c) => c.id === candidateId && c.competition_id === cid)) return false;
+  // 被删的若是「上级」，把它的子角色提升为独立角色，否则它们会指向一个已不存在的上级，
+  // 变成「池里看得见、却永远不能参赛」的僵尸条目。
+  for (const c of db.candidates) if (c.competition_id === cid && c.parent_id === candidateId) c.parent_id = null;
   db.candidates = db.candidates.filter((c) => c.id !== candidateId);
   db.nominationVotes = db.nominationVotes.filter((v) => v.candidate_id !== candidateId);
   db.approvalVotes = db.approvalVotes.filter((v) => !(v.competition_id === cid && v.candidate_id === candidateId));
@@ -424,11 +433,19 @@ export function setFreeze(cid: number, o: { on?: boolean; from?: number | null; 
   writeDb(db);
 }
 
+/** 参赛主体：parent_id 为空，或其上级已不存在（历史悬空数据）的角色。 */
+export function topLevel(db: DB, cid: number): Candidate[] {
+  const list = db.candidates.filter((c) => c.competition_id === cid);
+  const ids = new Set(list.map((c) => c.id));
+  return list.filter((c) => c.parent_id == null || !ids.has(c.parent_id));
+}
+
 /** 合并组：上级 id → 自身 + 全部子角色 id。 */
 export function mergeGroups(db: DB, cid: number): Map<number, number[]> {
   const list = db.candidates.filter((c) => c.competition_id === cid);
   const g = new Map<number, number[]>();
-  for (const c of list) if (c.parent_id == null) g.set(c.id, [c.id]);
+  const ids = new Set(list.map((c) => c.id));
+  for (const c of list) if (c.parent_id == null || !ids.has(c.parent_id)) g.set(c.id, [c.id]);
   for (const c of list) if (c.parent_id != null) {
     const arr = g.get(c.parent_id);
     if (arr) arr.push(c.id); else g.set(c.id, [c.id]); // 上级不存在时退化为独立角色

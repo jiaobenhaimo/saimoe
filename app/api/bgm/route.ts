@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
   const kind = sp.get("kind") || "";
   const q = (sp.get("q") || "").trim();
   const id = (sp.get("id") || "").trim();
-  const key = `${kind}|${q}|${id}`;
+  const key = `${kind}|${q}|${id}|${sp.get("ids") || ""}`; // ids 必须进键，否则不同角色集合会共用同一份缓存
   const hit = cached(key);
   if (hit) return NextResponse.json(hit);
 
