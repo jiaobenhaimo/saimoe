@@ -745,3 +745,21 @@ html:lang(zh-CN) body, html:lang(zh) body {
 
 /* 联系方式是多行文本（来自服务器上的 site.json），保留换行 */
 .rules-contact { white-space: pre-line; }
+
+/* 可疑票溯源面板：逐票列出、可勾选作废 */
+.probe { margin-top: 14px; border: 1px solid var(--rose); border-radius: var(--r-md); background: var(--surface); overflow: hidden; }
+.probe-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 12px; font-size: 13.5px; background: var(--rose-soft); border-bottom: 1px solid var(--line); }
+.probe-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.probe-list { max-height: 52vh; overflow-y: auto; }
+.probe-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-top: 1px solid var(--line); font-size: 13px; cursor: pointer; }
+.probe-row:first-child { border-top: none; }
+.probe-row:hover { background: var(--hover); }
+.probe-row.on { background: var(--rose-soft); }
+.probe-row input[type="checkbox"] { width: 18px; height: 18px; flex: none; accent-color: var(--rose); }
+.probe-row .pv-target { flex: none; }
+.probe-row .pv-detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.probe-row .pv-at { margin-left: auto; flex: none; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+@media (max-width: 560px) {
+  .probe-row { flex-wrap: wrap; }
+  .probe-row .pv-at { margin-left: 0; width: 100%; }
+}

@@ -70,10 +70,10 @@ export interface Matchup {
   group_no: number | null; slot: number; a_id: number; b_id: number;
   winner_id: number | null; decided: boolean; matchday?: number | null; bronze?: boolean; // bronze=true： 季军战（半决赛两败者）
 }
-interface NominationVote { competition_id: number; candidate_id: number; voter_id: string; created_at?: number; device_bucket?: string | null; ip?: string | null; }
-interface MatchVote { matchup_id: number; voter_id: string; choice_id: number; created_at?: number; device_bucket?: string | null; ip?: string | null; }
+interface NominationVote { id?: number; competition_id: number; candidate_id: number; voter_id: string; created_at?: number; device_bucket?: string | null; ip?: string | null; }
+interface MatchVote { id?: number; matchup_id: number; voter_id: string; choice_id: number; created_at?: number; device_bucket?: string | null; ip?: string | null; }
 /** A group-stage approval vote (approval mode): one row per (voter, group, candidate). Max 2 per (voter, group). */
-interface ApprovalVote { competition_id: number; group_no: number; candidate_id: number; voter_id: string; created_at?: number; device_bucket?: string | null; ip?: string | null; }
+interface ApprovalVote { id?: number; competition_id: number; group_no: number; candidate_id: number; voter_id: string; created_at?: number; device_bucket?: string | null; ip?: string | null; }
 
 /** Non-identifying-by-default metadata attached to a vote. `bucket` is a coarse
  *  cross-browser device hint; `ip` is the caller's forwarded IP. Both are used only to
@@ -88,7 +88,7 @@ export interface Comment {
 }
 
 export interface DB {
-  seq: { competition: number; candidate: number; matchup: number; comment: number; audit: number };
+  seq: { competition: number; candidate: number; matchup: number; comment: number; audit: number; vote: number };
   competitions: Competition[];
   candidates: Candidate[];
   matchups: Matchup[];
@@ -106,7 +106,7 @@ const FILE = path.join(DATA_DIR, "saimoe.json");
 export function dataFilePath(): string { return FILE; }
 
 function blank(): DB {
-  return { seq: { competition: 0, candidate: 0, matchup: 0, comment: 0, audit: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [], approvalVotes: [], comments: [], auditLog: [] };
+  return { seq: { competition: 0, candidate: 0, matchup: 0, comment: 0, audit: 0, vote: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [], approvalVotes: [], comments: [], auditLog: [] };
 }
 function normalize(o: any): DB {
   if (!o || typeof o !== "object") return blank();
@@ -118,6 +118,7 @@ function normalize(o: any): DB {
       matchup: Number(o?.seq?.matchup) || 0,
       comment: Number(o?.seq?.comment) || 0,
       audit: Number(o?.seq?.audit) || 0,
+      vote: Number(o?.seq?.vote) || 0,
     },
     competitions: Array.isArray(o.competitions) ? o.competitions : b.competitions,
     candidates: Array.isArray(o.candidates) ? o.candidates : b.candidates,
@@ -128,6 +129,18 @@ function normalize(o: any): DB {
     comments: Array.isArray(o.comments) ? o.comments : b.comments,
     auditLog: Array.isArray(o.auditLog) ? o.auditLog : b.auditLog,
   };
+}
+
+/** 给还没有 id 的历史投票补号。有了稳定 id，运营才能只作废其中某几票，
+ *  而不是把这个设备/IP 的所有票一并清掉。 */
+function backfillVoteIds(db: DB): boolean {
+  let next = db.seq.vote || 0;
+  let touched = false;
+  for (const list of [db.nominationVotes, db.matchVotes, db.approvalVotes] as { id?: number }[][]) {
+    for (const v of list) if (v.id == null) { v.id = ++next; touched = true; }
+  }
+  if (touched) db.seq.vote = next;
+  return touched;
 }
 
 /** Read the whole store from disk (or a blank store if the file is absent).
@@ -178,6 +191,7 @@ export function readDb(): DB {
       return clone;
     }
     const db = normalize(JSON.parse(fs.readFileSync(FILE, "utf8")));
+    backfillVoteIds(db); // 历史票补号：下一次写盘时一并持久化
     cache = { mtimeMs: st.mtimeMs, db };
     const clone = structuredClone(db);
     readStamp.set(clone, st.mtimeMs);
@@ -551,7 +565,7 @@ function toggleNominationOnce(cid: number, candidateId: number, voterId: string,
     const cnt = db.nominationVotes.filter((v) => v.competition_id === cid && v.voter_id === voterId).length;
     if (cnt >= limit) return { error: `每人最多提名 ${limit} 个角色，请先撤回一个再提名其他角色。` };
   }
-  db.nominationVotes.push({ competition_id: cid, candidate_id: candidateId, voter_id: voterId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
+  db.nominationVotes.push({ id: ++db.seq.vote, competition_id: cid, candidate_id: candidateId, voter_id: voterId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
   writeDb(db);
   return { voted: true };
 }
@@ -596,7 +610,7 @@ function castApprovalVoteOnce(cid: number, candidateId: number, voterId: string,
     return { picked: false, count: mine.length - 1 };
   }
   if (mine.length >= 2) return { error: "每组最多投 2 票，请先取消一个再选。", status: 400 };
-  db.approvalVotes.push({ competition_id: cid, group_no: g, candidate_id: candidateId, voter_id: voterId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
+  db.approvalVotes.push({ id: ++db.seq.vote, competition_id: cid, group_no: g, candidate_id: candidateId, voter_id: voterId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
   writeDb(db);
   return { picked: true, count: mine.length + 1 };
 }
@@ -625,7 +639,7 @@ function castMatchVoteOnce(cid: number, matchupId: number, voterId: string, choi
     return { choice: null };
   }
   if (cur) cur.choice_id = choiceId;
-  else db.matchVotes.push({ matchup_id: matchupId, voter_id: voterId, choice_id: choiceId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
+  else db.matchVotes.push({ id: ++db.seq.vote, matchup_id: matchupId, voter_id: voterId, choice_id: choiceId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
   writeDb(db);
   return { choice: choiceId };
 }
@@ -722,3 +736,77 @@ export const toggleNomination = (...a: Parameters<typeof toggleNominationOnce>) 
 export const castApprovalVote = (...a: Parameters<typeof castApprovalVoteOnce>) => retryOnConflict(() => castApprovalVoteOnce(...a));
 export const castMatchVote = (...a: Parameters<typeof castMatchVoteOnce>) => retryOnConflict(() => castMatchVoteOnce(...a));
 export const addComment = (...a: Parameters<typeof addCommentOnce>) => retryOnConflict(() => addCommentOnce(...a));
+
+/** 可疑票溯源：列出某个身份（设备指纹 / IP / 投票人）在本届投过的每一票，
+ *  含投给了谁、什么阶段、什么时候。给运营用来逐票判断，而不是只能整批清掉。 */
+export function listVotesBy(cid: number, by: "bucket" | "ip" | "voter", key: string): {
+  id: number; kind: "nomination" | "approval" | "match"; at: number | null;
+  target: string; detail: string; voterId: string; bucket: string | null; ip: string | null;
+}[] {
+  if (!key) return [];
+  const db = readDb();
+  const field = by === "bucket" ? "device_bucket" : by === "ip" ? "ip" : "voter_id";
+  const nameOf = (id: number) => {
+    const c = db.candidates.find((x) => x.id === id);
+    return c ? (c.name_cn || c.name) : `#${id}`;
+  };
+  const compMatch = new Map(db.matchups.filter((m) => m.competition_id === cid).map((m) => [m.id, m]));
+  const rows: ReturnType<typeof listVotesBy> = [];
+
+  for (const v of db.nominationVotes) {
+    if (v.competition_id !== cid || (v as any)[field] !== key) continue;
+    rows.push({ id: v.id ?? 0, kind: "nomination", at: v.created_at ?? null, target: nameOf(v.candidate_id),
+      detail: "提名投票", voterId: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null });
+  }
+  for (const v of db.approvalVotes) {
+    if (v.competition_id !== cid || (v as any)[field] !== key) continue;
+    rows.push({ id: v.id ?? 0, kind: "approval", at: v.created_at ?? null, target: nameOf(v.candidate_id),
+      detail: `小组赛 ${groupLetter(v.group_no)} 组`, voterId: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null });
+  }
+  for (const v of db.matchVotes) {
+    const m = compMatch.get(v.matchup_id);
+    if (!m || (v as any)[field] !== key) continue;
+    const other = m.a_id === v.choice_id ? m.b_id : m.a_id;
+    const stage = m.stage === "group" ? `小组赛 ${groupLetter(m.group_no ?? 0)} 组`
+      : m.stage === "playoff" ? "加赛" : `淘汰赛第 ${m.round_no} 轮`;
+    rows.push({ id: v.id ?? 0, kind: "match", at: v.created_at ?? null, target: nameOf(v.choice_id),
+      detail: `${stage}：对手 ${nameOf(other)}`, voterId: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null });
+  }
+  // 新的在前，方便看「最近这一串是不是连着刷的」
+  rows.sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+  return rows;
+}
+function groupLetter(n: number): string {
+  let s = ""; let x = Math.max(0, Math.floor(n));
+  do { s = String.fromCharCode(65 + (x % 26)) + s; x = Math.floor(x / 26) - 1; } while (x >= 0);
+  return s;
+}
+
+/** 精确作废：只删掉指定 id 的那几票。返回实际删除数。 */
+export function invalidateVoteIds(cid: number, ids: number[]): number {
+  const want = new Set(ids.filter((n) => Number.isFinite(n) && n > 0));
+  if (!want.size) return 0;
+  const db = readDb();
+  const compMatchIds = new Set(db.matchups.filter((m) => m.competition_id === cid).map((m) => m.id));
+  let removed = 0;
+  const keepNom = db.nominationVotes.filter((v) => {
+    const hit = v.competition_id === cid && v.id != null && want.has(v.id);
+    if (hit) removed++;
+    return !hit;
+  });
+  const keepApp = db.approvalVotes.filter((v) => {
+    const hit = v.competition_id === cid && v.id != null && want.has(v.id);
+    if (hit) removed++;
+    return !hit;
+  });
+  const keepMatch = db.matchVotes.filter((v) => {
+    const hit = compMatchIds.has(v.matchup_id) && v.id != null && want.has(v.id);
+    if (hit) removed++;
+    return !hit;
+  });
+  if (removed) {
+    db.nominationVotes = keepNom; db.approvalVotes = keepApp; db.matchVotes = keepMatch;
+    writeDb(db);
+  }
+  return removed;
+}

@@ -142,6 +142,32 @@ export default function Admin() {
   }, [token]);
   const invalidate = async (by: string, key: string) => { await act("invalidate_votes", { by, key }); await loadObs(); };
 
+  // 可疑票溯源：点开看这个设备/IP/身份的每一票投给了谁，再勾选要作废的
+  const [probe, setProbe] = useState<{ by: string; key: string; keyShort: string; votes: any[] } | null>(null);
+  const [probeBusy, setProbeBusy] = useState(false);
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const openProbe = async (f: { by: string; key: string; keyShort: string }) => {
+    setProbeBusy(true); setPicked(new Set());
+    try {
+      const tk = token || localStorage.getItem("adminToken") || "";
+      const r = await fetch(`/api/admin/observe?by=${encodeURIComponent(f.by)}&key=${encodeURIComponent(f.key)}`,
+        { headers: { "x-admin-token": tk }, cache: "no-store" });
+      const j = await r.json();
+      setProbe({ by: f.by, key: f.key, keyShort: f.keyShort, votes: Array.isArray(j?.votes) ? j.votes : [] });
+    } catch { setMsg({ t: "读取失败，请重试。", ok: false }); }
+    finally { setProbeBusy(false); }
+  };
+  const togglePick = (id: number) => setPicked((s2) => { const n = new Set(s2); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const invalidatePicked = async () => {
+    if (!picked.size) return;
+    if (!confirm(`确认作废选中的 ${picked.size} 张票？不可撤销。若相关轮次已结算，请随后「按当前票数重算本轮」。`)) return;
+    const ids = [...picked];
+    await act("invalidate_vote_ids", { ids });
+    setPicked(new Set());
+    if (probe) await openProbe(probe); // 重新拉取：已作废的会消失
+    await loadObs();
+  };
+
   /** 角色信息编辑器：提名池和「资料缺失盘点」共用同一套表单，就地展开、就地保存。 */
   const openEditor = (v: { id: number; name?: string; nameCn?: string; nameEn?: string; image?: string; subjectName?: string; subjectNameJa?: string; subjectNameEn?: string }) => {
     setEditId(v.id);
@@ -732,6 +758,36 @@ export default function Admin() {
               ))}
             </div>
           )}
+
+          {probe && (
+            <div className="probe">
+              <div className="probe-head">
+                <b>{probe.keyShort}</b> 的投票明细 · 共 {probe.votes.length} 票{picked.size > 0 ? ` · 已选 ${picked.size}` : ""}
+                <span className="probe-actions">
+                  <button className="btn" onClick={() => setPicked(new Set(probe.votes.map((v: any) => v.id)))}>全选</button>
+                  <button className="btn" onClick={() => setPicked(new Set())}>清空</button>
+                  <button className="btn danger solid" disabled={busy || picked.size === 0} onClick={invalidatePicked}>作废选中（{picked.size}）</button>
+                  <button className="btn" onClick={() => { setProbe(null); setPicked(new Set()); }}>关闭</button>
+                </span>
+              </div>
+              {probe.votes.length === 0 ? <p className="hint">这个身份在本届没有留下票（可能已被作废）。</p> : (
+                <div className="probe-list">
+                  {probe.votes.map((v: any) => (
+                    <label className={"probe-row" + (picked.has(v.id) ? " on" : "")} key={v.id}>
+                      <input type="checkbox" checked={picked.has(v.id)} onChange={() => togglePick(v.id)} />
+                      <span className={"flagtag flag-" + (v.kind === "match" ? "burst" : v.kind === "approval" ? "device" : "ip")}>
+                        {v.kind === "nomination" ? "提名" : v.kind === "approval" ? "票选" : "对战"}
+                      </span>
+                      <span className="pv-target">投给 <b>{v.target}</b></span>
+                      <span className="pv-detail">{v.detail}</span>
+                      <span className="pv-at num">{v.at ? fmtAbs(v.at) : "—"}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              <p className="hint">身份：{probe.by === "bucket" ? "设备指纹" : probe.by === "ip" ? "IP" : "投票人"} · 勾选后只作废选中的这几票，其余保留。</p>
+            </div>
+          )}
         </div>
       )}
 
@@ -802,7 +858,8 @@ export default function Admin() {
                 <div className="prow" key={f.type + ":" + f.key}>
                   <span className={"flagtag flag-" + f.type}>{f.type === "device" ? "设备" : f.type === "ip" ? "IP" : f.type === "burst" ? "爆发" : "覆盖"}</span>
                   <div className="meta"><div className="nm">{f.keyShort}{f.identities ? ` · ${f.identities} 身份` : ""} · {f.votes} 票</div><div className="sub">{f.detail}</div></div>
-                  <button className="btn" disabled={busy} onClick={() => { if (confirm(`确认作废「${f.keyShort}」的全部票？不可撤销。若该轮已结算，请随后「按当前票数重算本轮」。`)) invalidate(f.by, f.key); }}>作废</button>
+                  <button className="btn" disabled={busy || probeBusy} onClick={() => openProbe(f)}>查看</button>
+                  <button className="btn danger" disabled={busy} onClick={() => { if (confirm(`确认作废「${f.keyShort}」的全部票？不可撤销。若该轮已结算，请随后「按当前票数重算本轮」。`)) invalidate(f.by, f.key); }}>全部作废</button>
                 </div>
               ))}
             </div>

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminOk } from "@/lib/adminauth";
-import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, editCandidate, mergeCandidates, setBlocklist, setFreeze, clearFreezePlan } from "@/lib/db";
+import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, editCandidate, mergeCandidates, setBlocklist, setFreeze, clearFreezePlan, invalidateVoteIds } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline, setPace, setGroupDayCap, resolvePlayoff, canStartKnockout } from "@/lib/engine";
 
@@ -114,6 +114,12 @@ export async function POST(req: NextRequest) {
       if ("error" in r) return NextResponse.json({ error: r.error }, { status: 400 });
       rec(`合并角色 #${Number(body.fromId)} → #${Number(body.toId)}（迁移 ${r.moved} 票）`);
       return NextResponse.json({ ok: true, message: `已合并，迁移 ${r.moved} 张提名票。` });
+    }
+    if (action === "invalidate_vote_ids") {
+      const ids = Array.isArray(body.ids) ? body.ids.map(Number) : [];
+      const n = invalidateVoteIds(comp.id, ids);
+      rec(`作废 ${n} 张指定的票`);
+      return NextResponse.json({ ok: true, message: `已作废 ${n} 张票。结算类阶段请再执行「按当前票数重算本轮」。`, removed: n });
     }
     if (action === "clear_freeze_plan") {
       clearFreezePlan(comp.id);
