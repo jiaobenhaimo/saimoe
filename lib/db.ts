@@ -310,6 +310,7 @@ export function removeOwnCandidate(cid: number, candidateId: number, voterId: st
   if ((c.added_by || "") !== voterId) return { error: "只能移除你自己提名的角色。" };
   const votes = db.nominationVotes.filter((v) => v.competition_id === cid && v.candidate_id === candidateId).length;
   if (votes > 0) return { error: "已经有人投票，无法移除。" };
+  for (const x of db.candidates) if (x.competition_id === cid && x.parent_id === candidateId) x.parent_id = null;
   db.candidates = db.candidates.filter((x) => x.id !== candidateId);
   db.nominationVotes = db.nominationVotes.filter((v) => v.candidate_id !== candidateId);
   writeDb(db);
@@ -334,6 +335,9 @@ export function sweepOwnOrphans(cid: number, voterId: string): number {
   );
   if (!doomed.length) return 0;
   const ids = new Set(doomed.map((c) => c.id));
+  // 被清理的角色可能正是某个合并组的「上级」：先把它的子角色提升为独立角色，
+  // 否则会留下指向已删除 id 的 parent_id（子角色仍显示但无法参赛）。
+  for (const c of db.candidates) if (c.competition_id === cid && c.parent_id != null && ids.has(c.parent_id)) c.parent_id = null;
   db.candidates = db.candidates.filter((c) => !ids.has(c.id));
   db.nominationVotes = db.nominationVotes.filter((v) => !ids.has(v.candidate_id));
   writeDb(db);
@@ -352,6 +356,9 @@ export function sweepOrphanNominations(cid: number, graceMs: number): number {
   );
   if (!doomed.length) return 0;
   const ids = new Set(doomed.map((c) => c.id));
+  // 被清理的角色可能正是某个合并组的「上级」：先把它的子角色提升为独立角色，
+  // 否则会留下指向已删除 id 的 parent_id（子角色仍显示但无法参赛）。
+  for (const c of db.candidates) if (c.competition_id === cid && c.parent_id != null && ids.has(c.parent_id)) c.parent_id = null;
   db.candidates = db.candidates.filter((c) => !ids.has(c.id));
   db.nominationVotes = db.nominationVotes.filter((v) => !ids.has(v.candidate_id));
   writeDb(db);

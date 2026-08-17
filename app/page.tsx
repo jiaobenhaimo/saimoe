@@ -520,10 +520,12 @@ export default function Page() {
     }
   };
 
-  const canVote = (!state?.voteGate?.on || !!state?.voteGate?.canVote) && !state?.competition?.freeze?.active;
+  const frozen = !!state?.competition?.freeze?.active;                                   // 维护中：谁都不能投
+  const gated = !frozen && !!state?.voteGate?.on && !state?.voteGate?.canVote;            // 只是缺公众号链接
+  const canVote = !frozen && (!state?.voteGate?.on || !!state?.voteGate?.canVote);
   const nomVote = async (candidateId: number) => {
     setNomErr("");
-    if (!canVote) { setNomErr(T("gate.readonly")); return; }
+    if (!canVote) { setNomErr(frozen ? (state?.competition?.freeze?.note || T("freeze.now")) : T("gate.readonly")); return; }
     const key = "n" + candidateId;
     if (nomPending.has(key)) return;
     const before = state; // 失败时回滚到点击前，避免界面停在错误状态
@@ -558,7 +560,12 @@ export default function Page() {
     }
   };
   const matchVote = async (matchupId: number, choiceId: number) => {
-    if (!canVote || voting.has(matchupId)) return;
+    if (voting.has(matchupId)) return;
+    if (!canVote) {
+      // 对战卡两侧是可点的按钮（没有禁用态），静默无反应会让人以为页面坏了
+      setVoteErr(frozen ? (state?.competition?.freeze?.note || T("freeze.now")) : T("gate.readonly"));
+      return;
+    }
     const before = state;
     setVoteErr("");
     setVoting((s) => new Set(s).add(matchupId));
@@ -673,7 +680,7 @@ export default function Page() {
         })}
       </div>
       <div className="hint" style={{ marginTop: 6 }}><a href="/rules">{T("rulesLink")}</a></div>
-      {(linkErr || !canVote) && (
+      {!frozen && (linkErr || gated) && (
         <div className="gate-banner">{linkErr ? T("gate.linkErr") : T("gate.readonly")}</div>
       )}
 
