@@ -11,9 +11,14 @@ const IP_MIN = envNum("SAIMOE_OBS_IP_MIN", 4);           // distinct identities 
 const BURST_WINDOW_MS = envNum("SAIMOE_OBS_BURST_WINDOW_MS", 10_000);
 const BURST_MIN = envNum("SAIMOE_OBS_BURST_MIN", 8);     // votes by one identity within the window
 const COVERAGE_PCT = Math.min(1, envNum("SAIMOE_OBS_COVERAGE_PCT", 0.9)); // share of all matches one identity voted on
+// 下面三个信号来自真实数据的复盘：单看「同指纹多身份」会把同型号手机误判，
+// 而真正的刷票在时间接续、票单重叠、用满上限这三点上同时露出马脚。
+const HANDOFF_MS = envNum("SAIMOE_OBS_HANDOFF_MS", 120_000); // 同设备上一身份投完到下一身份开投的间隔
+const OVERLAP_MIN = envNum("SAIMOE_OBS_OVERLAP_MIN", 4);     // 两个身份投出的相同角色数
+const MAXED_MIN = envNum("SAIMOE_OBS_MAXED_MIN", 2);         // 同设备上「用满提名上限」的身份数
 const COVERAGE_MIN_MATCHES = 10;                          // don't flag coverage until the field is big enough
 
-export type FlagType = "device" | "ip" | "burst" | "coverage";
+export type FlagType = "device" | "ip" | "burst" | "coverage" | "handoff" | "overlap" | "maxed";
 export interface Flag {
   type: FlagType;
   by: "bucket" | "ip" | "voter"; // which stored field an "invalidate" action would match
@@ -39,15 +44,15 @@ export function detectAnomalies(cid: number): {
   const db = readDb();
   const compMatchIds = new Set(db.matchups.filter((m) => m.competition_id === cid).map((m) => m.id));
 
-  interface Ev { voter: string; bucket: string | null; ip: string | null; ts: number | null; matchId: number | null; }
+  interface Ev { voter: string; bucket: string | null; ip: string | null; ts: number | null; matchId: number | null; target: number | null; }
   const evs: Ev[] = [];
   for (const v of db.matchVotes) if (compMatchIds.has(v.matchup_id))
-    evs.push({ voter: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null, ts: v.created_at ?? null, matchId: v.matchup_id });
+    evs.push({ voter: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null, ts: v.created_at ?? null, matchId: v.matchup_id, target: v.choice_id });
   for (const v of db.nominationVotes) if (v.competition_id === cid)
-    evs.push({ voter: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null, ts: v.created_at ?? null, matchId: null });
+    evs.push({ voter: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null, ts: v.created_at ?? null, matchId: null, target: v.candidate_id });
   // approval-mode group votes (no matchup_id): fold in so device/IP/burst detection covers them too
   for (const v of db.approvalVotes) if (v.competition_id === cid)
-    evs.push({ voter: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null, ts: v.created_at ?? null, matchId: null });
+    evs.push({ voter: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null, ts: v.created_at ?? null, matchId: null, target: v.candidate_id });
 
   const flags: Flag[] = [];
   const withMeta = evs.filter((e) => e.bucket || e.ip || e.ts != null).length;
@@ -63,6 +68,49 @@ export function detectAnomalies(cid: number): {
     if (g.voters.size >= DEVICE_MIN)
       flags.push({ type: "device", by: "bucket", key: k, keyShort: short(k), identities: g.voters.size, votes: g.votes,
         detail: `同一设备指纹关联 ${g.voters.size} 个投票身份、共 ${g.votes} 票（疑似一台设备多浏览器/无痕刷票）` });
+  });
+
+  // 1b) 交接：同一设备上，一个身份投完后极短时间内出现另一个新身份继续投。
+  //     这是「清缓存/开无痕换身份」最直接的痕迹，比单纯的身份数可靠得多。
+  const comp0 = db.competitions.find((c) => c.id === cid);
+  const nomLimit = comp0?.nom_user_limit ?? 0;
+  const bucketEvs = new Map<string, Ev[]>();
+  evs.forEach((e) => { if (e.bucket && e.ts != null) { const a = bucketEvs.get(e.bucket) || []; a.push(e); bucketEvs.set(e.bucket, a); } });
+  bucketEvs.forEach((list, k) => {
+    const span = new Map<string, { first: number; last: number; targets: Set<number>; n: number }>();
+    for (const e of list) {
+      const g = span.get(e.voter) || { first: e.ts!, last: e.ts!, targets: new Set<number>(), n: 0 };
+      g.first = Math.min(g.first, e.ts!); g.last = Math.max(g.last, e.ts!);
+      if (e.target != null) g.targets.add(e.target);
+      g.n++; span.set(e.voter, g);
+    }
+    const ids = [...span.entries()].sort((a, b) => a[1].first - b[1].first);
+    if (ids.length < 2) return;
+    // 交接
+    const handoffs: string[] = [];
+    for (let i = 1; i < ids.length; i++) {
+      const gap = ids[i][1].first - ids[i - 1][1].last;
+      if (gap >= 0 && gap <= HANDOFF_MS) handoffs.push(`${Math.round(gap / 1000)}s`);
+    }
+    if (handoffs.length)
+      flags.push({ type: "handoff", by: "bucket", key: k, keyShort: short(k), identities: ids.length, votes: list.length,
+        detail: `同一设备上身份接续出现（间隔 ${handoffs.join("、")}），像是清缓存/无痕后换身份继续投` });
+    // 票单重叠
+    let worst = 0, pair = "";
+    for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+      let same = 0; ids[i][1].targets.forEach((t) => { if (ids[j][1].targets.has(t)) same++; });
+      if (same > worst) { worst = same; pair = `${short(ids[i][0])} / ${short(ids[j][0])}`; }
+    }
+    if (worst >= OVERLAP_MIN)
+      flags.push({ type: "overlap", by: "bucket", key: k, keyShort: short(k), identities: ids.length, votes: list.length,
+        detail: `同一设备上两个身份投出的角色高度重叠（${pair} 有 ${worst} 个相同），不像各自独立选择` });
+    // 用满上限
+    if (nomLimit > 0) {
+      const maxed = ids.filter(([, g]) => g.n >= nomLimit).length;
+      if (maxed >= MAXED_MIN)
+        flags.push({ type: "maxed", by: "bucket", key: k, keyShort: short(k), identities: ids.length, votes: list.length,
+          detail: `同一设备上有 ${maxed} 个身份各自用满提名上限（${nomLimit} 票），正常用户很少恰好投满` });
+    }
   });
 
   // 2) one IP → many identities (higher bar: NAT legitimately shares an IP)

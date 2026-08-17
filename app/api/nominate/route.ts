@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema, addCandidate, removeOwnCandidate, sweepOwnOrphans, getBlocklist, isBlockedBy, freezeState } from "@/lib/db";
+import { ensureSchema, addCandidate, removeOwnCandidate, sweepOwnOrphans, getBlocklist, isBlockedBy, freezeState, voterSanction, roundKeyOf } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition } from "@/lib/engine";
-import { getVoterId } from "@/lib/voter";
+import { getVoterId, getDeviceBucket } from "@/lib/voter";
 import { getSid } from "@/lib/sid";
 import { rateLimited } from "@/lib/ratelimit";
 import { gateOn, verifyToken, VOTER_COOKIE } from "@/lib/wxsession";
@@ -32,7 +32,14 @@ export async function POST(req: NextRequest) {
     const vid = await getVoterId();
     {
       const active = getActiveCompetition();
-      if (active) { const fz = freezeState(active.id); if (fz.active) return NextResponse.json({ error: fz.note || "系统维护中，暂停提名，请稍后再来。", frozen: true }, { status: 503 }); }
+      if (active) {
+        const fz = freezeState(active.id);
+        if (fz.active) return NextResponse.json({ error: fz.note || "系统维护中，暂停提名，请稍后再来。", frozen: true }, { status: 503 });
+        // 本轮被作废过票的身份，本轮连提名也一并停掉——否则禁投形同虚设（还能继续加角色）
+        const sanc = voterSanction({ voterId: vid, bucket: await getDeviceBucket() }, roundKeyOf(active));
+        if (sanc?.blockedThisRound)
+          return NextResponse.json({ error: `你在本轮有 ${sanc.count} 张票因异常投票被作废，本轮已不能再提名或投票。`, sanctioned: true }, { status: 403 });
+      }
     }
     // WeChat gate: when on, only users arriving via a per-user 公众号 link may modify the pool.
     if (gateOn() && !verifyToken(req.cookies.get(VOTER_COOKIE)?.value))

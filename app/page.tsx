@@ -521,11 +521,12 @@ export default function Page() {
   };
 
   const frozen = !!state?.competition?.freeze?.active;                                   // 维护中：谁都不能投
-  const gated = !frozen && !!state?.voteGate?.on && !state?.voteGate?.canVote;            // 只是缺公众号链接
-  const canVote = !frozen && (!state?.voteGate?.on || !!state?.voteGate?.canVote);
+  const gated = !frozen && !state?.sanction?.blockedThisRound && !!state?.voteGate?.on && !state?.voteGate?.canVote;            // 只是缺公众号链接
+  const blockedRound = !!state?.sanction?.blockedThisRound;                                // 本轮被作废过票 → 本轮禁投
+  const canVote = !frozen && !blockedRound && (!state?.voteGate?.on || !!state?.voteGate?.canVote);
   const nomVote = async (candidateId: number) => {
     setNomErr("");
-    if (!canVote) { setNomErr(frozen ? (state?.competition?.freeze?.note || T("freeze.now")) : T("gate.readonly")); return; }
+    if (!canVote) { setNomErr(frozen ? (state?.competition?.freeze?.note || T("freeze.now")) : blockedRound ? T("warn.blocked", { n: state?.sanction?.count ?? 0 }) : T("gate.readonly")); return; }
     const key = "n" + candidateId;
     if (nomPending.has(key)) return;
     const before = state; // 失败时回滚到点击前，避免界面停在错误状态
@@ -563,7 +564,7 @@ export default function Page() {
     if (voting.has(matchupId)) return;
     if (!canVote) {
       // 对战卡两侧是可点的按钮（没有禁用态），静默无反应会让人以为页面坏了
-      setVoteErr(frozen ? (state?.competition?.freeze?.note || T("freeze.now")) : T("gate.readonly"));
+      setVoteErr(frozen ? (state?.competition?.freeze?.note || T("freeze.now")) : blockedRound ? T("warn.blocked", { n: state?.sanction?.count ?? 0 }) : T("gate.readonly"));
       return;
     }
     const before = state;
@@ -682,7 +683,9 @@ export default function Page() {
       <div className="hint" style={{ marginTop: 6 }}><a href="/rules">{T("rulesLink")}</a></div>
       {state?.sanction?.count > 0 && (
         <div className="gate-banner" role="alert" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}>
-          {T("warn.sanction", { n: state.sanction.count })}
+          {state.sanction.blockedThisRound
+            ? T("warn.blocked", { n: state.sanction.count })
+            : T("warn.sanction", { n: state.sanction.count })}
         </div>
       )}
       {!frozen && (linkErr || gated) && (

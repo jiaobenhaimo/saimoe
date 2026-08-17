@@ -47,8 +47,19 @@ export async function getVoterId(): Promise<string> {
  * de-duplicate or reject a vote — doing so would collapse distinct people who happen
  * to share a hardware profile (the NAT problem again). Returns null when absent.
  */
+/** 设备标识 = 客户端硬件哈希 ⊕ 调用方 IP，在服务端合成。
+ *
+ *  为什么要把 IP 并进来：客户端那串哈希只由屏幕/时区/核心数/内存等粗特征组成，
+ *  同型号手机取值完全一样（Safari 上 deviceMemory 恒为 undefined，更少一个维度），
+ *  于是「同一指纹」经常只是同型号撞号——实测有一个指纹横跨十几个不同地区的 IP。
+ *  合成 IP 后：同机同网 → 同标识（能抓到清缓存换身份继续投）；
+ *              同型号不同网 → 不同标识（不再误报）。
+ *  注意：这会与旧数据里的 device_bucket 不兼容，旧票的标识不会重算。 */
 export async function getDeviceBucket(): Promise<string | null> {
   const h = await headers();
-  const db = h.get("x-db");
-  return db && /^[a-f0-9]{16,128}$/.test(db) ? db : null;
+  const raw = h.get("x-db");
+  if (!raw || !/^[a-f0-9]{16,128}$/.test(raw)) return null;
+  const ip = (h.get("x-forwarded-for") || "").split(",")[0]?.trim() || h.get("x-real-ip") || "";
+  const crypto = await import("node:crypto");
+  return crypto.createHash("sha256").update(raw + "|" + ip).digest("hex");
 }

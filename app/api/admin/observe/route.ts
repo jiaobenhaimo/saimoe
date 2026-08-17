@@ -4,7 +4,7 @@ import { ensureSchema, readAudit } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition } from "@/lib/engine";
 import { detectAnomalies, projectTimeline, liveTallies, dataGaps } from "@/lib/observe";
-import { listVotesBy } from "@/lib/db";
+import { listVotesBy, planSmartInvalidate } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +25,8 @@ export async function GET(req: NextRequest) {
   const by = req.nextUrl.searchParams.get("by");
   const key = req.nextUrl.searchParams.get("key");
   if (by && key && (by === "bucket" || by === "ip" || by === "voter")) {
+    if (req.nextUrl.searchParams.get("mode") === "smart")
+      return NextResponse.json({ plan: planSmartInvalidate(comp.id, by, key), by, key });
     return NextResponse.json({ votes: listVotesBy(comp.id, by, key), by, key });
   }
 

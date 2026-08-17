@@ -102,7 +102,17 @@ export interface DB {
 }
 /** 一条「票被作废」的记录。按 voter_id 与设备指纹匹配本人；
  *  故意不按 IP 匹配 —— 宿舍/校园同一出口 IP 下大量无辜用户会被误伤。 */
-export interface Sanction { at: number; voterId: string | null; bucket: string | null; count: number }
+export interface Sanction { at: number; voterId: string | null; bucket: string | null; count: number; round: string }
+
+/** 当前轮次的标识：删票禁投是「按轮」生效的，所以要能稳定表达「现在是哪一轮」。 */
+export function roundKeyOf(c: Competition | undefined): string {
+  if (!c) return "none";
+  if (c.phase === "nomination") return "nomination";
+  if (c.phase === "group") return "group:" + (c.group_matchday ?? 1);
+  if (c.phase === "playoff") return "playoff";
+  if (c.phase === "knockout") return "knockout:" + (c.ko_round ?? 1);
+  return c.phase;
+}
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
 const FILE = path.join(DATA_DIR, "saimoe.json");
@@ -746,7 +756,7 @@ export function invalidateVotes(cid: number, by: "bucket" | "ip" | "voter", key:
     return (v as any)[field] !== key;
   });
   removed += avBefore - db.approvalVotes.length;
-  if (removed) { recordSanctions(db, victims as any); writeDb(db); }
+  if (removed) { recordSanctions(db, cid, victims as any); writeDb(db); }
   return removed;
 }
 
@@ -827,32 +837,100 @@ export function invalidateVoteIds(cid: number, ids: number[]): number {
   });
   if (removed) {
     db.nominationVotes = keepNom; db.approvalVotes = keepApp; db.matchVotes = keepMatch;
-    recordSanctions(db, victims); // 记下这些身份，本人下次投票时会看到提示
+    recordSanctions(db, cid, victims); // 记下这些身份：本人会看到提示，且本轮不得再投
     writeDb(db);
   }
   return removed;
 }
 
 /** 把这些票所属的身份记进 sanctions，供其下次投票时提示本人。 */
-function recordSanctions(db: DB, victims: { voter_id: string; device_bucket?: string | null }[]): void {
+function recordSanctions(db: DB, cid: number, victims: { voter_id: string; device_bucket?: string | null }[]): void {
   if (!victims.length) return;
+  const round = roundKeyOf(db.competitions.find((c) => c.id === cid));
   const byKey = new Map<string, { voterId: string | null; bucket: string | null; count: number }>();
   for (const v of victims) {
     const k = v.voter_id + "|" + (v.device_bucket || "");
     const cur = byKey.get(k) || { voterId: v.voter_id || null, bucket: v.device_bucket || null, count: 0 };
     cur.count++; byKey.set(k, cur);
   }
-  db.sanctions = [...(db.sanctions || []), ...[...byKey.values()].map((x) => ({ at: Date.now(), ...x }))].slice(-500);
+  db.sanctions = [...(db.sanctions || []), ...[...byKey.values()].map((x) => ({ at: Date.now(), round, ...x }))].slice(-500);
 }
 
 /** 这个身份是否被作废过票（本人提示用）。按 voter_id 或设备指纹匹配，不按 IP。 */
-export function voterSanction(who: { voterId?: string | null; bucket?: string | null }): { count: number; at: number } | null {
+export function voterSanction(who: { voterId?: string | null; bucket?: string | null }, round?: string):
+  { count: number; at: number; rounds: string[]; blockedThisRound: boolean } | null {
   const list = readDb().sanctions || [];
   if (!list.length) return null;
-  let count = 0, at = 0;
+  let count = 0, at = 0; const rounds = new Set<string>(); let blocked = false;
   for (const s of list) {
     const hit = (who.voterId && s.voterId === who.voterId) || (who.bucket && s.bucket && s.bucket === who.bucket);
-    if (hit) { count += s.count; at = Math.max(at, s.at); }
+    if (!hit) continue;
+    count += s.count; at = Math.max(at, s.at); rounds.add(s.round || "");
+    if (round && s.round === round) blocked = true;
   }
-  return count > 0 ? { count, at } : null;
+  return count > 0 ? { count, at, rounds: [...rounds], blockedThisRound: blocked } : null;
+}
+
+/** 智能删票的方案（只计算、不执行；执行仍走 invalidateVoteIds，以便记录受罚身份）。
+ *
+ *  规则（按运营要求）：
+ *   a) 这个 IP/设备下，**每个角色只保留 1 票**（保留最早那张，其余删掉）——刷票的形态就是
+ *      同一角色被同一台设备投多次；
+ *   b) **每个身份至少被删 1 票**——若某身份在 (a) 之后一票未删（它投的角色恰好都只投了一次），
+ *      则再删掉它最新的一票，让"每个参与刷票的身份都付出代价"。
+ *  同时给出影响预估：哪些角色会因此掉到 0 票（配合 nom_min_votes 会直接失去资格）。 */
+export function planSmartInvalidate(cid: number, by: "bucket" | "ip" | "voter", key: string): {
+  ids: number[];
+  perTarget: { target: string; had: number; deleted: number }[];
+  perIdentity: { voterId: string; had: number; deleted: number }[];
+  zeroed: { target: string; totalBefore: number }[];
+} {
+  const empty = { ids: [], perTarget: [], perIdentity: [], zeroed: [] };
+  if (!key) return empty;
+  const db = readDb();
+  const rows = listVotesBy(cid, by, key);
+  if (!rows.length) return empty;
+
+  // (a) 每个角色留最早一张
+  const byTarget = new Map<string, typeof rows>();
+  for (const r of rows) { if (!byTarget.has(r.target)) byTarget.set(r.target, []); byTarget.get(r.target)!.push(r); }
+  const kill = new Set<number>();
+  const perTarget: { target: string; had: number; deleted: number }[] = [];
+  for (const [target, list] of byTarget) {
+    const sorted = [...list].sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
+    const doomed = sorted.slice(1); // 保留最早
+    doomed.forEach((r) => kill.add(r.id));
+    perTarget.push({ target, had: list.length, deleted: doomed.length });
+  }
+  // (b) 每个身份至少删 1 票
+  const byIdent = new Map<string, typeof rows>();
+  for (const r of rows) { if (!byIdent.has(r.voterId)) byIdent.set(r.voterId, []); byIdent.get(r.voterId)!.push(r); }
+  const perIdentity: { voterId: string; had: number; deleted: number }[] = [];
+  for (const [voterId, list] of byIdent) {
+    let deleted = list.filter((r) => kill.has(r.id)).length;
+    if (deleted === 0) {
+      const latest = [...list].sort((a, b) => (b.at ?? 0) - (a.at ?? 0))[0];
+      if (latest) { kill.add(latest.id); deleted = 1; }
+    }
+    perIdentity.push({ voterId, had: list.length, deleted });
+  }
+  // 影响预估：删完之后总票数归零的角色
+  const nameOf = (id: number) => { const c = db.candidates.find((x) => x.id === id); return c ? (c.name_cn || c.name) : `#${id}`; };
+  const totalByName = new Map<string, number>();
+  for (const v of db.nominationVotes) if (v.competition_id === cid) {
+    const n = nameOf(v.candidate_id); totalByName.set(n, (totalByName.get(n) || 0) + 1);
+  }
+  for (const v of db.approvalVotes) if (v.competition_id === cid) {
+    const n = nameOf(v.candidate_id); totalByName.set(n, (totalByName.get(n) || 0) + 1);
+  }
+  const killedByName = new Map<string, number>();
+  for (const r of rows) if (kill.has(r.id)) killedByName.set(r.target, (killedByName.get(r.target) || 0) + 1);
+  const zeroed: { target: string; totalBefore: number }[] = [];
+  for (const [name, k] of killedByName) {
+    const before = totalByName.get(name) || 0;
+    if (before > 0 && before - k <= 0) zeroed.push({ target: name, totalBefore: before });
+  }
+  perTarget.sort((a, b) => b.deleted - a.deleted || b.had - a.had);
+  perIdentity.sort((a, b) => b.deleted - a.deleted);
+  return { ids: [...kill], perTarget, perIdentity, zeroed };
 }

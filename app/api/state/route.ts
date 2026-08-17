@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema, voterSanction } from "@/lib/db";
+import { ensureSchema, voterSanction, roundKeyOf } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getSiteInfo } from "@/lib/site";
 import { getVoterId, getDeviceBucket } from "@/lib/voter";
@@ -18,8 +18,13 @@ export async function GET(req: NextRequest) {
     const vid = await getVoterId();
     const on = gateOn();
     const canVote = !on || !!verifyToken(req.cookies.get(VOTER_COOKIE)?.value);
-    const sanction = voterSanction({ voterId: vid, bucket: await getDeviceBucket() });
-    return NextResponse.json({ ...getState(vid), voteGate: { on, canVote }, site: getSiteInfo(), sanction });
+    const st = getState(vid);
+    // 用 state 投影里的字段拼出当前轮次键，与服务端 roundKeyOf 保持一致
+    const c: any = st?.competition;
+    const sanction = voterSanction(
+      { voterId: vid, bucket: await getDeviceBucket() },
+      roundKeyOf(c ? ({ phase: c.phase, group_matchday: c.groupMatchday, ko_round: c.koRound } as any) : undefined));
+    return NextResponse.json({ ...st, voteGate: { on, canVote }, site: getSiteInfo(), sanction });
   } catch (e: any) {
     return NextResponse.json({ error: e.message || "server error" }, { status: 500 });
   }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema, toggleNomination, castMatchVote, castApprovalVote, resolveCandidate, freezeState } from "@/lib/db";
+import { ensureSchema, toggleNomination, castMatchVote, castApprovalVote, resolveCandidate, freezeState, voterSanction, roundKeyOf } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getVoterId, getDeviceBucket } from "@/lib/voter";
 import { getSid } from "@/lib/sid";
@@ -49,6 +49,12 @@ export async function POST(req: NextRequest) {
     // 维护冻结：停投期间一律不写票，admin 可安心改数据
     const fz = freezeState(comp.id);
     if (fz.active) return NextResponse.json({ error: fz.note || "系统维护中，暂停投票，请稍后再来。", frozen: true }, { status: 503 });
+
+    // 本轮被作废过票的身份，本轮不得再投（换 voter_id 也拦得住：设备标识已含 IP）
+    const round = roundKeyOf(comp);
+    const sanc = voterSanction({ voterId, bucket: meta.bucket }, round);
+    if (sanc?.blockedThisRound)
+      return NextResponse.json({ error: `你在本轮有 ${sanc.count} 张票因异常投票被作废，本轮已不能再投票。下一轮可正常参与。`, sanctioned: true }, { status: 403 });
 
     const body = await req.json();
 

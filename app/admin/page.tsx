@@ -147,6 +147,19 @@ export default function Admin() {
   const [probeBusy, setProbeBusy] = useState(false);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [openIdent, setOpenIdent] = useState<string | null>(null);
+  const [smart, setSmart] = useState<any>(null);
+  /** 智能删票：先取方案预览（每角色留 1 票 + 每身份至少删 1 票），确认后再执行。 */
+  const smartPlan = async () => {
+    if (!probe) return;
+    try {
+      const tk = token || localStorage.getItem("adminToken") || "";
+      const r = await fetch(`/api/admin/observe?mode=smart&by=${encodeURIComponent(probe.by)}&key=${encodeURIComponent(probe.key)}`,
+        { headers: { "x-admin-token": tk }, cache: "no-store" });
+      const j = await r.json();
+      setSmart(j?.plan || null);
+      if (j?.plan) setPicked(new Set(j.plan.ids));
+    } catch { setMsg({ t: "读取方案失败。", ok: false }); }
+  };
   const openProbe = async (f: { by: string; key: string; keyShort: string }) => {
     setProbeBusy(true); setPicked(new Set());
     try {
@@ -828,7 +841,7 @@ export default function Admin() {
             <div className="pool-admin">
               {obs.flags.map((f: any) => (
                 <div className="prow" key={f.type + ":" + f.key}>
-                  <span className={"flagtag flag-" + f.type}>{f.type === "device" ? "设备" : f.type === "ip" ? "IP" : f.type === "burst" ? "爆发" : "覆盖"}</span>
+                  <span className={"flagtag flag-" + f.type}>{f.type === "device" ? "设备" : f.type === "ip" ? "IP" : f.type === "burst" ? "爆发" : f.type === "handoff" ? "接续" : f.type === "overlap" ? "重叠" : f.type === "maxed" ? "投满" : "覆盖"}</span>
                   <div className="meta"><div className="nm">{f.keyShort}{f.identities ? ` · ${f.identities} 身份` : ""} · {f.votes} 票</div><div className="sub">{f.detail}</div></div>
                   <button className="btn" disabled={busy || probeBusy} onClick={() => openProbe(f)}>查看</button>
                   <button className="btn danger" disabled={busy} onClick={() => { if (confirm(`确认作废「${f.keyShort}」的全部票？不可撤销。若该轮已结算，请随后「按当前票数重算本轮」。`)) invalidate(f.by, f.key); }}>全部作废</button>
@@ -852,11 +865,40 @@ export default function Admin() {
                   <span className="probe-actions">
                     <button className="btn" onClick={() => setPicked(new Set(probe.votes.map((v: any) => v.id)))}>全选</button>
                     <button className="btn" onClick={() => setPicked(new Set())}>清空</button>
+                    <button className="btn" disabled={busy} onClick={smartPlan}>智能删票…</button>
                     <button className="btn danger solid" disabled={busy || picked.size === 0} onClick={invalidatePicked}>作废选中（{picked.size}）</button>
-                    <button className="btn" onClick={() => { setProbe(null); setPicked(new Set()); setOpenIdent(null); }}>关闭</button>
+                    <button className="btn" onClick={() => { setProbe(null); setPicked(new Set()); setOpenIdent(null); setSmart(null); }}>关闭</button>
                   </span>
                 </div>
 
+                {smart && (
+                  <div className="smart-plan">
+                    <div className="probe-sub" style={{ borderTop: "none" }}>
+                      智能删票方案：将删除 <b>{smart.ids.length}</b> 票（每个角色只留最早 1 票，且每个身份至少删 1 票）
+                    </div>
+                    <p className="hint">
+                      按角色：{smart.perTarget.filter((t: any) => t.deleted > 0).map((t: any) => `${t.target} ${t.had}→1`).join("、") || "无重复票"}
+                    </p>
+                    <p className="hint">
+                      按身份：{smart.perIdentity.map((i: any) => `${i.voterId.replace(/^sid_/, "").slice(0, 6)}… 删 ${i.deleted}/${i.had}`).join("、")}
+                    </p>
+                    {smart.zeroed.length > 0 && (
+                      <p className="hint" style={{ color: "var(--danger)" }}>
+                        ⚠ 执行后这些角色总票数会归零{smart.zeroed.map((z: any) => `：${z.target}（现 ${z.totalBefore} 票）`).join("")}。
+                        若设了「进入小组赛需 ≥N 提名票」，它们会失去资格。
+                      </p>
+                    )}
+                    <div style={{ display: "flex", gap: 8, padding: "0 12px 12px" }}>
+                      <button className="btn danger solid" disabled={busy || smart.ids.length === 0} onClick={async () => {
+                        if (!confirm(`按方案作废 ${smart.ids.length} 票？不可撤销。`)) return;
+                        await act("invalidate_vote_ids", { ids: smart.ids });
+                        setSmart(null); setPicked(new Set());
+                        if (probe) await openProbe(probe); await loadObs();
+                      }}>执行方案（{smart.ids.length} 票）</button>
+                      <button className="btn" onClick={() => { setSmart(null); setPicked(new Set()); }}>放弃方案</button>
+                    </div>
+                  </div>
+                )}
                 {probe.votes.length === 0 ? <p className="hint">这个身份在本届没有留下票（可能已被作废）。</p> : (<>
                   {/* (b) 票都投给了谁 —— 刷票通常集中在少数几个角色上 */}
                   <div className="probe-sub">票的流向（共 {targets.length} 个角色）</div>

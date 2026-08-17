@@ -36,6 +36,7 @@ export function getState(voterId: string) {
       groupsCount: comp.groups_count, championId: comp.champion_id,
       targetSize: comp.target_size ?? null,
       nomEndsAt: comp.nom_ends_at ?? null, groupEndsAt: comp.group_ends_at ?? null, koRoundEndsAt: comp.ko_round_ends_at ?? null,
+      koRound: comp.ko_round ?? null, // 前端要用它拼当前轮次键（禁投判定必须与服务端一致）
       postponeDays: comp.postpone_days ?? null,
       nomUserLimit: comp.nom_user_limit ?? 0, nomMinVotes: comp.nom_min_votes ?? 0,
       groupMatchday: comp.group_matchday ?? null, groupMatchdayCount: comp.group_matchday_count ?? null,

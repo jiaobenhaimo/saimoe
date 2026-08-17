@@ -771,3 +771,7 @@ html:lang(zh-CN) body, html:lang(zh) body {
 .probe-row.ident:hover { background: var(--hover); }
 .probe-row.sub { padding-left: 34px; font-weight: 400; }
 .probe-row .btn { flex: none; padding: 6px 10px; font-size: 12px; }
+
+/* 智能删票方案预览 */
+.smart-plan { border-top: 1px solid var(--line); background: var(--rose-soft); }
+.smart-plan .hint { padding: 0 12px; margin: 4px 0; }
