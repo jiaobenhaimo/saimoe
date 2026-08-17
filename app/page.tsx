@@ -987,7 +987,9 @@ export default function Page() {
       {voteErr && <div className="toast err" role="alert">{voteErr}</div>}
       <div aria-live="polite" className="sr-only">{liveMsg}</div>
       <div className="foot">
-        {T("dataFrom")}
+        {T("dataFrom").split("bangumi.tv").map((seg, i) => (
+          <span key={i}>{i > 0 && <a href="https://bangumi.tv" target="_blank" rel="noopener noreferrer">bangumi.tv</a>}{seg}</span>
+        ))}
         <div className="foot-oss">
           {T("foot.oss", { repo: "%%REPO%%" }).split("%%REPO%%").map((seg, i) => (
             <span key={i}>{i > 0 && <a href="https://github.com/jiaobenhaimo/saimoe" target="_blank" rel="noopener noreferrer">jiaobenhaimo/saimoe</a>}{seg}</span>

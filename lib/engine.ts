@@ -593,9 +593,15 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
     .map((c) => ({ id: c.id, votes: nomCount.get(c.id) || 0 }))
     .filter((r) => r.votes >= minVotes)
     .sort((a, b) => b.votes - a.votes || a.id - b.id);
-  if (ranked.length < size) throw new Error(minVotes > 0
-    ? `达到最低提名票（${minVotes}）的角色只有 ${ranked.length} 个，不足 ${size} 个。`
-    : `提名池只有 ${ranked.length} 个角色，不足 ${size} 个。`);
+  if (ranked.length < size) {
+    // 提名池里可能还有「已并入他人」的子角色：它们仍在池中显示、仍可投票，但不单独参赛。
+    // 若不说明，运营会看到「池里明明有 N 个」却被告知不足，从而怀疑数据出错。
+    const merged = db.candidates.filter((c) => c.competition_id === cid && c.parent_id != null).length;
+    const note = merged > 0 ? `（提名池共 ${compCands.length + merged} 个，其中 ${merged} 个已合并进其他角色、不单独参赛）` : "";
+    throw new Error(minVotes > 0
+      ? `达到最低提名票（${minVotes}）的可参赛角色只有 ${ranked.length} 个，不足 ${size} 个${note}。`
+      : `可参赛角色只有 ${ranked.length} 个，不足 ${size} 个${note}。`);
+  }
 
   // 并列全取：凑满 size，但票数与第 size 名并列的角色一并纳入（如取前 20 遇并列 → 可能取 23）。
   const cutoffVotes = ranked[size - 1].votes;

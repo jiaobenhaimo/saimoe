@@ -332,7 +332,10 @@ body { font-size: 15px; line-height: 1.6; }
 /* nomination pool: single bordered list on mobile, 2-column card grid on wider screens */
 @media (min-width: 760px) {
   /* 列数由可用宽度决定：每列至少 340px，否则宁可单列也不要挤成一团 */
-  .results.pool { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px 14px; border: none; background: transparent; overflow: visible; }
+  /* 每列最小 380px：算过最坏情况（同时出现「投一票」+「移除」两个按钮）后，
+     仍能给名字留下 ≥3 个汉字的宽度。放不下就自动减少列数；
+     min(100%, …) 保证窄屏时退化成单列而不是横向溢出。 */
+  .results.pool { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); gap: 10px 14px; border: none; background: transparent; overflow: visible; }
   .results.pool .prow { border: 1px solid var(--line); border-radius: 12px; margin-bottom: 0; background: var(--surface); }
   .results.pool .prow:hover { background: var(--hover); }
 }
@@ -721,3 +724,24 @@ html:lang(zh-CN) body, html:lang(zh) body {
 .foot-oss { margin-top: 6px; font-size: 12px; line-height: 1.6; color: var(--muted); }
 .foot-oss a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
 .foot-oss a:hover { color: var(--rose-deep); }
+
+/* 投票框里的角色名至少显示 3 个汉字：名字不参与挤压，先牺牲副行（作品名）再省略号。
+   列宽不足时由上面的 auto-fill 自动减少列数——单列时则允许铺满可用宽度。 */
+.results.pool .prow .meta .nm,
+.ballot-list li .nm { min-width: 3em; }
+.results.pool .prow .meta .sub,
+.ballot-list li .sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 按钮与票数不被名字挤走形 */
+.results.pool .prow .btn, .ballot-list li .btn { flex: none; }
+.results.pool .prow .votecell { flex: none; }
+
+/* 窄屏单列时按钮收紧一点，把宽度让给名字：这样即使「投一票」+「移除」同时出现，
+   名字仍能显示 3 个以上汉字，不必牺牲成省略号。 */
+@media (max-width: 520px) {
+  .results.pool .prow { gap: 8px; padding: 10px 10px; }
+  .results.pool .prow .btn { padding: 8px 10px; }
+  .results.pool .prow .rankn { width: 20px; }
+}
+
+/* 联系方式是多行文本（来自服务器上的 site.json），保留换行 */
+.rules-contact { white-space: pre-line; }

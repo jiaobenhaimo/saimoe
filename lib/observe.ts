@@ -1,4 +1,4 @@
-import { readDb, approvalTally } from "./db";
+import { readDb, approvalTally, nominationTally } from "./db";
 import { groupLabel } from "./i18n";
 
 // ── tunable detection thresholds (env-overridable) ────────────────────────────
@@ -235,14 +235,24 @@ export function liveTallies(cid: number): {
 export function dataGaps(cid: number): {
   total: number;
   counts: { nameZh: number; nameJa: number; nameEn: number; subjectZh: number; subjectJa: number; subjectEn: number; image: number };
-  rows: { id: number; bgmId: string; label: string; missing: string[]; mergedInto: string | null }[];
+  rows: {
+    id: number; bgmId: string; label: string; missing: string[]; mergedInto: string | null; votes: number;
+    // 当前值，供后台就地编辑（非提名阶段 state 里没有提名池，只能由这里带出来）
+    name: string; nameCn: string; nameEn: string; image: string;
+    subjectName: string; subjectNameJa: string; subjectNameEn: string;
+  }[];
 } {
   const db = readDb();
   const list = db.candidates.filter((c) => c.competition_id === cid);
   const counts = { nameZh: 0, nameJa: 0, nameEn: 0, subjectZh: 0, subjectJa: 0, subjectEn: 0, image: 0 };
   const has = (v?: string | null) => !!(v && String(v).trim());
   const nameById = new Map(list.map((c) => [c.id, c.name_cn || c.name || c.bgm_id]));
-  const rows: { id: number; bgmId: string; label: string; missing: string[]; mergedInto: string | null }[] = [];
+  const { total: nomTotal, own: nomOwn } = nominationTally(db, cid);
+  const rows: {
+    id: number; bgmId: string; label: string; missing: string[]; mergedInto: string | null; votes: number;
+    name: string; nameCn: string; nameEn: string; image: string;
+    subjectName: string; subjectNameJa: string; subjectNameEn: string;
+  }[] = [];
   for (const c of list) {
     const missing: string[] = [];
     if (!has(c.name_cn)) { missing.push("中文名"); counts.nameZh++; }
@@ -254,11 +264,14 @@ export function dataGaps(cid: number): {
     if (!has(c.image)) { missing.push("照片"); counts.image++; }
     if (missing.length) rows.push({
       id: c.id, bgmId: c.bgm_id, label: c.name_cn || c.name || c.bgm_id, missing,
-      // 已并入别人的子角色不参加分组/淘汰赛，补资料的优先级低，标出来并排到最后
       mergedInto: c.parent_id != null ? (nameById.get(c.parent_id) || null) : null,
+      votes: c.parent_id == null ? (nomTotal.get(c.id) || 0) : (nomOwn.get(c.id) || 0),
+      name: c.name || "", nameCn: c.name_cn || "", nameEn: c.name_en || "", image: c.image || "",
+      subjectName: c.subject_name || "", subjectNameJa: c.subject_name_ja || "", subjectNameEn: c.subject_name_en || "",
     });
   }
   // 缺得最多的排前面，方便优先补
-  rows.sort((a, b) => Number(!!a.mergedInto) - Number(!!b.mergedInto) || b.missing.length - a.missing.length || a.label.localeCompare(b.label));
+  // 票数高的排前面：人气角色的资料最该先补齐（缺失项数只作次级排序）
+  rows.sort((a, b) => b.votes - a.votes || b.missing.length - a.missing.length || a.label.localeCompare(b.label));
   return { total: list.length, counts, rows: rows.slice(0, 300) };
 }

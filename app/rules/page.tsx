@@ -26,18 +26,16 @@ type SMatch = { a: Side; b: Side; decided: boolean; winnerId: number | null };
 
 // The three sponsor / community QR codes. Drop the images into /public and set src to show
 // them; until then each renders a labelled placeholder. (kind is just for the caption key.)
-const QRS: { src: string | null; cap: string }[] = [
-  { src: null, cap: "rules.ack.qr.host" },
-  { src: null, cap: "rules.ack.qr.group" },
-  { src: null, cap: "rules.ack.qr.bar" },
-];
-
 export default function Rules() {
   const [lang, setLang] = useLang();
   const [comp, setComp] = useState<any>(null);
   const [sched, setSched] = useState<any>(null);
+  // 联系方式 / 主办 / 鸣谢 / 二维码：来自服务器上未跟踪的 site.json（不进仓库）
+  type SText = { zh?: string; en?: string; ja?: string };
+  const [site, setSite] = useState<{ contact?: SText; host?: SText; thanks?: SText; qr?: { file: string; caption: SText }[] } | null>(null);
+  const [qrBroke, setQrBroke] = useState<Set<string>>(new Set()); // 图片还没传到服务器时退回占位
   useEffect(() => {
-    fetch("/api/state", { cache: "no-store" }).then((r) => r.json()).then((d) => { setComp(d?.competition ?? null); setSched(d?.schedule ?? null); }).catch(() => {});
+    fetch("/api/state", { cache: "no-store" }).then((r) => r.json()).then((d) => { setComp(d?.competition ?? null); setSched(d?.schedule ?? null); setSite(d?.site ?? null); }).catch(() => {});
   }, []);
   const T = (k: string, p?: Record<string, string | number>) => t(lang, k, p);
   const name = (lang === "en" ? (comp?.shortEn || comp?.shortName) : lang === "ja" ? (comp?.shortJa || comp?.shortName) : comp?.shortName) || T("title");
@@ -48,6 +46,11 @@ export default function Rules() {
     s && e ? `${f(s)} → ${f(e)}` : e ? `→ ${f(e)}` : s ? `${f(s)} →` : T("sched.tbd");
   const side = (s: Side): string => (s ? (lang === "zh" ? (s.nameCn || s.name) : s.name) : "?");
   const known = !!sched?.known;
+  /** 站点信息按当前语言取值，缺失时 日语 → 中文 → 英语 回退。 */
+  const sT = (t?: SText): string => {
+    const want = lang === "zh" ? t?.zh : lang === "en" ? t?.en : t?.ja;
+    return (want || t?.ja || t?.zh || t?.en || "").trim();
+  };
   const [hideDone, setHideDone] = useState(true);
 
   // Flatten the schedule into ordered timeline nodes: nomination close → each group matchday → each knockout round.
@@ -211,23 +214,32 @@ export default function Rules() {
           <li>{T("rules.s5.p2")}</li>
           <li>{T("rules.s5.p3")}</li>
         </ul>
-        <p className="rules-contact">{T("rules.contact")}</p>
+        {sT(site?.contact) && (
+          <p className="rules-contact">{T("rules.contact.h")}{"\n"}{sT(site?.contact)}</p>
+        )}
       </section>
 
-      {/* ── organizer & thanks (item 9/10) ── */}
-      <section className="rules-sec rules-ack">
-        <h2 className="rules-h">{T("rules.ack.h")}</h2>
-        <p className="rules-p">{T("rules.ack.host")}</p>
-        <p className="rules-p">{T("rules.ack.thanks")}</p>
-        <div className="qr-grid">
-          {QRS.map((q, i) => (
-            <figure className="qr" key={i}>
-              {q.src ? <img src={q.src} alt={T(q.cap)} /> : <div className="qr-ph">{T("rules.ack.qr.pending")}</div>}
-              <figcaption>{T(q.cap)}</figcaption>
-            </figure>
-          ))}
-        </div>
-      </section>
+      {/* ── 主办与鸣谢：内容来自服务器上的 site.json，仓库里没有；未配置则整节隐藏 ── */}
+      {(sT(site?.host) || sT(site?.thanks) || (site?.qr?.length ?? 0) > 0) && (
+        <section className="rules-sec rules-ack">
+          <h2 className="rules-h">{T("rules.ack.h")}</h2>
+          {sT(site?.host) && <p className="rules-p">{sT(site?.host)}</p>}
+          {sT(site?.thanks) && <p className="rules-p">{sT(site?.thanks)}</p>}
+          {(site?.qr?.length ?? 0) > 0 && (
+            <div className="qr-grid">
+              {site!.qr!.map((q, i) => (
+                <figure className="qr" key={i}>
+                  {q.file && !qrBroke.has(q.file)
+                    ? <img src={`/api/site/${encodeURIComponent(q.file)}`} alt={sT(q.caption)} loading="lazy"
+                        onError={() => setQrBroke((s2) => new Set(s2).add(q.file))} />
+                    : <div className="qr-ph">{T("rules.ack.qr.pending")}</div>}
+                  <figcaption>{sT(q.caption)}</figcaption>
+                </figure>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <div className="foot"><a href="/">{T("rules.back")}</a>
         <div className="foot-oss">

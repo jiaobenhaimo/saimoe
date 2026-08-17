@@ -1,0 +1,23 @@
+{
+  "_说明": "复制成 site.json 放到服务器数据目录（$DATA_DIR/site.json），二维码图片放 $DATA_DIR/site/ 下。这两处都不进仓库。",
+  "_三语": "每个字段可写成 {zh,en,ja} 三语对象，也可直接写字符串（等同只填中文）。缺哪种语言就按 日语 → 中文 → 英语 回退。",
+  "contact": {
+    "zh": "微信 你的微信号\nQQ 你的QQ号\n邮箱 you@example.com",
+    "en": "WeChat: your-id\nQQ: your-qq\nEmail: you@example.com",
+    "ja": "WeChat：your-id\nQQ：your-qq\nメール：you@example.com"
+  },
+  "host": {
+    "zh": "本次比赛由 主办方名称 主办。",
+    "en": "This event is organized by Organizer Name.",
+    "ja": "本大会は 主催者名 が主催します。"
+  },
+  "thanks": {
+    "zh": "特别鸣谢 鸣谢对象。",
+    "en": "Special thanks to Contributor Name.",
+    "ja": "特別協力：協力者名。"
+  },
+  "qr": [
+    { "file": "qr-host.png", "caption": { "zh": "主办方公众号", "en": "Official Account", "ja": "公式アカウント" } },
+    { "file": "qr-group.png", "caption": { "zh": "交流群", "en": "Chat Group", "ja": "交流グループ" } }
+  ]
+}

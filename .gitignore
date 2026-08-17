@@ -11,3 +11,10 @@ next-env.d.ts
 skills-lock.json
 /.agents
 /memory
+# 站点专属信息（联系方式 / 主办 / 鸣谢 / 二维码图片）——不进仓库。
+# 放在服务器数据目录里：$DATA_DIR/site.json 与 $DATA_DIR/site/*
+# 仓库里只保留占位模板 site.example.json，格式见 lib/site.ts
+site.json
+/site/
+public/site/
+*.qr.png

@@ -142,6 +142,40 @@ export default function Admin() {
   }, [token]);
   const invalidate = async (by: string, key: string) => { await act("invalidate_votes", { by, key }); await loadObs(); };
 
+  /** 角色信息编辑器：提名池和「资料缺失盘点」共用同一套表单，就地展开、就地保存。 */
+  const openEditor = (v: { id: number; name?: string; nameCn?: string; nameEn?: string; image?: string; subjectName?: string; subjectNameJa?: string; subjectNameEn?: string }) => {
+    setEditId(v.id);
+    setEName(v.name || ""); setECn(v.nameCn || ""); setEEn(v.nameEn || "");
+    setEImg(v.image || ""); setESub(v.subjectName || "");
+    setESubJa(v.subjectNameJa || ""); setESubEn(v.subjectNameEn || "");
+  };
+  const saveEditor = async (candidateId: number) => {
+    await act("edit_candidate", { candidateId, name: eName, nameCn: eCn, nameEn: eEn, image: eImg, subjectName: eSub, subjectNameJa: eSubJa, subjectNameEn: eSubEn });
+    setEditId(null);
+    await loadObs(); // 让「资料缺失盘点」立刻反映补齐结果
+  };
+  const renderEditor = (candidateId: number) => (
+    <div style={{ flex: 1, display: "grid", gap: 6, minWidth: 0 }}>
+      <div className="row3">
+        <div className="field"><label>中文名</label><input value={eCn} onChange={(e) => setECn(e.target.value)} /></div>
+        <div className="field"><label>原名（日文）</label><input value={eName} onChange={(e) => setEName(e.target.value)} /></div>
+        <div className="field"><label>EN</label><input value={eEn} onChange={(e) => setEEn(e.target.value)} /></div>
+      </div>
+      <div className="row3">
+        <div className="field" style={{ gridColumn: "span 2" }}><label>图片 URL</label><input value={eImg} onChange={(e) => setEImg(e.target.value)} /></div>
+        <div className="field"><label>所属作品（中文）</label><input value={eSub} onChange={(e) => setESub(e.target.value)} /></div>
+      </div>
+      <div className="row3">
+        <div className="field"><label>作品 JA</label><input value={eSubJa} onChange={(e) => setESubJa(e.target.value)} placeholder="日本語タイトル" /></div>
+        <div className="field"><label>作品 EN</label><input value={eSubEn} onChange={(e) => setESubEn(e.target.value)} placeholder="English title" /></div>
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="btn solid" disabled={busy} onClick={() => saveEditor(candidateId)}>保存</button>
+        <button className="btn" onClick={() => setEditId(null)}>取消</button>
+      </div>
+    </div>
+  );
+
   const loadRemind = async () => {
     if (remindBusy) return;
     setRemindBusy(true); localStorage.setItem("adminToken", token); setMsg(null);
@@ -612,7 +646,7 @@ export default function Admin() {
           <h3>资料缺失盘点 {obs.gaps.rows.length > 0
             ? <span className="gstatus" style={{ color: "var(--danger)" }}>{obs.gaps.rows.length} 个角色待补</span>
             : <span className="gstatus" style={{ color: "var(--ok)" }}>全部完整</span>}</h3>
-          <p className="hint">开赛前把缺的补齐：三语名字缺失时前端会按「日语 → 中文 → 英语」回退，缺照片则显示首字母占位。{" "}<a onClick={loadObs}>刷新</a></p>
+          <p className="hint">开赛前把缺的补齐：三语名字缺失时前端会按「日语 → 中文 → 英语」回退，缺照片则显示首字母占位。<b>按提名票数从高到低排列</b>，人气角色优先补。点「编辑」就地修改，保存后本行自动消失。{" "}<a onClick={loadObs}>刷新</a></p>
           <div className="tally-grid">
             {([["中文名", obs.gaps.counts.nameZh], ["日文名", obs.gaps.counts.nameJa], ["英文名", obs.gaps.counts.nameEn],
                ["作品中文", obs.gaps.counts.subjectZh], ["作品日文", obs.gaps.counts.subjectJa], ["作品英文", obs.gaps.counts.subjectEn],
@@ -630,9 +664,12 @@ export default function Admin() {
                 <div className="pool-admin">
                   {obs.gaps.rows.map((r: any) => (
                     <div className="prow" key={r.id}>
-                      <div className="meta"><div className="nm">{r.label}</div><div className="sub">{r.bgmId} · 缺 {r.missing.join("、")}{r.mergedInto ? ` · 已并入「${r.mergedInto}」（不参赛，优先级低）` : ""}</div></div>
-                      {phase === "nomination" && (
-                        <button className="btn" disabled={busy} onClick={() => { setActive("content"); setEditId(r.id); const p2 = state?.nomination?.pool?.find((x: any) => x.id === r.id); if (p2) { setEName(p2.name || ""); setECn(p2.nameCn || ""); setEEn(p2.nameEn || ""); setEImg(p2.image || ""); setESub(p2.subjectName || ""); setESubJa(p2.subjectNameJa || ""); setESubEn(p2.subjectNameEn || ""); } }}>编辑</button>
+                      {editId === r.id ? renderEditor(r.id) : (
+                        <>
+                          <div className="meta"><div className="nm">{r.label}</div><div className="sub">{r.bgmId} · 缺 {r.missing.join("、")}{r.mergedInto ? ` · 已并入「${r.mergedInto}」（不参赛）` : ""}</div></div>
+                          <div className="votecell num"><div className="c">{r.votes}</div><div className="l">提名</div></div>
+                          <button className="btn" disabled={busy} onClick={() => openEditor(r)}>编辑</button>
+                        </>
                       )}
                     </div>
                   ))}
@@ -673,25 +710,7 @@ export default function Admin() {
               {state.nomination.pool.map((p: any) => (
                 <div className="prow" key={p.id}>
                   {editId === p.id ? (
-                    <div style={{ flex: 1, display: "grid", gap: 6 }}>
-                      <div className="row3">
-                        <div className="field"><label>中文名</label><input value={eCn} onChange={(e) => setECn(e.target.value)} /></div>
-                        <div className="field"><label>原名</label><input value={eName} onChange={(e) => setEName(e.target.value)} /></div>
-                        <div className="field"><label>EN</label><input value={eEn} onChange={(e) => setEEn(e.target.value)} /></div>
-                      </div>
-                      <div className="row3">
-                        <div className="field" style={{ gridColumn: "span 2" }}><label>图片 URL</label><input value={eImg} onChange={(e) => setEImg(e.target.value)} /></div>
-                        <div className="field"><label>所属作品（中文）</label><input value={eSub} onChange={(e) => setESub(e.target.value)} /></div>
-                      </div>
-                      <div className="row3">
-                        <div className="field"><label>作品 JA</label><input value={eSubJa} onChange={(e) => setESubJa(e.target.value)} placeholder="日本語タイトル" /></div>
-                        <div className="field"><label>作品 EN</label><input value={eSubEn} onChange={(e) => setESubEn(e.target.value)} placeholder="English title" /></div>
-                      </div>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button className="btn solid" disabled={busy} onClick={() => { act("edit_candidate", { candidateId: p.id, name: eName, nameCn: eCn, nameEn: eEn, image: eImg, subjectName: eSub, subjectNameJa: eSubJa, subjectNameEn: eSubEn }); setEditId(null); }}>保存</button>
-                        <button className="btn" onClick={() => setEditId(null)}>取消</button>
-                      </div>
-                    </div>
+                    renderEditor(p.id)
                   ) : (
                     <>
                       <div className="meta"><div className="nm">{p.nameCn || p.name}</div>{p.nameCn && p.nameCn !== p.name && <div className="sub">{p.name}</div>}</div>
@@ -702,7 +721,7 @@ export default function Admin() {
                         <span className="sub" style={{ alignSelf: "center" }}>合并源</span>
                       ) : (
                         <>
-                          <button className="btn" disabled={busy} onClick={() => { setEditId(p.id); setEName(p.name || ""); setECn(p.nameCn || ""); setEEn(p.nameEn || ""); setEImg(p.image || ""); setESub(p.subjectName || ""); setESubJa(p.subjectNameJa || ""); setESubEn(p.subjectNameEn || ""); }}>编辑</button>
+                          <button className="btn" disabled={busy} onClick={() => openEditor(p)}>编辑</button>
                           <button className="btn" disabled={busy} onClick={() => setMergeFrom({ id: p.id, name: p.nameCn || p.name })}>合并</button>
                         </>
                       )}
