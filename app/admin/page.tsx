@@ -142,9 +142,11 @@ export default function Admin() {
   }, [token]);
   const invalidate = async (by: string, key: string) => { await act("invalidate_votes", { by, key }); await loadObs(); };
 
-  // 可疑票溯源：点开看这个设备/IP/身份的每一票投给了谁，再勾选要作废的
-  const [probe, setProbe] = useState<{ by: string; key: string; keyShort: string; votes: any[] } | null>(null);
+  // 可疑票溯源：点开看这个设备/IP/身份的每一票投给了谁，再勾选要作废的。
+  // probeIp64：把 IP 按 /64 前缀归一化再查（同一条宽带的 IPv6 后缀频繁变化，前缀才是稳定身份）。
+  const [probe, setProbe] = useState<{ by: string; key: string; keyShort: string; votes: any[]; effKey?: string; ip64?: boolean } | null>(null);
   const [probeBusy, setProbeBusy] = useState(false);
+  const [probeIp64, setProbeIp64] = useState(false);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [openIdent, setOpenIdent] = useState<string | null>(null);
   const [smart, setSmart] = useState<any>(null);
@@ -153,21 +155,21 @@ export default function Admin() {
     if (!probe) return;
     try {
       const tk = token || localStorage.getItem("adminToken") || "";
-      const r = await fetch(`/api/admin/observe?mode=smart&by=${encodeURIComponent(probe.by)}&key=${encodeURIComponent(probe.key)}`,
+      const r = await fetch(`/api/admin/observe?mode=smart&by=${encodeURIComponent(probe.by)}&key=${encodeURIComponent(probe.key)}${probe.ip64 ? "&ip64=1" : ""}`,
         { headers: { "x-admin-token": tk }, cache: "no-store" });
       const j = await r.json();
       setSmart(j?.plan || null);
       if (j?.plan) setPicked(new Set(j.plan.ids));
     } catch { setMsg({ t: "读取方案失败。", ok: false }); }
   };
-  const openProbe = async (f: { by: string; key: string; keyShort: string }) => {
-    setProbeBusy(true); setPicked(new Set());
+  const openProbe = async (f: { by: string; key: string; keyShort: string }, ip64 = false) => {
+    setProbeBusy(true); setPicked(new Set()); setProbeIp64(ip64);
     try {
       const tk = token || localStorage.getItem("adminToken") || "";
-      const r = await fetch(`/api/admin/observe?by=${encodeURIComponent(f.by)}&key=${encodeURIComponent(f.key)}`,
+      const r = await fetch(`/api/admin/observe?by=${encodeURIComponent(f.by)}&key=${encodeURIComponent(f.key)}${ip64 ? "&ip64=1" : ""}`,
         { headers: { "x-admin-token": tk }, cache: "no-store" });
       const j = await r.json();
-      setProbe({ by: f.by, key: f.key, keyShort: f.keyShort, votes: Array.isArray(j?.votes) ? j.votes : [] });
+      setProbe({ by: f.by, key: f.key, keyShort: f.keyShort, votes: Array.isArray(j?.votes) ? j.votes : [], effKey: j?.key || f.key, ip64 });
     } catch { setMsg({ t: "读取失败，请重试。", ok: false }); }
     finally { setProbeBusy(false); }
   };
@@ -178,7 +180,7 @@ export default function Admin() {
     const ids = [...picked];
     await act("invalidate_vote_ids", { ids });
     setPicked(new Set());
-    if (probe) await openProbe(probe); // 重新拉取：已作废的会消失
+    if (probe) await openProbe(probe, probe.ip64); // 重新拉取：已作废的会消失
     await loadObs();
   };
 
@@ -328,6 +330,7 @@ export default function Admin() {
           {NAV.map(([k, label]) => (
             <button key={k} type="button" className={"admin-navbtn" + (active === k ? " on" : "")} onClick={() => setActive(k)}>{label}</button>
           ))}
+          <a className="admin-navbtn" href="/admin/fraud" style={{ color: "var(--rose-deep)", textDecoration: "none" }}>🕵️ 异常投票检测 →</a>
         </nav>
         <div className="admin-work">
 
@@ -861,8 +864,13 @@ export default function Admin() {
             return (
               <div className="probe">
                 <div className="probe-head">
-                  <b>{probe.keyShort}</b> · {probe.votes.length} 票 · {idents.length} 个身份{picked.size > 0 ? ` · 已选 ${picked.size}` : ""}
+                  <b>{probe.keyShort}</b>
+                  {probe.by === "ip" ? (probe.ip64 ? ` · /64 前缀 ${probe.effKey || ""}` : " · 完整 IP") : ""}
+                  {" "}· {probe.votes.length} 票 · {idents.length} 个身份{picked.size > 0 ? ` · 已选 ${picked.size}` : ""}
                   <span className="probe-actions">
+                    {probe.by === "ip" && (
+                      <button className="btn" disabled={probeBusy} onClick={() => openProbe(probe, !probe.ip64)}>{probe.ip64 ? "切换：完整 IP" : "切换：按 /64 前缀"}</button>
+                    )}
                     <button className="btn" onClick={() => setPicked(new Set(probe.votes.map((v: any) => v.id)))}>全选</button>
                     <button className="btn" onClick={() => setPicked(new Set())}>清空</button>
                     <button className="btn" disabled={busy} onClick={smartPlan}>智能删票…</button>
@@ -947,7 +955,7 @@ export default function Admin() {
                     })}
                   </div>
                 </>)}
-                <p className="hint">身份口径：{probe.by === "bucket" ? "设备指纹" : probe.by === "ip" ? "IP" : "投票人"}。作废是真删记录、不可撤销；若相关轮次已结算，随后要「按当前票数重算本轮」。</p>
+                <p className="hint">身份口径：{probe.by === "bucket" ? "设备指纹" : probe.by === "ip" ? (probe.ip64 ? "IP /64 前缀" : "完整 IP") : "投票人"}。作废是真删记录、不可撤销；若相关轮次已结算，随后要「按当前票数重算本轮」。</p>
               </div>
             );
           })()}

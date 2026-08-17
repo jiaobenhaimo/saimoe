@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { normalizeIp } from "./ip";
 
 /**
  * Local JSON-file store (no external database).
@@ -99,6 +100,8 @@ export interface DB {
   auditLog: AuditEntry[];
   /** 票被作废过的身份（用于在其再次投票时给本人提示）。 */
   sanctions?: Sanction[];
+  /** 异常投票检测中，被管理员标记为「已复核（误报）」的簇 id（后续报告折叠显示）。 */
+  fraudReviewed?: string[];
 }
 /** 一条「票被作废」的记录。按 voter_id 与设备指纹匹配本人；
  *  故意不按 IP 匹配 —— 宿舍/校园同一出口 IP 下大量无辜用户会被误伤。 */
@@ -121,7 +124,7 @@ const FILE = path.join(DATA_DIR, "saimoe.json");
 export function dataFilePath(): string { return FILE; }
 
 function blank(): DB {
-  return { seq: { competition: 0, candidate: 0, matchup: 0, comment: 0, audit: 0, vote: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [], approvalVotes: [], comments: [], auditLog: [], sanctions: [] };
+  return { seq: { competition: 0, candidate: 0, matchup: 0, comment: 0, audit: 0, vote: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [], approvalVotes: [], comments: [], auditLog: [], sanctions: [], fraudReviewed: [] };
 }
 function normalize(o: any): DB {
   if (!o || typeof o !== "object") return blank();
@@ -144,6 +147,7 @@ function normalize(o: any): DB {
     comments: Array.isArray(o.comments) ? o.comments : b.comments,
     auditLog: Array.isArray(o.auditLog) ? o.auditLog : b.auditLog,
     sanctions: Array.isArray(o.sanctions) ? o.sanctions : [],
+    fraudReviewed: Array.isArray(o.fraudReviewed) ? o.fraudReviewed : [],
   };
 }
 
@@ -720,41 +724,43 @@ export function readAudit(limit = 200): AuditEntry[] {
   return db.auditLog.slice(-limit).reverse();
 }
 
+/** 按 by 匹配单张票。`ip64` 表示按 /64 归一化前缀匹配（同一条宽带 IPv6 后缀频繁变化，
+ *  /64 前缀才是稳定身份）。 */
+function voteMatcher(by: "bucket" | "ip" | "voter" | "ip64", key: string): (v: { device_bucket?: string | null; ip?: string | null; voter_id?: string }) => boolean {
+  switch (by) {
+    case "bucket": return (v) => v.device_bucket === key;
+    case "ip": return (v) => v.ip === key;
+    case "voter": return (v) => v.voter_id === key;
+    case "ip64": return (v) => normalizeIp(v.ip) === key;
+  }
+}
+
 /** Invalidate (delete) every vote in this competition matching a key, across both
  *  nomination and match votes. `by` selects which stored field to match. Returns the
  *  number of votes removed. Match votes are scoped to this competition's matchups.
  *  Note: this does NOT retroactively re-decide already-settled matches — pair it with
  *  "按当前票数重算本轮" if a currently-open round needs recomputing. */
-export function invalidateVotes(cid: number, by: "bucket" | "ip" | "voter", key: string): number {
+export function invalidateVotes(cid: number, by: "bucket" | "ip" | "voter" | "ip64", key: string): number {
   if (!key) return 0;
   const db = readDb();
   const compMatchIds = new Set(db.matchups.filter((m) => m.competition_id === cid).map((m) => m.id));
   // 只收本届的票：matchVotes 没有 competition_id，必须用本届的对局 id 过滤，
   // 否则会把其它届的同一身份也记成本届的受罚记录。
+  const match = voteMatcher(by, key);
   const victims = [
     ...db.nominationVotes.filter((v) => v.competition_id === cid),
     ...db.approvalVotes.filter((v) => v.competition_id === cid),
     ...db.matchVotes.filter((v) => compMatchIds.has(v.matchup_id)),
-  ].filter((v: any) => v[by === "bucket" ? "device_bucket" : by === "ip" ? "ip" : "voter_id"] === key);
-  const field = by === "bucket" ? "device_bucket" : by === "ip" ? "ip" : "voter_id";
+  ].filter(match);
   let removed = 0;
   const nvBefore = db.nominationVotes.length;
-  db.nominationVotes = db.nominationVotes.filter((v) => {
-    if (v.competition_id !== cid) return true;
-    return (v as any)[field] !== key;
-  });
+  db.nominationVotes = db.nominationVotes.filter((v) => !(v.competition_id === cid && match(v)));
   removed += nvBefore - db.nominationVotes.length;
   const mvBefore = db.matchVotes.length;
-  db.matchVotes = db.matchVotes.filter((v) => {
-    if (!compMatchIds.has(v.matchup_id)) return true;
-    return (v as any)[field] !== key;
-  });
+  db.matchVotes = db.matchVotes.filter((v) => !(compMatchIds.has(v.matchup_id) && match(v)));
   removed += mvBefore - db.matchVotes.length;
   const avBefore = db.approvalVotes.length;
-  db.approvalVotes = db.approvalVotes.filter((v) => {
-    if (v.competition_id !== cid) return true;
-    return (v as any)[field] !== key;
-  });
+  db.approvalVotes = db.approvalVotes.filter((v) => !(v.competition_id === cid && match(v)));
   removed += avBefore - db.approvalVotes.length;
   if (removed) { recordSanctions(db, cid, victims as any); writeDb(db); }
   return removed;
@@ -767,15 +773,15 @@ export const castApprovalVote = (...a: Parameters<typeof castApprovalVoteOnce>) 
 export const castMatchVote = (...a: Parameters<typeof castMatchVoteOnce>) => retryOnConflict(() => castMatchVoteOnce(...a));
 export const addComment = (...a: Parameters<typeof addCommentOnce>) => retryOnConflict(() => addCommentOnce(...a));
 
-/** 可疑票溯源：列出某个身份（设备指纹 / IP / 投票人）在本届投过的每一票，
+/** 可疑票溯源：列出某个身份（设备指纹 / IP(/64) / 投票人）在本届投过的每一票，
  *  含投给了谁、什么阶段、什么时候。给运营用来逐票判断，而不是只能整批清掉。 */
-export function listVotesBy(cid: number, by: "bucket" | "ip" | "voter", key: string): {
+export function listVotesBy(cid: number, by: "bucket" | "ip" | "voter" | "ip64", key: string): {
   id: number; kind: "nomination" | "approval" | "match"; at: number | null;
   target: string; detail: string; voterId: string; bucket: string | null; ip: string | null;
 }[] {
   if (!key) return [];
   const db = readDb();
-  const field = by === "bucket" ? "device_bucket" : by === "ip" ? "ip" : "voter_id";
+  const match = voteMatcher(by, key);
   const nameOf = (id: number) => {
     const c = db.candidates.find((x) => x.id === id);
     return c ? (c.name_cn || c.name) : `#${id}`;
@@ -784,18 +790,18 @@ export function listVotesBy(cid: number, by: "bucket" | "ip" | "voter", key: str
   const rows: ReturnType<typeof listVotesBy> = [];
 
   for (const v of db.nominationVotes) {
-    if (v.competition_id !== cid || (v as any)[field] !== key) continue;
+    if (v.competition_id !== cid || !match(v)) continue;
     rows.push({ id: v.id ?? 0, kind: "nomination", at: v.created_at ?? null, target: nameOf(v.candidate_id),
       detail: "提名投票", voterId: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null });
   }
   for (const v of db.approvalVotes) {
-    if (v.competition_id !== cid || (v as any)[field] !== key) continue;
+    if (v.competition_id !== cid || !match(v)) continue;
     rows.push({ id: v.id ?? 0, kind: "approval", at: v.created_at ?? null, target: nameOf(v.candidate_id),
       detail: `小组赛 ${groupLetter(v.group_no)} 组`, voterId: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null });
   }
   for (const v of db.matchVotes) {
     const m = compMatch.get(v.matchup_id);
-    if (!m || (v as any)[field] !== key) continue;
+    if (!m || !match(v)) continue;
     const other = m.a_id === v.choice_id ? m.b_id : m.a_id;
     const stage = m.stage === "group" ? `小组赛 ${groupLetter(m.group_no ?? 0)} 组`
       : m.stage === "playoff" ? "加赛" : `淘汰赛第 ${m.round_no} 轮`;
@@ -879,7 +885,7 @@ export function voterSanction(who: { voterId?: string | null; bucket?: string | 
  *   b) **每个身份至少被删 1 票**——若某身份在 (a) 之后一票未删（它投的角色恰好都只投了一次），
  *      则再删掉它最新的一票，让"每个参与刷票的身份都付出代价"。
  *  同时给出影响预估：哪些角色会因此掉到 0 票（配合 nom_min_votes 会直接失去资格）。 */
-export function planSmartInvalidate(cid: number, by: "bucket" | "ip" | "voter", key: string): {
+export function planSmartInvalidate(cid: number, by: "bucket" | "ip" | "voter" | "ip64", key: string): {
   ids: number[];
   perTarget: { target: string; had: number; deleted: number }[];
   perIdentity: { voterId: string; had: number; deleted: number }[];
