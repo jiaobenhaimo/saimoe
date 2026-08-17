@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema } from "@/lib/db";
+import { ensureSchema, voterSanction } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getSiteInfo } from "@/lib/site";
-import { getVoterId } from "@/lib/voter";
+import { getVoterId, getDeviceBucket } from "@/lib/voter";
 import { getState } from "@/lib/engine";
 import { runTick } from "@/lib/schedule";
 import { verifyToken, gateOn, VOTER_COOKIE } from "@/lib/wxsession";
@@ -18,7 +18,8 @@ export async function GET(req: NextRequest) {
     const vid = await getVoterId();
     const on = gateOn();
     const canVote = !on || !!verifyToken(req.cookies.get(VOTER_COOKIE)?.value);
-    return NextResponse.json({ ...getState(vid), voteGate: { on, canVote }, site: getSiteInfo() });
+    const sanction = voterSanction({ voterId: vid, bucket: await getDeviceBucket() });
+    return NextResponse.json({ ...getState(vid), voteGate: { on, canVote }, site: getSiteInfo(), sanction });
   } catch (e: any) {
     return NextResponse.json({ error: e.message || "server error" }, { status: 500 });
   }

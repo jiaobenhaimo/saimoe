@@ -763,3 +763,11 @@ html:lang(zh-CN) body, html:lang(zh) body {
   .probe-row { flex-wrap: wrap; }
   .probe-row .pv-at { margin-left: 0; width: 100%; }
 }
+
+/* 可疑票面板:分组小标题、身份行与其下的逐票行 */
+.probe-sub { padding: 10px 12px 6px; font-size: 12.5px; font-weight: 700; color: var(--muted); border-top: 1px solid var(--line); }
+.probe .tally-grid { padding: 0 12px 10px; }
+.probe-row.ident { background: var(--surface-2); font-weight: 600; }
+.probe-row.ident:hover { background: var(--hover); }
+.probe-row.sub { padding-left: 34px; font-weight: 400; }
+.probe-row .btn { flex: none; padding: 6px 10px; font-size: 12px; }

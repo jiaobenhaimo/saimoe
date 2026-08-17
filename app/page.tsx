@@ -680,6 +680,11 @@ export default function Page() {
         })}
       </div>
       <div className="hint" style={{ marginTop: 6 }}><a href="/rules">{T("rulesLink")}</a></div>
+      {state?.sanction?.count > 0 && (
+        <div className="gate-banner" role="alert" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}>
+          {T("warn.sanction", { n: state.sanction.count })}
+        </div>
+      )}
       {!frozen && (linkErr || gated) && (
         <div className="gate-banner">{linkErr ? T("gate.linkErr") : T("gate.readonly")}</div>
       )}

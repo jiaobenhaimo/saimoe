@@ -97,7 +97,12 @@ export interface DB {
   approvalVotes: ApprovalVote[];
   comments: Comment[];
   auditLog: AuditEntry[];
+  /** 票被作废过的身份（用于在其再次投票时给本人提示）。 */
+  sanctions?: Sanction[];
 }
+/** 一条「票被作废」的记录。按 voter_id 与设备指纹匹配本人；
+ *  故意不按 IP 匹配 —— 宿舍/校园同一出口 IP 下大量无辜用户会被误伤。 */
+export interface Sanction { at: number; voterId: string | null; bucket: string | null; count: number }
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
 const FILE = path.join(DATA_DIR, "saimoe.json");
@@ -106,7 +111,7 @@ const FILE = path.join(DATA_DIR, "saimoe.json");
 export function dataFilePath(): string { return FILE; }
 
 function blank(): DB {
-  return { seq: { competition: 0, candidate: 0, matchup: 0, comment: 0, audit: 0, vote: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [], approvalVotes: [], comments: [], auditLog: [] };
+  return { seq: { competition: 0, candidate: 0, matchup: 0, comment: 0, audit: 0, vote: 0 }, competitions: [], candidates: [], matchups: [], nominationVotes: [], matchVotes: [], approvalVotes: [], comments: [], auditLog: [], sanctions: [] };
 }
 function normalize(o: any): DB {
   if (!o || typeof o !== "object") return blank();
@@ -128,6 +133,7 @@ function normalize(o: any): DB {
     approvalVotes: Array.isArray(o.approvalVotes) ? o.approvalVotes : b.approvalVotes,
     comments: Array.isArray(o.comments) ? o.comments : b.comments,
     auditLog: Array.isArray(o.auditLog) ? o.auditLog : b.auditLog,
+    sanctions: Array.isArray(o.sanctions) ? o.sanctions : [],
   };
 }
 
@@ -713,6 +719,13 @@ export function invalidateVotes(cid: number, by: "bucket" | "ip" | "voter", key:
   if (!key) return 0;
   const db = readDb();
   const compMatchIds = new Set(db.matchups.filter((m) => m.competition_id === cid).map((m) => m.id));
+  // 只收本届的票：matchVotes 没有 competition_id，必须用本届的对局 id 过滤，
+  // 否则会把其它届的同一身份也记成本届的受罚记录。
+  const victims = [
+    ...db.nominationVotes.filter((v) => v.competition_id === cid),
+    ...db.approvalVotes.filter((v) => v.competition_id === cid),
+    ...db.matchVotes.filter((v) => compMatchIds.has(v.matchup_id)),
+  ].filter((v: any) => v[by === "bucket" ? "device_bucket" : by === "ip" ? "ip" : "voter_id"] === key);
   const field = by === "bucket" ? "device_bucket" : by === "ip" ? "ip" : "voter_id";
   let removed = 0;
   const nvBefore = db.nominationVotes.length;
@@ -733,7 +746,7 @@ export function invalidateVotes(cid: number, by: "bucket" | "ip" | "voter", key:
     return (v as any)[field] !== key;
   });
   removed += avBefore - db.approvalVotes.length;
-  if (removed) writeDb(db);
+  if (removed) { recordSanctions(db, victims as any); writeDb(db); }
   return removed;
 }
 
@@ -796,24 +809,50 @@ export function invalidateVoteIds(cid: number, ids: number[]): number {
   const db = readDb();
   const compMatchIds = new Set(db.matchups.filter((m) => m.competition_id === cid).map((m) => m.id));
   let removed = 0;
+  const victims: { voter_id: string; device_bucket?: string | null }[] = [];
   const keepNom = db.nominationVotes.filter((v) => {
     const hit = v.competition_id === cid && v.id != null && want.has(v.id);
-    if (hit) removed++;
+    if (hit) { removed++; victims.push(v); }
     return !hit;
   });
   const keepApp = db.approvalVotes.filter((v) => {
     const hit = v.competition_id === cid && v.id != null && want.has(v.id);
-    if (hit) removed++;
+    if (hit) { removed++; victims.push(v); }
     return !hit;
   });
   const keepMatch = db.matchVotes.filter((v) => {
     const hit = compMatchIds.has(v.matchup_id) && v.id != null && want.has(v.id);
-    if (hit) removed++;
+    if (hit) { removed++; victims.push(v); }
     return !hit;
   });
   if (removed) {
     db.nominationVotes = keepNom; db.approvalVotes = keepApp; db.matchVotes = keepMatch;
+    recordSanctions(db, victims); // 记下这些身份，本人下次投票时会看到提示
     writeDb(db);
   }
   return removed;
+}
+
+/** 把这些票所属的身份记进 sanctions，供其下次投票时提示本人。 */
+function recordSanctions(db: DB, victims: { voter_id: string; device_bucket?: string | null }[]): void {
+  if (!victims.length) return;
+  const byKey = new Map<string, { voterId: string | null; bucket: string | null; count: number }>();
+  for (const v of victims) {
+    const k = v.voter_id + "|" + (v.device_bucket || "");
+    const cur = byKey.get(k) || { voterId: v.voter_id || null, bucket: v.device_bucket || null, count: 0 };
+    cur.count++; byKey.set(k, cur);
+  }
+  db.sanctions = [...(db.sanctions || []), ...[...byKey.values()].map((x) => ({ at: Date.now(), ...x }))].slice(-500);
+}
+
+/** 这个身份是否被作废过票（本人提示用）。按 voter_id 或设备指纹匹配，不按 IP。 */
+export function voterSanction(who: { voterId?: string | null; bucket?: string | null }): { count: number; at: number } | null {
+  const list = readDb().sanctions || [];
+  if (!list.length) return null;
+  let count = 0, at = 0;
+  for (const s of list) {
+    const hit = (who.voterId && s.voterId === who.voterId) || (who.bucket && s.bucket && s.bucket === who.bucket);
+    if (hit) { count += s.count; at = Math.max(at, s.at); }
+  }
+  return count > 0 ? { count, at } : null;
 }

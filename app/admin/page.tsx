@@ -146,6 +146,7 @@ export default function Admin() {
   const [probe, setProbe] = useState<{ by: string; key: string; keyShort: string; votes: any[] } | null>(null);
   const [probeBusy, setProbeBusy] = useState(false);
   const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [openIdent, setOpenIdent] = useState<string | null>(null);
   const openProbe = async (f: { by: string; key: string; keyShort: string }) => {
     setProbeBusy(true); setPicked(new Set());
     try {
@@ -759,35 +760,6 @@ export default function Admin() {
             </div>
           )}
 
-          {probe && (
-            <div className="probe">
-              <div className="probe-head">
-                <b>{probe.keyShort}</b> 的投票明细 · 共 {probe.votes.length} 票{picked.size > 0 ? ` · 已选 ${picked.size}` : ""}
-                <span className="probe-actions">
-                  <button className="btn" onClick={() => setPicked(new Set(probe.votes.map((v: any) => v.id)))}>全选</button>
-                  <button className="btn" onClick={() => setPicked(new Set())}>清空</button>
-                  <button className="btn danger solid" disabled={busy || picked.size === 0} onClick={invalidatePicked}>作废选中（{picked.size}）</button>
-                  <button className="btn" onClick={() => { setProbe(null); setPicked(new Set()); }}>关闭</button>
-                </span>
-              </div>
-              {probe.votes.length === 0 ? <p className="hint">这个身份在本届没有留下票（可能已被作废）。</p> : (
-                <div className="probe-list">
-                  {probe.votes.map((v: any) => (
-                    <label className={"probe-row" + (picked.has(v.id) ? " on" : "")} key={v.id}>
-                      <input type="checkbox" checked={picked.has(v.id)} onChange={() => togglePick(v.id)} />
-                      <span className={"flagtag flag-" + (v.kind === "match" ? "burst" : v.kind === "approval" ? "device" : "ip")}>
-                        {v.kind === "nomination" ? "提名" : v.kind === "approval" ? "票选" : "对战"}
-                      </span>
-                      <span className="pv-target">投给 <b>{v.target}</b></span>
-                      <span className="pv-detail">{v.detail}</span>
-                      <span className="pv-at num">{v.at ? fmtAbs(v.at) : "—"}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-              <p className="hint">身份：{probe.by === "bucket" ? "设备指纹" : probe.by === "ip" ? "IP" : "投票人"} · 勾选后只作废选中的这几票，其余保留。</p>
-            </div>
-          )}
         </div>
       )}
 
@@ -864,6 +836,80 @@ export default function Admin() {
               ))}
             </div>
           )}
+          {probe && (() => {
+            // (a) 逐身份：这个 IP/设备下每个投票身份及其票
+            const byIdent = new Map<string, any[]>();
+            for (const v of probe.votes) { if (!byIdent.has(v.voterId)) byIdent.set(v.voterId, []); byIdent.get(v.voterId)!.push(v); }
+            const idents = [...byIdent.entries()].sort((a, b) => b[1].length - a[1].length);
+            // (b) 票流向汇总：这个身份组一共给谁投了多少票
+            const byTarget = new Map<string, number>();
+            for (const v of probe.votes) byTarget.set(v.target, (byTarget.get(v.target) || 0) + 1);
+            const targets = [...byTarget.entries()].sort((a, b) => b[1] - a[1]);
+            return (
+              <div className="probe">
+                <div className="probe-head">
+                  <b>{probe.keyShort}</b> · {probe.votes.length} 票 · {idents.length} 个身份{picked.size > 0 ? ` · 已选 ${picked.size}` : ""}
+                  <span className="probe-actions">
+                    <button className="btn" onClick={() => setPicked(new Set(probe.votes.map((v: any) => v.id)))}>全选</button>
+                    <button className="btn" onClick={() => setPicked(new Set())}>清空</button>
+                    <button className="btn danger solid" disabled={busy || picked.size === 0} onClick={invalidatePicked}>作废选中（{picked.size}）</button>
+                    <button className="btn" onClick={() => { setProbe(null); setPicked(new Set()); setOpenIdent(null); }}>关闭</button>
+                  </span>
+                </div>
+
+                {probe.votes.length === 0 ? <p className="hint">这个身份在本届没有留下票（可能已被作废）。</p> : (<>
+                  {/* (b) 票都投给了谁 —— 刷票通常集中在少数几个角色上 */}
+                  <div className="probe-sub">票的流向（共 {targets.length} 个角色）</div>
+                  <div className="tally-grid">
+                    {targets.map(([name, n]) => (
+                      <div className="tally-col" key={name}>
+                        <div className="tally-row adv"><span className="nm">{name}</span><span className="v num">{n}</span></div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* (a) 每个身份：可整体作废，也可展开逐票勾选 */}
+                  <div className="probe-sub">投票身份（{idents.length} 个）</div>
+                  <div className="probe-list">
+                    {idents.map(([vid, rows]) => {
+                      const ids = rows.map((r: any) => r.id);
+                      const allPicked = ids.every((i: number) => picked.has(i));
+                      return (
+                        <div key={vid}>
+                          <div className="probe-row ident">
+                            <input type="checkbox" checked={allPicked} onChange={() => setPicked((s2) => {
+                              const n = new Set(s2); if (allPicked) ids.forEach((i: number) => n.delete(i)); else ids.forEach((i: number) => n.add(i)); return n;
+                            })} />
+                            <span className="pv-target"><b>{vid.replace(/^sid_/, "").slice(0, 8)}…</b> · {rows.length} 票</span>
+                            <span className="pv-detail">{[...new Set(rows.map((r: any) => r.target))].slice(0, 4).join("、")}{new Set(rows.map((r: any) => r.target)).size > 4 ? " …" : ""}</span>
+                            <button className="btn" onClick={() => setOpenIdent(openIdent === vid ? null : vid)}>{openIdent === vid ? "收起" : "逐票"}</button>
+                            <button className="btn danger" disabled={busy} onClick={async () => {
+                              if (!confirm(`作废身份 ${vid.replace(/^sid_/, "").slice(0, 8)}… 的全部 ${rows.length} 票？不可撤销。`)) return;
+                              await act("invalidate_vote_ids", { ids });
+                              if (probe) await openProbe(probe); await loadObs();
+                            }}>作废该身份</button>
+                          </div>
+                          {openIdent === vid && rows.map((v: any) => (
+                            <label className={"probe-row sub" + (picked.has(v.id) ? " on" : "")} key={v.id}>
+                              <input type="checkbox" checked={picked.has(v.id)} onChange={() => togglePick(v.id)} />
+                              <span className={"flagtag flag-" + (v.kind === "match" ? "burst" : v.kind === "approval" ? "device" : "ip")}>
+                                {v.kind === "nomination" ? "提名" : v.kind === "approval" ? "票选" : "对战"}
+                              </span>
+                              <span className="pv-target">投给 <b>{v.target}</b></span>
+                              <span className="pv-detail">{v.detail}</span>
+                              <span className="pv-at num">{v.at ? fmtAbs(v.at) : "—"}</span>
+                            </label>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>)}
+                <p className="hint">身份口径：{probe.by === "bucket" ? "设备指纹" : probe.by === "ip" ? "IP" : "投票人"}。作废是真删记录、不可撤销；若相关轮次已结算，随后要「按当前票数重算本轮」。</p>
+              </div>
+            );
+          })()}
+
         </div>
       )}
 
