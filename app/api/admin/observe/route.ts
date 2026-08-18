@@ -4,6 +4,7 @@ import { ensureSchema, readAudit, listJpFlagged } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition } from "@/lib/engine";
 import { detectAnomalies, projectTimeline, liveTallies, dataGaps } from "@/lib/observe";
+import { preflight } from "@/lib/preflight";
 import { listVotesBy, planSmartInvalidate } from "@/lib/db";
 import { normalizeIp } from "@/lib/ip";
 
@@ -41,5 +42,7 @@ export async function GET(req: NextRequest) {
   const gaps = dataGaps(comp.id);
   // 日本产地复核队列：提名时明确没查到「日本」标签的角色（用户已被告知"管理员会复核"）
   const jpFlagged = listJpFlagged(comp.id);
-  return NextResponse.json({ competition: { id: comp.id, phase: comp.phase }, flags, thresholds, totals, timeline, tallies, gaps, audit, jpFlagged });
+  // 开赛前检查：把「现在开小组赛会不会翻车」的所有条件集中给运营看（见 lib/preflight.ts）
+  const pre = preflight(comp.id);
+  return NextResponse.json({ competition: { id: comp.id, phase: comp.phase }, flags, thresholds, totals, timeline, tallies, gaps, audit, jpFlagged, preflight: pre });
 }

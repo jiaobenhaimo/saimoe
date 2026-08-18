@@ -28,3 +28,6 @@ jobs:
       # Encodes the operator's two voiding rules, which used to conflict.
       - name: Smart-void planner test
         run: npm run test:fraud-plan
+      # Ordering matters: stop voting -> check -> settle, never settle-then-check.
+      - name: Intermission scheduling test
+        run: npm run test:break

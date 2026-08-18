@@ -28,6 +28,14 @@ export interface Competition {
   blocked_tags?: string[] | null; blocked_subjects?: string[] | null;
   /** 维护冻结：freeze_on = 立即停投；freeze_from/to = 预约维护窗口（首页公告 + 窗口内停投）。 */
   freeze_on?: boolean | null; freeze_from?: number | null; freeze_to?: number | null; freeze_note?: string | null; // 是否进行季军战（默认 true）
+  // ── 休赛期（每轮之间的查票窗口）──────────────────────────────────────────────
+  /** 每轮结束后自动插入的休赛期时长（小时）。0/null = 不插入，到点直接进下一轮（旧行为）。 */
+  break_hours?: number | null;
+  /** 当前休赛期的结束时刻（epoch ms）。非空且在未来 = 正处于休赛期：停止投票/提名，
+   *  且**本轮尚未结算** —— 故意如此，见 lib/schedule.ts 里的说明。 */
+  break_until?: number | null;
+  /** 这个休赛期是在哪一轮之后开始的（roundKeyOf 的值）。用于防止同一轮反复插入休赛期。 */
+  break_after?: string | null;
   // ── timed schedule (epoch ms; null = not scheduled) ──
   nom_ends_at: number | null; group_ends_at: number | null; ko_round_ends_at: number | null;
   auto_size: number | null;
@@ -335,7 +343,7 @@ export function ensureSchema(): void {
 export function createCompetition(title: string): number {
   const db = readDb();
   const id = ++db.seq.competition;
-  db.competitions.push({ id, title, description: null, short_name: null, title_en: null, title_ja: null, desc_en: null, desc_ja: null, short_en: null, short_ja: null, phase: "nomination", target_size: null, groups_count: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_size: null, group_mode: null, groups_per_day: null, group_started_at: null, group_matchday_starts: null, ko_target: null, ko_seed_ids: null, playoff_slots: null, third_place: null, blocked_tags: [], blocked_subjects: [], freeze_on: null, freeze_from: null, freeze_to: null, freeze_note: null });
+  db.competitions.push({ id, title, description: null, short_name: null, title_en: null, title_ja: null, desc_en: null, desc_ja: null, short_en: null, short_ja: null, phase: "nomination", target_size: null, groups_count: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_size: null, group_mode: null, groups_per_day: null, group_started_at: null, group_matchday_starts: null, ko_target: null, ko_seed_ids: null, playoff_slots: null, third_place: null, blocked_tags: [], blocked_subjects: [], freeze_on: null, freeze_from: null, freeze_to: null, freeze_note: null, break_hours: null, break_until: null, break_after: null });
   writeDb(db);
   return id;
 }
@@ -594,6 +602,83 @@ export function freezeOf(c: Competition | undefined, now = Date.now()): FreezeIn
   const inWindow = from != null && now >= from && (to == null || now < to);
   return { active: manual || inWindow, manual, from, to, note: c?.freeze_note || "", upcoming: from != null && now < from };
 }
+/** 休赛期状态。字段缺失（老数据）时一律视为「不在休赛期」，行为与升级前完全一致。 */
+export interface BreakInfo {
+  /** 正处于休赛期：停投停提名。 */
+  active: boolean;
+  /** 结束时刻，null = 未安排。 */
+  until: number | null;
+  /** 配置的时长（小时），0 = 未启用。 */
+  hours: number;
+  /** 这个休赛期跟在哪一轮之后。 */
+  after: string | null;
+}
+export function breakOf(c: Competition | undefined, now = Date.now()): BreakInfo {
+  const until = c?.break_until ?? null;
+  return {
+    active: until != null && now < until,
+    until,
+    hours: Math.max(0, Number(c?.break_hours) || 0),
+    after: c?.break_after ?? null,
+  };
+}
+export function breakState(cid: number, now = Date.now(), snap?: DB): BreakInfo {
+  return breakOf((snap ?? readDbRO()).competitions.find((x) => x.id === cid), now);
+}
+
+/** 设置休赛期时长（小时）。0 = 关闭。 */
+export function setBreakHours(cid: number, hours: number): void {
+  const db = readDb();
+  const c = db.competitions.find((x) => x.id === cid);
+  if (!c) return;
+  const h = Math.max(0, Math.min(240, Math.floor(hours) || 0)); // 上限 10 天，防止手滑输成 1000
+  c.break_hours = h > 0 ? h : null;
+  writeDb(db);
+}
+
+/** 提前结束当前休赛期：清掉 break_until，下一次 tick 就会结算本轮并开下一轮。 */
+export function endBreakNow(cid: number): boolean {
+  const db = readDb();
+  const c = db.competitions.find((x) => x.id === cid);
+  if (!c || c.break_until == null) return false;
+  c.break_until = null;
+  writeDb(db);
+  return true;
+}
+
+/** 延长当前休赛期（小时）；票还没查完时用。 */
+export function extendBreak(cid: number, hours: number): number | null {
+  const db = readDb();
+  const c = db.competitions.find((x) => x.id === cid);
+  if (!c || c.break_until == null) return null;
+  const add = Math.max(0, Math.min(240, Math.floor(hours) || 0));
+  // 从「现在」还是从「原定结束时刻」起算：取两者较晚者，这样已经过期的休赛期也能被有效延长
+  c.break_until = Math.max(Date.now(), c.break_until) + add * 3600_000;
+  writeDb(db);
+  return c.break_until;
+}
+
+/** 开始一个休赛期（由调度器在轮次到点时调用）。 */
+export function beginBreak(cid: number, hours: number, afterRound: string): number | null {
+  const db = readDb();
+  const c = db.competitions.find((x) => x.id === cid);
+  if (!c) return null;
+  const until = Date.now() + Math.max(0, hours) * 3600_000;
+  c.break_until = until;
+  c.break_after = afterRound;
+  writeDb(db);
+  return until;
+}
+
+/** 休赛期结束、准备推进：清掉 break_until 但保留 break_after，避免同一轮再次插入。 */
+export function consumeBreak(cid: number): void {
+  const db = readDb();
+  const c = db.competitions.find((x) => x.id === cid);
+  if (!c) return;
+  c.break_until = null;
+  writeDb(db);
+}
+
 export function freezeState(cid: number, now = Date.now(), snap?: DB): FreezeInfo {
   const c = (snap ?? readDbRO()).competitions.find((x) => x.id === cid);
   return freezeOf(c, now);

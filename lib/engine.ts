@@ -1,4 +1,4 @@
-import { readDb, readDbRO, writeDb, commentCounts, approvalTally, groupBatch, type DB, type Competition, type Candidate, type Matchup, nominationTally, freezeOf, topLevel } from "./db";
+import { readDb, readDbRO, writeDb, commentCounts, approvalTally, groupBatch, type DB, type Competition, type Candidate, type Matchup, nominationTally, freezeOf, breakOf, topLevel } from "./db";
 
 // ── reads ─────────────────────────────────────────────────────
 /** The newest competition, or null. Pass `snap` to reuse a snapshot the caller already read —
@@ -37,6 +37,8 @@ export function getState(voterId: string, snap?: DB) {
       titleEn: comp.title_en ?? "", titleJa: comp.title_ja ?? "", descEn: comp.desc_en ?? "", descJa: comp.desc_ja ?? "", shortEn: comp.short_en ?? "", shortJa: comp.short_ja ?? "",
       blockedTags: comp.blocked_tags || [], blockedSubjects: comp.blocked_subjects || [],
       freeze: freezeOf(comp),
+      // 休赛期：本轮已停投、正在核对票数，下一轮到点自动开始。前端据此显示倒计时并禁用投票按钮。
+      onBreak: breakOf(comp),
       groupsCount: comp.groups_count, championId: comp.champion_id,
       targetSize: comp.target_size ?? null,
       nomEndsAt: comp.nom_ends_at ?? null, groupEndsAt: comp.group_ends_at ?? null, koRoundEndsAt: comp.ko_round_ends_at ?? null,

@@ -80,6 +80,10 @@ const D: Record<string, Entry> = {
   "freeze.now": { zh: "系统维护中，暂停投票", en: "Maintenance — voting paused", ja: "メンテナンス中：投票を停止しています" },
   "freeze.plan": { zh: "维护预告：{from} 起暂停投票", en: "Scheduled maintenance: voting pauses from {from}", ja: "メンテナンス予告：{from} から投票を停止" },
   "freeze.until": { zh: "预计 {to} 恢复", en: "expected back {to}", ja: "{to} 復旧予定" },
+  // 休赛期：本轮投票已结束、结算前的查票窗口。用户看到的是「等下一轮」，不是「出故障了」。
+  "break.now": { zh: "休赛期：本轮投票已结束，正在核对票数", en: "Intermission — voting for this round is closed while results are checked", ja: "休止期間：このラウンドの投票は終了し、票の確認中です" },
+  "break.until": { zh: "预计 {to} 开始下一轮", en: "next round expected {to}", ja: "次のラウンドは {to} 開始予定" },
+  "break.nomHint": { zh: "提名已截止，正在核对提名票；小组赛名单将在休赛期结束后产生。", en: "Nominations are closed and the tallies are being checked; the group-stage line-up is drawn once the intermission ends.", ja: "推薦は締め切り、票の確認中です。グループ組分けは休止期間の終了後に確定します。" },
   "nom.mergedInto": { zh: "已并入「{name}」，票数计入该角色", en: "merged into “{name}” — votes count there", ja: "「{name}」に統合：票はそちらに集計" },
   "jp.filtered": { zh: "已隐藏 {n} 个非日本作品角色", en: "{n} non-Japanese-work characters hidden", ja: "日本作品でないキャラ {n} 件を非表示" },
   "warn.blocked": { zh: "你在本轮有 {n} 张票因异常投票被作废，本轮已不能再投票或提名。下一轮可以正常参与。", en: "{n} of your votes this round were voided for irregular voting, so you cannot vote or nominate for the rest of this round. You can take part again next round.", ja: "今ラウンドで不正投票として {n} 票が無効化されたため、このラウンドでは投票・推薦できません。次のラウンドから再び参加できます。" },

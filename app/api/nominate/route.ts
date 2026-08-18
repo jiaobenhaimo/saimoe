@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema, readDbRO, addCandidates, removeOwnCandidate, sweepOwnOrphans, getBlocklist, isBlockedBy, freezeState, voterSanction, roundKeyOf, type NewCandidate } from "@/lib/db";
+import { ensureSchema, readDbRO, addCandidates, removeOwnCandidate, sweepOwnOrphans, getBlocklist, isBlockedBy, freezeState, breakState, voterSanction, roundKeyOf, type NewCandidate } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition } from "@/lib/engine";
 import { getVoterId, getDeviceBucket } from "@/lib/voter";
@@ -48,6 +48,14 @@ export async function POST(req: NextRequest) {
 
     const fz = freezeState(comp.id, Date.now(), snap);
     if (fz.active) return NextResponse.json({ error: fz.note || "系统维护中，暂停提名，请稍后再来。", frozen: true }, { status: 503 });
+
+    // 休赛期：提名已截止、正在核对提名票。此时提名池必须固定 —— 取前 N 名是在休赛期结束后才算的，
+    // 期间还能加角色的话，运营刚查完的名单又变了。
+    const bk = breakState(comp.id, Date.now(), snap);
+    if (bk.active) return NextResponse.json({
+      error: "提名已截止，正在休赛期核对票数，请等待小组赛开始。",
+      onBreak: true, breakUntil: bk.until,
+    }, { status: 503 });
     // 本轮被作废过票的身份，本轮连提名也一并停掉——否则禁投形同虚设（还能继续加角色）
     const sanc = voterSanction({ voterId: vid, bucket: await getDeviceBucket() }, roundKeyOf(comp), snap);
     if (sanc?.blockedThisRound)

@@ -31,6 +31,7 @@ export default function Admin() {
 
   // schedule inputs
   const [nomLocal, setNomLocal] = useState("");
+  const [brkH, setBrkH] = useState("");
   const [rHours, setRHours] = useState(24);
   const [pDays, setPDays] = useState(2);
   const [nUserLimit, setNUserLimit] = useState(0);
@@ -140,49 +141,10 @@ export default function Admin() {
       else setAuthErr("令牌不正确。");
     } catch { setAuthErr("校验失败，请重试。"); }
   }, [token]);
-  const invalidate = async (by: string, key: string) => { await act("invalidate_votes", { by, key }); await loadObs(); };
-
-  // 可疑票溯源：点开看这个设备/IP/身份的每一票投给了谁，再勾选要作废的。
-  // probeIp64：把 IP 按 /64 前缀归一化再查（同一条宽带的 IPv6 后缀频繁变化，前缀才是稳定身份）。
-  const [probe, setProbe] = useState<{ by: string; key: string; keyShort: string; votes: any[]; effKey?: string; ip64?: boolean } | null>(null);
-  const [probeBusy, setProbeBusy] = useState(false);
-  const [probeIp64, setProbeIp64] = useState(false);
-  const [picked, setPicked] = useState<Set<number>>(new Set());
-  const [openIdent, setOpenIdent] = useState<string | null>(null);
-  const [smart, setSmart] = useState<any>(null);
-  /** 智能删票：先取方案预览（每角色留 1 票 + 每身份至少删 1 票），确认后再执行。 */
-  const smartPlan = async () => {
-    if (!probe) return;
-    try {
-      const tk = token || localStorage.getItem("adminToken") || "";
-      const r = await fetch(`/api/admin/observe?mode=smart&by=${encodeURIComponent(probe.by)}&key=${encodeURIComponent(probe.key)}${probe.ip64 ? "&ip64=1" : ""}`,
-        { headers: { "x-admin-token": tk }, cache: "no-store" });
-      const j = await r.json();
-      setSmart(j?.plan || null);
-      if (j?.plan) setPicked(new Set(j.plan.ids));
-    } catch { setMsg({ t: "读取方案失败。", ok: false }); }
-  };
-  const openProbe = async (f: { by: string; key: string; keyShort: string }, ip64 = false) => {
-    setProbeBusy(true); setPicked(new Set()); setProbeIp64(ip64);
-    try {
-      const tk = token || localStorage.getItem("adminToken") || "";
-      const r = await fetch(`/api/admin/observe?by=${encodeURIComponent(f.by)}&key=${encodeURIComponent(f.key)}${ip64 ? "&ip64=1" : ""}`,
-        { headers: { "x-admin-token": tk }, cache: "no-store" });
-      const j = await r.json();
-      setProbe({ by: f.by, key: f.key, keyShort: f.keyShort, votes: Array.isArray(j?.votes) ? j.votes : [], effKey: j?.key || f.key, ip64 });
-    } catch { setMsg({ t: "读取失败，请重试。", ok: false }); }
-    finally { setProbeBusy(false); }
-  };
-  const togglePick = (id: number) => setPicked((s2) => { const n = new Set(s2); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const invalidatePicked = async () => {
-    if (!picked.size) return;
-    if (!confirm(`确认作废选中的 ${picked.size} 张票？不可撤销。若相关轮次已结算，请随后「按当前票数重算本轮」。`)) return;
-    const ids = [...picked];
-    await act("invalidate_vote_ids", { ids });
-    setPicked(new Set());
-    if (probe) await openProbe(probe, probe.ip64); // 重新拉取：已作废的会消失
-    await loadObs();
-  };
+  // 可疑票溯源 / 智能删票 / 批量作废的整套交互已迁到 /admin/fraud，这里不再保留第二份实现
+  // （两份并存时运营会不确定哪个界面的数字是准的，也容易只在一处修 bug）。
+  // 相关 state（probe / picked / smart / openIdent）与 openProbe / smartPlan / invalidatePicked
+  // 一并删除；作废用的后端 action（invalidate_votes / invalidate_vote_ids）保持不变，由那个页面调用。
 
   /** 角色信息编辑器：提名池和「资料缺失盘点」共用同一套表单，就地展开、就地保存。 */
   const openEditor = (v: { id: number; name?: string; nameCn?: string; nameEn?: string; image?: string; subjectName?: string; subjectNameJa?: string; subjectNameEn?: string }) => {
@@ -260,6 +222,8 @@ export default function Admin() {
 
   const comp = state?.competition;
   const phase = comp?.phase;
+  const pre = obs?.preflight;
+  const brk = comp?.onBreak;
   const [active, setActive] = useState<string>("overview");
   const phaseLabel = phase === "nomination" ? "提名期" : phase === "group" ? "小组赛" : phase === "playoff" ? "加赛" : phase === "knockout" ? "淘汰赛" : phase === "finished" ? "已结束" : "未开赛";
   const NAV: [string, string][] = [
@@ -287,7 +251,9 @@ export default function Admin() {
       setRHours(comp.roundHours ?? 24);
       if (comp.postponeDays != null) setPDays(comp.postponeDays);
       if (comp.thirdPlace != null) setThirdPlace(!!comp.thirdPlace);
-      setNomLocal(comp.nomEndsAt ? toLocalInput(comp.nomEndsAt) : ""); }
+      setNomLocal(comp.nomEndsAt ? toLocalInput(comp.nomEndsAt) : "");
+      // 回填已保存的休赛期时长，否则重开后台再点「保存」会把它清成 0
+      setBrkH(String(comp.onBreak?.hours ?? 0)); }
   }, [comp?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const estGroups = Math.max(1, Math.floor(size / Math.max(2, groupSize)));
@@ -541,6 +507,87 @@ export default function Admin() {
       </>)}
       {active === "setup" && (<>
       {/* ── 赛程设置与预览 ── */}
+      {/* ── 开赛前检查 ────────────────────────────────────────────────────────────
+          开小组赛是整届里最不可逆的一步：分组和种子一落定，改动就得靠层层撤回，而票已在动。
+          把所有会翻车的条件在还能改的时候一次摊开，而不是等 startGroups 抛一句错误出来。 */}
+      {comp && pre && (
+        <div className="card wide">
+          <h3>开赛前检查{" "}
+            {pre.fails > 0
+              ? <span className="gstatus" style={{ color: "var(--danger)" }}>{pre.fails} 项必须处理</span>
+              : pre.warns > 0
+                ? <span className="gstatus" style={{ color: "var(--rose-deep)" }}>可以开赛 · {pre.warns} 项建议确认</span>
+                : <span className="gstatus" style={{ color: "var(--ok)" }}>全部就绪</span>}
+          </h3>
+          {pre.shape && (
+            <p className="hint">
+              按当前配置推算：<b>{pre.shape.actualSize}</b> 人参赛
+              {pre.shape.actualSize !== pre.shape.targetSize ? `（计划 ${pre.shape.targetSize}，并列全取）` : ""}
+              {" → "}<b>{pre.shape.groups}</b> 组 × {pre.shape.groupSize} 人
+              {" → "}前 2 名共 {pre.shape.autoAdvance} 人晋级 + {pre.shape.fillNeeded} 个补位
+              {" = "}<b>{pre.shape.koTarget}</b> 强。小组赛 {pre.shape.matchdays} 个比赛日 · {pre.shape.mode}。
+              {" "}<a onClick={loadObs}>刷新</a>
+            </p>
+          )}
+          <div className="pool-admin">
+            {pre.checks.map((c: any) => (
+              <div className="prow" key={c.id}>
+                <span className={"flagtag flag-" + (c.level === "fail" ? "burst" : c.level === "warn" ? "ip" : "device")}>
+                  {c.level === "fail" ? "必改" : c.level === "warn" ? "确认" : "就绪"}
+                </span>
+                <div className="meta">
+                  <div className="nm">{c.title}</div>
+                  <div className="sub">{c.detail}{c.fix ? <><br /><span style={{ opacity: .85 }}>→ {c.fix}</span></> : null}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── 休赛期 ────────────────────────────────────────────────────────────────
+          每轮之间自动停投几小时用来查票。关键在于顺序：停投 → 查票 → 才结算。
+          先结算再查的话，每次作废都得再「按当前票数重算本轮」，淘汰赛里下一轮对阵已经生成，
+          还得连带撤回。 */}
+      {comp && (
+        <div className="card wide">
+          <h3>休赛期（查票窗口）
+            {brk?.active
+              ? <span className="gstatus" style={{ color: "var(--rose-deep)" }}>正在休赛 · 至 {fmtAbs(brk.until)}</span>
+              : brk?.hours > 0
+                ? <span className="gstatus" style={{ color: "var(--ok)" }}>每轮后 {brk.hours} 小时</span>
+                : <span className="gstatus" style={{ color: "var(--muted)" }}>未启用</span>}
+          </h3>
+          <p className="hint">
+            每一轮（提名截止、每个小组赛比赛日、每轮淘汰赛）到点后，先<b>停投</b>这么多小时让你核对票数，
+            <b>之后</b>才结算并开下一轮 —— 顺序很重要：休赛期内票已固定，该作废的作废掉，等结算时用的就是干净数据。
+            设 0 = 关闭，到点直接结算（旧行为）。
+          </p>
+          <div className="row">
+            <div className="field" style={{ maxWidth: 180 }}>
+              <label>休赛期时长（小时）</label>
+              <input type="number" min={0} max={240} value={brkH} onChange={(e) => setBrkH(e.target.value)} placeholder="0 = 关闭" />
+            </div>
+            <button className="btn solid" disabled={busy} onClick={() => act("set_break", { hours: Number(brkH) || 0 })}>保存</button>
+            {[6, 12, 24].map((h) => (
+              <button className="btn" key={h} disabled={busy} onClick={() => { setBrkH(String(h)); act("set_break", { hours: h }); }}>{h} 小时</button>
+            ))}
+          </div>
+          {brk?.active && (
+            <div className="row" style={{ marginTop: 10 }}>
+              <p className="hint" style={{ flex: "1 1 100%" }}>
+                当前正处于休赛期（{brk.after ? `${brk.after} 之后` : ""}）：投票与提名已停止，本轮<b>尚未结算</b>。
+                查完票后可以「立即结束」，不必等满；票还没查完就「再延长」。
+              </p>
+              <button className="btn solid" disabled={busy} onClick={() => { if (confirm("立即结束休赛期？系统会在 1 分钟内结算本轮并开始下一轮。")) act("end_break"); }}>立即结束休赛期</button>
+              {[3, 6, 12].map((h) => (
+                <button className="btn" key={h} disabled={busy} onClick={() => act("extend_break", { hours: h })}>再延长 {h} 小时</button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {comp && (<div className="admin-section">🗓️ 赛程设置与预览</div>)}
 
       {comp && phase !== "finished" && (
@@ -868,150 +915,16 @@ export default function Admin() {
         </div>
       )}
 
-      {comp && obs && (
-        <div className="card wide">
-          <h3>异常投票看板</h3>
+      {/* 异常投票的看板/溯源/删票流程整体搬到了独立页面 /admin/fraud（评分聚类、影响预估、批量作废
+          都在那里，功能更全）。这里只留一个入口，避免两套并存时运营在两个界面之间来回猜哪个是准的。 */}
+      {comp && (
+        <div className="card">
+          <h3>异常投票检测</h3>
           <p className="hint">
-            共 {obs.totals?.votes ?? 0} 票（含元数据 {obs.totals?.withMeta ?? 0}）、{obs.totals?.matches ?? 0} 场对局。
-            阈值：同设备 ≥{obs.thresholds?.DEVICE_MIN} 身份 · 同 IP ≥{obs.thresholds?.IP_MIN} 身份 · {Math.round((obs.thresholds?.BURST_WINDOW_MS || 0) / 1000)}s 内 ≥{obs.thresholds?.BURST_MIN} 票 · 覆盖 ≥{Math.round((obs.thresholds?.COVERAGE_PCT || 0) * 100)}%。
-            {" "}<a onClick={loadObs}>刷新</a>
+            刷票识别、逐票溯源与批量作废都在独立页面进行：评分聚类、晋级线影响预估、误报复核标记。
+            {obs?.totals ? `当前本届共 ${obs.totals.votes ?? 0} 票（含元数据 ${obs.totals.withMeta ?? 0}）。` : ""}
           </p>
-          {(!obs.flags || obs.flags.length === 0) ? (
-            <p className="hint">未发现可疑模式 👍</p>
-          ) : (
-            <div className="pool-admin">
-              {obs.flags.map((f: any) => (
-                <div className="prow" key={f.type + ":" + f.key}>
-                  <span className={"flagtag flag-" + f.type}>{f.type === "device" ? "设备" : f.type === "ip" ? "IP" : f.type === "burst" ? "爆发" : f.type === "handoff" ? "接续" : f.type === "overlap" ? "重叠" : f.type === "maxed" ? "投满" : "覆盖"}</span>
-                  <div className="meta"><div className="nm">{f.keyShort}{f.identities ? ` · ${f.identities} 身份` : ""} · {f.votes} 票</div><div className="sub">{f.detail}</div></div>
-                  <button className="btn" disabled={busy || probeBusy} onClick={() => openProbe(f)}>查看</button>
-                  <button className="btn danger" disabled={busy} onClick={() => { if (confirm(`确认作废「${f.keyShort}」的全部票？不可撤销。若该轮已结算，请随后「按当前票数重算本轮」。`)) invalidate(f.by, f.key); }}>全部作废</button>
-                </div>
-              ))}
-            </div>
-          )}
-          {probe && (() => {
-            // (a) 逐身份：这个 IP/设备下每个投票身份及其票
-            const byIdent = new Map<string, any[]>();
-            for (const v of probe.votes) { if (!byIdent.has(v.voterId)) byIdent.set(v.voterId, []); byIdent.get(v.voterId)!.push(v); }
-            const idents = [...byIdent.entries()].sort((a, b) => b[1].length - a[1].length);
-            // (b) 票流向汇总：这个身份组一共给谁投了多少票
-            const byTarget = new Map<string, number>();
-            for (const v of probe.votes) byTarget.set(v.target, (byTarget.get(v.target) || 0) + 1);
-            const targets = [...byTarget.entries()].sort((a, b) => b[1] - a[1]);
-            return (
-              <div className="probe">
-                <div className="probe-head">
-                  <b>{probe.keyShort}</b>
-                  {probe.by === "ip" ? (probe.ip64 ? ` · /64 前缀 ${probe.effKey || ""}` : " · 完整 IP") : ""}
-                  {" "}· {probe.votes.length} 票 · {idents.length} 个身份{picked.size > 0 ? ` · 已选 ${picked.size}` : ""}
-                  <span className="probe-actions">
-                    {probe.by === "ip" && (
-                      <button className="btn" disabled={probeBusy} onClick={() => openProbe(probe, !probe.ip64)}>{probe.ip64 ? "切换：完整 IP" : "切换：按 /64 前缀"}</button>
-                    )}
-                    <button className="btn" onClick={() => setPicked(new Set(probe.votes.map((v: any) => v.id)))}>全选</button>
-                    <button className="btn" onClick={() => setPicked(new Set())}>清空</button>
-                    <button className="btn" disabled={busy} onClick={smartPlan}>智能删票…</button>
-                    <button className="btn danger solid" disabled={busy || picked.size === 0} onClick={invalidatePicked}>作废选中（{picked.size}）</button>
-                    <button className="btn" onClick={() => { setProbe(null); setPicked(new Set()); setOpenIdent(null); setSmart(null); }}>关闭</button>
-                  </span>
-                </div>
-
-                {smart && (
-                  <div className="smart-plan">
-                    <div className="probe-sub" style={{ borderTop: "none" }}>
-                      智能删票方案：删除 <b>{smart.ids.length}</b> 票，保留 <b>{smart.keptPerBallot}</b> 票
-                      （每个角色留最早的 1 张），本轮封禁 <b>{smart.perIdentity.length}</b> 个身份
-                    </div>
-                    <p className="hint">
-                      按角色：{smart.perTarget.filter((t: any) => t.deleted > 0).map((t: any) => `${t.target} ${t.had}→1`).join("、") || "无重复票"}
-                    </p>
-                    <p className="hint">
-                      按身份：{smart.perIdentity.map((i: any) => `${i.voterId.replace(/^sid_/, "").slice(0, 6)}… 删 ${i.deleted}/${i.had}`).join("、")}
-                    </p>
-                    {/* 这些身份手上那张票正好是某个角色仅存的一张，按「每个角色留一张」的规则保留了，
-                        但人仍然要本轮封禁 —— 否则保住票的那个人反而成了唯一没被处理的。 */}
-                    {smart.banOnly?.length > 0 && (
-                      <p className="hint">
-                        其中 <b>{smart.banOnly.length}</b> 个身份不删票、仅本轮封禁：它们投的那张是对应角色仅存的一票，按规则保留。
-                      </p>
-                    )}
-                    {smart.zeroed.length > 0 && (
-                      <p className="hint" style={{ color: "var(--danger)" }}>
-                        ⚠ 执行后这些角色总票数会归零{smart.zeroed.map((z: any) => `：${z.target}（现 ${z.totalBefore} 票）`).join("")}。
-                      </p>
-                    )}
-                    {smart.belowMin?.length > 0 && (
-                      <p className="hint" style={{ color: "var(--danger)" }}>
-                        ⚠ 执行后这些角色会掉到「最低提名票」以下、失去参赛资格
-                        {smart.belowMin.map((z: any) => `：${z.target}（${z.totalBefore}→${z.totalAfter}）`).join("")}。
-                      </p>
-                    )}
-                    <div style={{ display: "flex", gap: 8, padding: "0 12px 12px" }}>
-                      <button className="btn danger solid" disabled={busy || (smart.ids.length === 0 && !smart.banOnly?.length)} onClick={async () => {
-                        if (!confirm(`按方案作废 ${smart.ids.length} 票、封禁 ${smart.perIdentity.length} 个身份（本轮）？删票不可撤销。`)) return;
-                        // banOnly 必须一起传：封禁不再由「有票被删」推导，没被删票的身份要显式带上。
-                        await act("invalidate_vote_ids", { ids: smart.ids, banOnly: smart.banOnly || [] });
-                        setSmart(null); setPicked(new Set());
-                        if (probe) await openProbe(probe); await loadObs();
-                      }}>执行方案（删 {smart.ids.length} 票 · 封 {smart.perIdentity.length} 身份）</button>
-                      <button className="btn" onClick={() => { setSmart(null); setPicked(new Set()); }}>放弃方案</button>
-                    </div>
-                  </div>
-                )}
-                {probe.votes.length === 0 ? <p className="hint">这个身份在本届没有留下票（可能已被作废）。</p> : (<>
-                  {/* (b) 票都投给了谁 —— 刷票通常集中在少数几个角色上 */}
-                  <div className="probe-sub">票的流向（共 {targets.length} 个角色）</div>
-                  <div className="tally-grid">
-                    {targets.map(([name, n]) => (
-                      <div className="tally-col" key={name}>
-                        <div className="tally-row adv"><span className="nm">{name}</span><span className="v num">{n}</span></div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* (a) 每个身份：可整体作废，也可展开逐票勾选 */}
-                  <div className="probe-sub">投票身份（{idents.length} 个）</div>
-                  <div className="probe-list">
-                    {idents.map(([vid, rows]) => {
-                      const ids = rows.map((r: any) => r.id);
-                      const allPicked = ids.every((i: number) => picked.has(i));
-                      return (
-                        <div key={vid}>
-                          <div className="probe-row ident">
-                            <input type="checkbox" checked={allPicked} onChange={() => setPicked((s2) => {
-                              const n = new Set(s2); if (allPicked) ids.forEach((i: number) => n.delete(i)); else ids.forEach((i: number) => n.add(i)); return n;
-                            })} />
-                            <span className="pv-target"><b>{vid.replace(/^sid_/, "").slice(0, 8)}…</b> · {rows.length} 票</span>
-                            <span className="pv-detail">{[...new Set(rows.map((r: any) => r.target))].slice(0, 4).join("、")}{new Set(rows.map((r: any) => r.target)).size > 4 ? " …" : ""}</span>
-                            <button className="btn" onClick={() => setOpenIdent(openIdent === vid ? null : vid)}>{openIdent === vid ? "收起" : "逐票"}</button>
-                            <button className="btn danger" disabled={busy} onClick={async () => {
-                              if (!confirm(`作废身份 ${vid.replace(/^sid_/, "").slice(0, 8)}… 的全部 ${rows.length} 票？不可撤销。`)) return;
-                              await act("invalidate_vote_ids", { ids });
-                              if (probe) await openProbe(probe); await loadObs();
-                            }}>作废该身份</button>
-                          </div>
-                          {openIdent === vid && rows.map((v: any) => (
-                            <label className={"probe-row sub" + (picked.has(v.id) ? " on" : "")} key={v.id}>
-                              <input type="checkbox" checked={picked.has(v.id)} onChange={() => togglePick(v.id)} />
-                              <span className={"flagtag flag-" + (v.kind === "match" ? "burst" : v.kind === "approval" ? "device" : "ip")}>
-                                {v.kind === "nomination" ? "提名" : v.kind === "approval" ? "票选" : "对战"}
-                              </span>
-                              <span className="pv-target">投给 <b>{v.target}</b></span>
-                              <span className="pv-detail">{v.detail}</span>
-                              <span className="pv-at num">{v.at ? fmtAbs(v.at) : "—"}</span>
-                            </label>
-                          ))}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </>)}
-                <p className="hint">身份口径：{probe.by === "bucket" ? "设备指纹" : probe.by === "ip" ? (probe.ip64 ? "IP /64 前缀" : "完整 IP") : "投票人"}。作废是真删记录、不可撤销；若相关轮次已结算，随后要「按当前票数重算本轮」。</p>
-              </div>
-            );
-          })()}
-
+          <a className="btn solid" href="/admin/fraud" style={{ textDecoration: "none", display: "inline-block" }}>🕵️ 异常投票检测 →</a>
         </div>
       )}
 
@@ -1034,7 +947,7 @@ export default function Admin() {
       {dbgOn && (
         <div className="card">
           <h3>服务端诊断</h3>
-          <p className="hint">查看服务端环境：Node 版本、数据/备份目录、以及对 <code>api.bgm.tv</code> 的系统 DNS 解析（仅解析，不发起连接）。搜索/导入已改为浏览器端直连 Bangumi，服务端不再访问 Bangumi；若在线搜索失败，请在浏览器控制台排查前端请求。</p>
+          <p className="hint">查看服务端环境：Node 版本、数据/备份目录、以及对 <code>api.bgm.tv</code> 的系统 DNS 解析（仅解析，不发起连接）。搜索/导入现在由**服务端**访问 Bangumi（浏览器只跟本站说话），因此这里的 DNS 结果、以及返回里的 <code>bgm</code> / <code>imgCache</code> 状态都能直接反映搜索为什么慢或失败。</p>
           <button className="btn solid" disabled={busy || pinging} onClick={ping}>{pinging ? "检查中…" : "运行诊断"}</button>
           {pingResult && <pre className="ping-result">{JSON.stringify(pingResult, null, 2)}</pre>}
         </div>

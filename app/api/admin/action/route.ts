@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminOk } from "@/lib/adminauth";
-import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, editCandidate, mergeCandidates, setBlocklist, setFreeze, clearFreezePlan, invalidateVoteIds, clearJpFlag, listJpFlagged } from "@/lib/db";
+import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, editCandidate, mergeCandidates, setBlocklist, setFreeze, clearFreezePlan, invalidateVoteIds, clearJpFlag, listJpFlagged, setBreakHours, endBreakNow, extendBreak, breakState } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline, setPace, setGroupDayCap, resolvePlayoff, canStartKnockout } from "@/lib/engine";
 
@@ -139,6 +139,28 @@ export async function POST(req: NextRequest) {
       rec(body.on ? "开启停投（维护）" : "更新停投设置");
       return NextResponse.json({ ok: true, message: "停投设置已保存。" });
     }
+    // ── 休赛期：每轮之间自动停投、留出查票时间（见 lib/schedule.ts）──
+    if (action === "set_break") {
+      const h = Math.max(0, Math.floor(Number(body.hours) || 0));
+      setBreakHours(comp.id, h);
+      rec(h > 0 ? `设定休赛期：每轮后停投 ${h} 小时` : "关闭休赛期");
+      return NextResponse.json({ ok: true, message: h > 0 ? `已设定休赛期：每轮结束后自动停投 ${h} 小时用于核对票数。` : "已关闭休赛期，每轮到点直接结算并开下一轮。" });
+    }
+    if (action === "end_break") {
+      // 票查完了、不想等满：立刻结束休赛期。下一次调度 tick（≤60 秒）会结算本轮并开下一轮。
+      const ok = endBreakNow(comp.id);
+      if (!ok) return NextResponse.json({ error: "当前不在休赛期。" }, { status: 400 });
+      rec("提前结束休赛期");
+      return NextResponse.json({ ok: true, message: "休赛期已结束，稍后（≤1 分钟）自动结算本轮并开始下一轮。" });
+    }
+    if (action === "extend_break") {
+      const h = Math.max(1, Math.floor(Number(body.hours) || 0));
+      const until = extendBreak(comp.id, h);
+      if (until == null) return NextResponse.json({ error: "当前不在休赛期。" }, { status: 400 });
+      rec(`延长休赛期 ${h} 小时`);
+      return NextResponse.json({ ok: true, message: `休赛期已延长 ${h} 小时，至 ${new Date(until).toLocaleString("zh-CN")}。`, until });
+    }
+
     if (action === "set_blocklist") {
       setBlocklist(comp.id, Array.isArray(body.tags) ? body.tags.map(String) : [], Array.isArray(body.subjects) ? body.subjects.map(String) : []);
       rec("更新黑名单");

@@ -429,13 +429,18 @@ export default function Page() {
     ? T("warn.blocked", { n: state?.sanction?.count ?? 0 })
     : T("warn.blocked0");
 
+  // 休赛期与维护冻结都会停投，但对用户是两件事：休赛期是赛程的正常一环（下一轮自动开始），
+  // 维护是临时故障处理。文案分开，否则用户会以为网站出问题了。
+  const onBreak = !!state?.competition?.onBreak?.active;
+  const breakUntil: number | null = state?.competition?.onBreak?.until ?? null;
+
   const frozen = !!state?.competition?.freeze?.active;                                   // 维护中：谁都不能投
-  const gated = !frozen && !state?.sanction?.blockedThisRound && !!state?.voteGate?.on && !state?.voteGate?.canVote;            // 只是缺公众号链接
+  const gated = !frozen && !onBreak && !state?.sanction?.blockedThisRound && !!state?.voteGate?.on && !state?.voteGate?.canVote;            // 只是缺公众号链接
   const blockedRound = !!state?.sanction?.blockedThisRound;                                // 本轮被作废过票 → 本轮禁投
-  const canVote = !frozen && !blockedRound && (!state?.voteGate?.on || !!state?.voteGate?.canVote);
+  const canVote = !frozen && !onBreak && !blockedRound && (!state?.voteGate?.on || !!state?.voteGate?.canVote);
   const nomVote = async (candidateId: number) => {
     setNomErr("");
-    if (!canVote) { setNomErr(frozen ? (state?.competition?.freeze?.note || T("freeze.now")) : blockedRound ? blockedMsg() : T("gate.readonly")); return; }
+    if (!canVote) { setNomErr(onBreak ? T("break.now") : frozen ? (state?.competition?.freeze?.note || T("freeze.now")) : blockedRound ? blockedMsg() : T("gate.readonly")); return; }
     const key = "n" + candidateId;
     if (nomPending.has(key)) return;
     const before = state; // 失败时回滚到点击前，避免界面停在错误状态
@@ -473,7 +478,7 @@ export default function Page() {
     if (voting.has(matchupId)) return;
     if (!canVote) {
       // 对战卡两侧是可点的按钮（没有禁用态），静默无反应会让人以为页面坏了
-      setVoteErr(frozen ? (state?.competition?.freeze?.note || T("freeze.now")) : blockedRound ? blockedMsg() : T("gate.readonly"));
+      setVoteErr(onBreak ? T("break.now") : frozen ? (state?.competition?.freeze?.note || T("freeze.now")) : blockedRound ? blockedMsg() : T("gate.readonly"));
       return;
     }
     const before = state;
@@ -557,6 +562,14 @@ export default function Page() {
         <div className="gate-banner" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}>
           <b>{state.competition.freeze.note || T("freeze.now")}</b>
           {state.competition.freeze.to ? " · " + T("freeze.until", { to: fmtAbs(state.competition.freeze.to, lang) }) : ""}
+        </div>
+      )}
+      {/* 休赛期公告。用中性配色，不用报错的红色 —— 这是赛程的正常一环，不是故障。 */}
+      {onBreak && !state?.competition?.freeze?.active && (
+        <div className="gate-banner">
+          <b>{T("break.now")}</b>
+          {breakUntil ? " · " + T("break.until", { to: fmtAbs(breakUntil, lang) }) : ""}
+          {phase === "nomination" ? <><br />{T("break.nomHint")}</> : null}
         </div>
       )}
       {!state?.competition?.freeze?.active && state?.competition?.freeze?.upcoming && state?.competition?.freeze?.from && (

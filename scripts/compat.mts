@@ -110,6 +110,11 @@ check("cleared character stays in the pool", db.readDb().candidates.some((c) => 
 check("a later re-check cannot un-clear an admin decision",
   (db.setJpStatus(1, flaggedId, "flagged", "re-check"), db.readDb().candidates.find((c) => c.id === flaggedId)?.jp_status === "cleared"));
 
+// ── the intermission fields are absent on legacy data and must read as "not on a break" ──
+const brk = db.breakState(1);
+check("legacy competition is not on a break", brk.active === false && brk.hours === 0 && brk.until === null);
+check("legacy competition has no stale break_after", brk.after === null);
+
 // ── legacy rows are untouched on disk after all these writes ──
 const after = JSON.parse(readFileSync(join(DIR, "saimoe.json"), "utf8"));
 const c2 = after.candidates.find((c: any) => c.bgm_id === "c2");
