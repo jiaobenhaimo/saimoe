@@ -42,8 +42,16 @@ export default function Rules() {
 
   const loc = lang === "zh" ? "zh-CN" : lang === "ja" ? "ja-JP" : "en-US";
   const f = (ms: number) => { try { return new Date(ms).toLocaleString(loc, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
-  const fmtRange = (s: number | null, e: number | null): string =>
-    s && e ? `${f(s)} → ${f(e)}` : e ? `→ ${f(e)}` : s ? `${f(s)} →` : T("sched.tbd");
+  const ft = (ms: number) => { try { return new Date(ms).toLocaleString(loc, { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
+  /** 同一天就省掉第二个日期：`08/21 01:00-23:00`；跨天才写全两个日期。 */
+  const fmtRange = (s: number | null, e: number | null): string => {
+    if (s && e) {
+      const a = new Date(s), b = new Date(e);
+      const sameDay = a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+      return sameDay ? `${f(s)}-${ft(e)}` : `${f(s)} → ${f(e)}`;
+    }
+    return e ? `→ ${f(e)}` : s ? `${f(s)} →` : T("sched.tbd");
+  };
   const side = (s: Side): string => (s ? (lang === "zh" ? (s.nameCn || s.name) : s.name) : "?");
   const known = !!sched?.known;
   /** 站点信息按当前语言取值，缺失时 日语 → 中文 → 英语 回退。 */

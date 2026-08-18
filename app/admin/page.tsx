@@ -260,7 +260,16 @@ export default function Admin() {
   const estKo = (() => { let p = 1; const t = 2 * estGroups; while (p < t) p <<= 1; return Math.max(2, p); })();
 
   const sched = state?.schedule;
-  const fmtR = (a?: number | null, b?: number | null) => (a && b ? `${fmtAbs(a)} → ${fmtAbs(b)}` : b ? `→ ${fmtAbs(b)}` : a ? `${fmtAbs(a)} →` : "时间待定");
+  /** 同一天就省掉第二个日期：`08/21 01:00-23:00`；跨天才写全两个日期。 */
+  const fmtT = (ms: number) => { try { return new Date(ms).toLocaleString("zh-CN", { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
+  const fmtR = (a?: number | null, b?: number | null) => {
+    if (a && b) {
+      const da = new Date(a), dbb = new Date(b);
+      const sameDay = da.getFullYear() === dbb.getFullYear() && da.getMonth() === dbb.getMonth() && da.getDate() === dbb.getDate();
+      return sameDay ? `${fmtAbs(a)}-${fmtT(b)}` : `${fmtAbs(a)} → ${fmtAbs(b)}`;
+    }
+    return b ? `→ ${fmtAbs(b)}` : a ? `${fmtAbs(a)} →` : "时间待定";
+  };
   const nm = (x: any) => (x ? (x.nameCn || x.name) : "?");
   const koZh = (label: string) => (label === "bronze" ? "季军战" : label === "final" ? "决赛" : label === "semi" ? "半决赛" : label === "quarter" ? "1/4 决赛" : label.startsWith("top:") ? `${label.slice(4)} 强` : label);
   const winnerOf = (m: any) => (m.winnerId == null ? null : m.a?.id === m.winnerId ? m.a : m.b?.id === m.winnerId ? m.b : null);
@@ -649,6 +658,11 @@ export default function Admin() {
             <li><div className="sched-when">小组赛<span className="sched-time">{sched.plan?.groupRoundDays ? `每 ${sched.plan.groupRoundDays} 天一个比赛日` : "手动推进"} · 每日≤{sched.plan?.dayCap === 0 ? "无限制" : (sched.plan?.dayCap || 4)} 场</span></div></li>
             <li><div className="sched-when">淘汰赛<span className="sched-time">{sched.plan?.roundHours ? `每轮 ${sched.plan.roundHours} 小时` : "手动推进"}</span></div></li>
             <li><div className="sched-when">人数不足顺延<span className="sched-time">{sched.plan?.postponeDays || 1} 天</span></div></li>
+            {/* 休赛期是从每轮投票时间里扣掉的（截止时间网格不动），所以下面每一轮的开始时间
+                已经把它算进去了 —— 这里说明一下，否则运营会以为预览时间算错了。 */}
+            {(sched.breakHours ?? 0) > 0 && (
+              <li><div className="sched-when">休赛期<span className="sched-time">每轮开头 {sched.breakHours} 小时停投查票（已计入下方时间）</span></div></li>
+            )}
           </ul>
         </div>
       )}

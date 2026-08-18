@@ -19,6 +19,57 @@ function matchCounts(db: DB, cid: number): Map<string, number> {
   return c;
 }
 
+/**
+ * What opens when the current break ends.
+ *
+ * During a break the phase has NOT advanced yet, so the client cannot work this out from the
+ * competition record alone -- it would have to duplicate the batching rules for which groups open
+ * on which matchday. Computing it here keeps one source of truth, and lets the countdown box say
+ * 「A、B 组小组赛开始」 instead of the deadline that has already passed.
+ *
+ * Returns null when nothing meaningful follows (e.g. the tournament is finished).
+ */
+function nextUpAfterBreak(db: DB, comp: Competition): { kind: "group"; matchday: number; groups: number[] } | { kind: "ko"; label: string } | null {
+  const perDay = comp.groups_per_day && comp.groups_per_day > 0 ? comp.groups_per_day : 2;
+  const groupsOn = (md: number, total: number): number[] =>
+    Array.from({ length: total }, (_, i) => i).filter((g) => groupBatch(g, perDay) === md);
+
+  if (comp.phase === "nomination") {
+    // 提名截止后的休赛期 → 接下来是小组赛第 1 比赛日。抽签还没发生，组号按计划的组数推。
+    const N = comp.auto_size ?? 0;
+    const G = Math.max(2, Math.floor(comp.group_size ?? 4));
+    const total = N >= 4 ? Math.max(1, Math.floor(N / G)) : 0;
+    if (!total) return null;
+    return { kind: "group", matchday: 1, groups: groupsOn(1, total) };
+  }
+  if (comp.phase === "group") {
+    const cur = comp.group_matchday ?? 1;
+    const count = comp.group_matchday_count ?? 1;
+    const total = comp.groups_count ?? 0;
+    if (cur < count && total > 0) return { kind: "group", matchday: cur + 1, groups: groupsOn(cur + 1, total) };
+    // 最后一个比赛日之后 → 淘汰赛首轮
+    const koT = comp.ko_target ?? 0;
+    return koT >= 2 ? { kind: "ko", label: roundLabel(koT) } : null;
+  }
+  if (comp.phase === "playoff") {
+    const koT = comp.ko_target ?? 0;
+    return koT >= 2 ? { kind: "ko", label: roundLabel(koT) } : null;
+  }
+  if (comp.phase === "knockout") {
+    const koMs = db.matchups.filter((m) => m.competition_id === comp.id && m.stage === "knockout");
+    if (!koMs.length) return null;
+    const maxRn = Math.max(...koMs.map((m) => m.round_no));
+    const cur = koMs.filter((m) => m.round_no === maxRn);
+    const thirdOn = comp.third_place !== false;
+    // 半决赛之后先打季军战（如启用），否则按人数减半推下一轮
+    if (cur.length === 2 && thirdOn && !cur.some((m) => (m as any).bronze)) return { kind: "ko", label: "bronze" };
+    if (cur.some((m) => (m as any).bronze)) return { kind: "ko", label: roundLabel(2) };
+    const nextContestants = cur.length; // 每场出一个胜者
+    return nextContestants >= 2 ? { kind: "ko", label: roundLabel(nextContestants) } : null;
+  }
+  return null;
+}
+
 // ── full state for the UI, personalised to one voter ─────────
 export function getState(voterId: string, snap?: DB) {
   const db = snap ?? readDbRO();
@@ -38,7 +89,8 @@ export function getState(voterId: string, snap?: DB) {
       blockedTags: comp.blocked_tags || [], blockedSubjects: comp.blocked_subjects || [],
       freeze: freezeOf(comp),
       // 休赛期：本轮已停投、正在核对票数，下一轮到点自动开始。前端据此显示倒计时并禁用投票按钮。
-      onBreak: breakOf(comp),
+      // nextUp 说明「休赛期结束后开始的是什么」——倒计时框要显示这个，而不是已经过去的截止时间。
+      onBreak: { ...breakOf(comp), nextUp: breakOf(comp).active ? nextUpAfterBreak(db, comp) : null },
       groupsCount: comp.groups_count, championId: comp.champion_id,
       targetSize: comp.target_size ?? null,
       nomEndsAt: comp.nom_ends_at ?? null, groupEndsAt: comp.group_ends_at ?? null, koRoundEndsAt: comp.ko_round_ends_at ?? null,
@@ -295,12 +347,18 @@ export interface SchedulePreview {
   planned: boolean;                 // nomination-phase: a booked plan exists (structure known, draw pending)
   mode: "approval" | "rr";          // group-stage voting model
   targetSize: number | null; groups: number | null; koTarget: number | null; groupSize: number | null;
-  plan: { nomEndsAt: number | null; groupRoundDays: number | null; dayCap: number | null; roundHours: number | null; postponeDays: number | null } | null;
+  plan: { nomEndsAt: number | null; groupRoundDays: number | null; dayCap: number | null; roundHours: number | null; postponeDays: number | null; breakHours: number | null } | null;
+  /** 休赛期时长（小时），0 = 未启用。前端据此把每轮开头那段标成休赛。 */
+  breakHours?: number;
   group: SchedGroupDay[]; knockout: SchedKoRound[];
 }
 
 export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
   const DAY = 86_400_000, HOUR = 3_600_000;
+  // 休赛期占掉每一轮开头的一段时间：截止时间的网格不动（见 deadlineBase），所以一轮的
+  // **可投票窗口** = 轮长 − 休赛时长。预览里必须照这个显示，否则运营看到的开始时间会比
+  // 实际早 N 小时，用户看到的「还剩多久」也会对不上。
+  const breakMs = Math.max(0, (Number(comp.break_hours) || 0)) * HOUR;
   const nameOf = (id: number): SchedSide => {
     const c = db.candidates.find((x) => x.id === id && x.competition_id === comp.id);
     return c ? { id: c.id, name: c.name, nameCn: c.name_cn } : null;
@@ -310,6 +368,7 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
     known, phase: comp.phase, groupMatchday: comp.group_matchday ?? 0, planned: false, mode: ((comp.group_mode as any) ?? "approval"),
     targetSize: comp.target_size ?? null, groups: comp.groups_count ?? null, koTarget: comp.ko_target ?? null,
     groupSize: comp.group_size ?? null, plan: null,
+    breakHours: breakMs / HOUR,
     group: [], knockout: [],
   };
 
@@ -332,6 +391,7 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
         dayCap: comp.group_day_cap ?? null,
         roundHours: comp.round_hours ?? null,
         postponeDays: comp.postpone_days ?? null,
+        breakHours: comp.break_hours ?? null,
       };
 
       // Detailed projection so the rules page can show "which groups run on which day"
@@ -351,8 +411,10 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
         for (let d = 1; d <= mdCount; d++) {
           // 没设节奏时只有「第 1 比赛日何时开始」是确定的（提名一截止就开赛），
           // 后面的比赛日靠人工推进，所以留待定 —— 而不是连第一天也标待定。
-          const start = paced ? base! + (d - 1) * roundMs : (d === 1 ? base : null);
+          // 每轮开头的 breakMs 是休赛期，投票从它之后才开始
           const end = paced ? base! + d * roundMs : null;
+          const start = paced ? base! + (d - 1) * roundMs + breakMs
+            : (d === 1 ? (base != null ? base + breakMs : null) : null);
           const gs = Array.from({ length: groups }, (_, i) => i)
             .filter((g) => groupBatch(g, perDay) === d)
             .map((g) => ({ groupNo: g, members: [] as string[] }));
@@ -364,11 +426,17 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
       let cursor = (paced && isApproval && hrs) ? base! + mdCount * roundMs : null;
       const koT = out.koTarget ?? 0;
       const thirdOn = comp.third_place !== false && koT >= 4;
-      const bump = () => { const at = cursor; if (cursor != null) cursor = cursor + hrs * HOUR; return at; };
+      // cursor 走的是「截止时间网格」；每一轮显示的开始 = 网格起点 + 休赛时长
+      const bump = (): { start: number | null; end: number | null } => {
+        if (cursor == null) return { start: null, end: null };
+        const gridStart = cursor;
+        cursor = cursor + hrs * HOUR;
+        return { start: gridStart + breakMs, end: cursor };
+      };
       for (let S = koT; S >= 2; S = S >> 1) {
-        if (S === 2 && thirdOn) { const at = bump(); out.knockout.push({ label: "bronze", contestants: 2, start: at, end: at != null ? at + hrs * HOUR : null, pending: true, matches: [] }); }
-        const at = bump();
-        out.knockout.push({ label: roundLabel(S), contestants: S, start: at, end: at != null ? at + hrs * HOUR : null, pending: true, matches: [] });
+        if (S === 2 && thirdOn) { const w = bump(); out.knockout.push({ label: "bronze", contestants: 2, start: w.start, end: w.end, pending: true, matches: [] }); }
+        const w = bump();
+        out.knockout.push({ label: roundLabel(S), contestants: S, start: w.start, end: w.end, pending: true, matches: [] });
       }
     }
     return out;
@@ -381,12 +449,14 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
   const maxKnownDay = knownDays.length ? Math.max(...knownDays) : 0;
   const pace = comp.group_round_days || 0;
   const roundMs = pace * DAY;
+  // 已到达的比赛日读事实（真实开始时刻）；未到达的按「截止网格 + 休赛期」推算：
+  // 网格是 每轮截止 = 上一轮截止 + 轮长（不受休赛期影响），开始 = 网格起点 + 休赛时长。
   const dayStart = (d: number): number | null => {
     const k = gtStarts[d];
     if (k != null) return k;
     if (!pace) return null;
-    if (maxKnownDay > 0) return gtStarts[maxKnownDay] + (d - maxKnownDay) * roundMs;
-    if (comp.group_started_at != null) return comp.group_started_at + (d - 1) * roundMs;
+    if (maxKnownDay > 0) return gtStarts[maxKnownDay] + (d - maxKnownDay) * roundMs + (d > maxKnownDay ? breakMs : 0);
+    if (comp.group_started_at != null) return comp.group_started_at + (d - 1) * roundMs + (d > 1 ? breakMs : 0);
     return null;
   };
   const mdCount = comp.group_matchday_count ?? 1;
@@ -400,7 +470,9 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
       const start = dayStart(d);
       let end: number | null = null;
       if (comp.phase === "group" && d === curMd && comp.group_round_ends_at) end = comp.group_round_ends_at;
-      else if (start != null && pace) end = start + roundMs;
+      // start 里已经含了 breakMs（休赛期占在轮首），所以截止 = 开始 + 轮长 − 休赛时长；
+      // 直接 start + roundMs 会把休赛期算两遍，预览的截止时间比真实晚 N 小时。
+      else if (start != null && pace) end = start + roundMs - breakMs;
       const gNos = [...new Set(grouped.map((c) => c.group_no!))].filter((g) => groupBatch(g, perDay) === d).sort((a, b) => a - b);
       const dClosed = comp.phase !== "group" || d < curMd;
       const aTally = dClosed ? approvalTally(db, comp.id) : null;
@@ -419,7 +491,9 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
       const start = dayStart(d);
       let end: number | null = null;
       if (comp.phase === "group" && d === curMd && comp.group_round_ends_at) end = comp.group_round_ends_at;
-      else if (start != null && pace) end = start + roundMs;
+      // start 里已经含了 breakMs（休赛期占在轮首），所以截止 = 开始 + 轮长 − 休赛时长；
+      // 直接 start + roundMs 会把休赛期算两遍，预览的截止时间比真实晚 N 小时。
+      else if (start != null && pace) end = start + roundMs - breakMs;
       const matches = gms
         .filter((m) => (m.matchday ?? 1) === d)
         .sort((a, b) => (a.group_no ?? 0) - (b.group_no ?? 0) || a.slot - b.slot)
@@ -461,9 +535,10 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
       let start: number | null = null, end: number | null = null;
       if (curStepIdx != null) {
         if (i === curStepIdx) { end = comp.ko_round_ends_at ?? null; cursor = end; }
-        else if (i > curStepIdx) { start = cursor; end = (cursor != null && rh) ? cursor + rh * HOUR : null; cursor = end; }
+        // cursor 停在上一轮的**截止**（网格点）；下一轮先休赛 breakMs 再开投，截止仍在网格上。
+        else if (i > curStepIdx) { start = cursor != null ? cursor + breakMs : null; end = (cursor != null && rh) ? cursor + rh * HOUR : null; cursor = end; }
       } else if (comp.phase === "group" || comp.phase === "playoff") {
-        start = cursor; end = (cursor != null && rh) ? cursor + rh * HOUR : null; cursor = end;
+        start = cursor != null ? cursor + breakMs : null; end = (cursor != null && rh) ? cursor + rh * HOUR : null; cursor = end;
       }
       out.knockout.push({ label: step.label, contestants: step.contestants, start, end, pending: list.length === 0, matches });
     });
@@ -475,6 +550,28 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
 // ── helpers ───────────────────────────────────────────────────
 function isPow2(n: number) { return n >= 2 && (n & (n - 1)) === 0; }
 function nextPow2(n: number): number { let p = 1; while (p < n) p <<= 1; return Math.max(2, p); }
+
+/**
+ * Base timestamp for the NEXT round's deadline.
+ *
+ * Normally "now". But if a break just ended, the deadline is measured from the deadline that
+ * triggered that break, not from the moment the break finished -- otherwise every round lands N
+ * hours later than the last and after a few matchdays the daily cut-off has wandered right across
+ * the clock. Anchoring keeps the grid fixed and takes the break out of the round's voting time:
+ * with a 23:00 daily deadline and a 2h break, the next round runs 01:00–23:00.
+ *
+ * Clears the anchor as it consumes it, and ignores an anchor already in the past by more than one
+ * round length (a long manual pause shouldn't produce a deadline that is already overdue).
+ */
+function deadlineBase(comp: Competition, roundMs: number): number {
+  const now = Date.now();
+  const a = comp.break_anchor;
+  if (a == null) return now;
+  comp.break_anchor = null;              // consumed (caller writes the db)
+  if (!Number.isFinite(a)) return now;
+  // 锚点 + 轮长必须仍在未来，否则用 now（例如运营手动把休赛期拖了很久）
+  return a + roundMs > now ? a : now;
+}
 function shuffle<T>(a: T[]): T[] { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
 
 /** Hard cap on how many matches may be open on a single (global) matchday, across
@@ -675,7 +772,7 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
     comp.group_round_days = RD || null;
     comp.group_matchday = 1;
     comp.group_matchday_count = Math.max(1, Math.ceil(numGroups / perDay));
-    comp.group_round_ends_at = RD > 0 ? Date.now() + RD * 86400_000 : null;
+    { const ms = RD * 86400_000, b = deadlineBase(comp, ms); comp.group_round_ends_at = RD > 0 ? b + ms : null; }
     comp.group_ends_at = null;
     writeDb(db);
     return;
@@ -695,7 +792,7 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   comp.group_matchday_count = Math.max(1, mdCount);
   comp.group_per_round = K || null;
   comp.group_round_days = RD || null;
-  comp.group_round_ends_at = RD > 0 ? Date.now() + RD * 86400_000 : null;
+  { const ms = RD * 86400_000, b = deadlineBase(comp, ms); comp.group_round_ends_at = RD > 0 ? b + ms : null; }
   comp.group_ends_at = null;
   writeDb(db);
 }
@@ -717,7 +814,12 @@ export function advanceGroupMatchday(cid: number): { done: boolean; message: str
   if (cur < count) {
     comp.group_matchday = cur + 1;
     const now = Date.now();
-    comp.group_round_ends_at = comp.group_round_days ? now + comp.group_round_days * 86400_000 : null;
+    const rMs = (comp.group_round_days || 0) * 86400_000;
+    // 以「触发休赛期的原定截止」为基准，休赛期从本轮投票时间里扣，而不是把整条赛程往后推。
+    // deadlineBase 无条件调用（即使没设节奏），否则手动推进时 anchor 会一直留着，
+    // 被套用到很久以后的某一轮上。
+    const gBase = deadlineBase(comp, rMs);
+    comp.group_round_ends_at = comp.group_round_days ? gBase + rMs : null;
     comp.group_matchday_starts = { ...(comp.group_matchday_starts || {}), [cur + 1]: now }; // 事实来源：真实开始的时刻
     writeDb(db);
     return { done: false, message: `已结算第 ${cur} 个比赛日，进入第 ${cur + 1}/${count} 个比赛日。` };
@@ -834,7 +936,7 @@ function buildKnockout(db: DB, comp: Competition, cid: number, seedIds: number[]
   comp.phase = "knockout"; comp.ko_round = 1;
   comp.group_round_ends_at = null; comp.group_ends_at = null;
   comp.ko_seed_ids = null; comp.playoff_slots = null;
-  comp.ko_round_ends_at = comp.round_hours ? Date.now() + comp.round_hours * 3600_000 : null;
+  { const ms = (comp.round_hours || 0) * 3600_000, b = deadlineBase(comp, ms); comp.ko_round_ends_at = comp.round_hours ? b + ms : null; }
   const order = bracketSeedOrder(n);
   const placed = order.map((seed) => seedIds[seed - 1]);
   for (let i = 0; i < placed.length; i += 2) {
@@ -911,7 +1013,7 @@ export function advanceKnockout(cid: number) {
     const finalists = semi.map((m) => m.winner_id!).filter((x) => x != null) as number[];
     comp.ko_round = round + 1;
     if (finalists.length >= 2) {
-      comp.ko_round_ends_at = comp.round_hours ? Date.now() + comp.round_hours * 3600_000 : null;
+      { const ms = (comp.round_hours || 0) * 3600_000, b = deadlineBase(comp, ms); comp.ko_round_ends_at = comp.round_hours ? b + ms : null; }
       db.matchups.push({ id: ++db.seq.matchup, competition_id: cid, stage: "knockout", round_no: round + 1, group_no: null, slot: 0, a_id: finalists[0], b_id: finalists[1], winner_id: null, decided: false, bronze: false });
     } else { comp.phase = "finished"; comp.champion_id = finalists[0] ?? null; comp.ko_round_ends_at = null; }
     writeDb(db);
@@ -926,7 +1028,7 @@ export function advanceKnockout(cid: number) {
     writeDb(db);
     return;
   }
-  comp.ko_round_ends_at = comp.round_hours ? Date.now() + comp.round_hours * 3600_000 : null;
+  { const ms = (comp.round_hours || 0) * 3600_000, b = deadlineBase(comp, ms); comp.ko_round_ends_at = comp.round_hours ? b + ms : null; }
   if (winners.length === 2 && thirdOn) {
     // 半决赛结束：两位败者先打季军战（单独一轮/一天），决赛推迟到季军战之后生成
     const losers = cur.map((m) => (m.winner_id === m.a_id ? m.b_id : m.a_id)).filter((x) => x != null) as number[];

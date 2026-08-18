@@ -57,14 +57,16 @@ export function runTick(force = false): void {
      * break_after 记的是「休赛期跟在哪一轮之后」，用它防止同一轮反复插入休赛期 ——
      * 否则休赛期结束、推进失败（例如淘汰赛凑不齐）时会原地循环，永远进不了下一轮。
      */
-    const holdForBreak = (): boolean => {
+    const holdForBreak = (dueAt: number | null): boolean => {
       if (brk.hours <= 0) return false;          // 未启用休赛期
       if (comp.break_after === round) {          // 这一轮的休赛期已经用掉了
         consumeBreak(comp.id);                   // 清掉残留的 until（正常情况已是 null）
         return false;
       }
-      const until = beginBreak(comp.id, brk.hours, round);
-      console.log(`saimoe: entering ${brk.hours}h break after ${round}, resumes at ${until ? new Date(until).toISOString() : "?"}`);
+      // dueAt = 触发这次休赛期的**原定截止时刻**（不是 now）。下一轮的截止以它为基准，
+      // 休赛期因此从本轮投票时间里扣掉，而不会让每一轮都比上一轮晚 N 小时（见 break_anchor）。
+      const until = beginBreak(comp.id, brk.hours, round, dueAt);
+      console.log(`saimoe: entering ${brk.hours}h break after ${round} (due ${dueAt ? new Date(dueAt).toISOString() : "?"}), resumes at ${until ? new Date(until).toISOString() : "?"}`);
       return true;
     };
 
@@ -79,7 +81,7 @@ export function runTick(force = false): void {
         return;
       }
       // 提名截止 → 休赛期（查提名票）→ 按清理后的票数取前 N 名开小组赛
-      if (holdForBreak()) return;
+      if (holdForBreak(comp.nom_ends_at)) return;
       try {
         startGroups(comp.id, size);
       } catch (e) {
@@ -95,17 +97,17 @@ export function runTick(force = false): void {
         console.error("saimoe: final matchday due but knockout unfillable — leaving group phase intact");
         return;
       }
-      if (holdForBreak()) return;
+      if (holdForBreak(comp.group_round_ends_at)) return;
       const r = advanceGroupMatchday(comp.id);
       if (r.done) startKnockout(comp.id);
     } else if (comp.phase === "group" && comp.group_ends_at && now >= comp.group_ends_at) {
-      if (holdForBreak()) return;
+      if (holdForBreak(comp.group_ends_at)) return;
       startKnockout(comp.id); // legacy (comps started before matchday scheduling)
     } else if (comp.phase === "playoff" && comp.group_round_ends_at && now >= comp.group_round_ends_at) {
-      if (holdForBreak()) return;
+      if (holdForBreak(comp.group_round_ends_at)) return;
       resolvePlayoff(comp.id);
     } else if (comp.phase === "knockout" && comp.ko_round_ends_at && now >= comp.ko_round_ends_at) {
-      if (holdForBreak()) return;
+      if (holdForBreak(comp.ko_round_ends_at)) return;
       advanceKnockout(comp.id);
     }
   } catch (e) {

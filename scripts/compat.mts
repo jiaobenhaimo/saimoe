@@ -114,6 +114,11 @@ check("a later re-check cannot un-clear an admin decision",
 const brk = db.breakState(1);
 check("legacy competition is not on a break", brk.active === false && brk.hours === 0 && brk.until === null);
 check("legacy competition has no stale break_after", brk.after === null);
+// break_anchor is absent on legacy rows; a null anchor must mean "measure from now", never NaN
+check("legacy competition has no break anchor", db.takeBreakAnchor(1) === null);
+// the boot record goes into the same audit log and must not disturb a legacy file
+db.logAudit("boot", "test boot", null);
+check("a boot record appends to the legacy audit log", db.readAudit(5).some((a) => a.action === "boot"));
 
 // ── legacy rows are untouched on disk after all these writes ──
 const after = JSON.parse(readFileSync(join(DIR, "saimoe.json"), "utf8"));

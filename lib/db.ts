@@ -36,6 +36,13 @@ export interface Competition {
   break_until?: number | null;
   /** 这个休赛期是在哪一轮之后开始的（roundKeyOf 的值）。用于防止同一轮反复插入休赛期。 */
   break_after?: string | null;
+  /** 触发这次休赛期的那个「原定截止时刻」。
+   *
+   *  为什么要记它：休赛期不应该让整条赛程往后飘。如果下一轮的截止时间按「休赛期结束的那一刻
+   *  + 轮长」来算，那每轮都会比上一轮晚 N 小时，几个比赛日之后每天的截止时间就完全乱了。
+   *  记住原定截止时刻后，下一轮的截止 = 原定截止 + 轮长，截止时间的网格保持不变，休赛期是从
+   *  **本轮投票时间里扣掉**的（例：每天 23:00 截止、休赛 2 小时 → 下一轮 次日 01:00–23:00）。 */
+  break_anchor?: number | null;
   // ── timed schedule (epoch ms; null = not scheduled) ──
   nom_ends_at: number | null; group_ends_at: number | null; ko_round_ends_at: number | null;
   auto_size: number | null;
@@ -343,7 +350,7 @@ export function ensureSchema(): void {
 export function createCompetition(title: string): number {
   const db = readDb();
   const id = ++db.seq.competition;
-  db.competitions.push({ id, title, description: null, short_name: null, title_en: null, title_ja: null, desc_en: null, desc_ja: null, short_en: null, short_ja: null, phase: "nomination", target_size: null, groups_count: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_size: null, group_mode: null, groups_per_day: null, group_started_at: null, group_matchday_starts: null, ko_target: null, ko_seed_ids: null, playoff_slots: null, third_place: null, blocked_tags: [], blocked_subjects: [], freeze_on: null, freeze_from: null, freeze_to: null, freeze_note: null, break_hours: null, break_until: null, break_after: null });
+  db.competitions.push({ id, title, description: null, short_name: null, title_en: null, title_ja: null, desc_en: null, desc_ja: null, short_en: null, short_ja: null, phase: "nomination", target_size: null, groups_count: null, champion_id: null, ko_round: null, created_at: Date.now(), nom_ends_at: null, group_ends_at: null, ko_round_ends_at: null, auto_size: null, round_hours: null, postpone_days: null, nom_user_limit: null, nom_min_votes: null, group_matchday: null, group_matchday_count: null, group_per_round: null, group_round_days: null, group_round_ends_at: null, group_day_cap: null, group_size: null, group_mode: null, groups_per_day: null, group_started_at: null, group_matchday_starts: null, ko_target: null, ko_seed_ids: null, playoff_slots: null, third_place: null, blocked_tags: [], blocked_subjects: [], freeze_on: null, freeze_from: null, freeze_to: null, freeze_note: null, break_hours: null, break_until: null, break_after: null, break_anchor: null });
   writeDb(db);
   return id;
 }
@@ -658,16 +665,31 @@ export function extendBreak(cid: number, hours: number): number | null {
   return c.break_until;
 }
 
-/** 开始一个休赛期（由调度器在轮次到点时调用）。 */
-export function beginBreak(cid: number, hours: number, afterRound: string): number | null {
+/** 开始一个休赛期（由调度器在轮次到点时调用）。
+ *  `anchor` = 触发它的那个原定截止时刻，用来保持截止时间网格不漂移（见 break_anchor）。 */
+export function beginBreak(cid: number, hours: number, afterRound: string, anchor?: number | null): number | null {
   const db = readDb();
   const c = db.competitions.find((x) => x.id === cid);
   if (!c) return null;
   const until = Date.now() + Math.max(0, hours) * 3600_000;
   c.break_until = until;
   c.break_after = afterRound;
+  c.break_anchor = anchor ?? null;
   writeDb(db);
   return until;
+}
+
+/** 取出并清掉 break_anchor。下一轮的截止时间要以它为基准计算，用完即弃。 */
+export function takeBreakAnchor(cid: number, snap?: DB): number | null {
+  const c = (snap ?? readDbRO()).competitions.find((x) => x.id === cid);
+  return c?.break_anchor ?? null;
+}
+export function clearBreakAnchor(cid: number): void {
+  const db = readDb();
+  const c = db.competitions.find((x) => x.id === cid);
+  if (!c || c.break_anchor == null) return;
+  c.break_anchor = null;
+  writeDb(db);
 }
 
 /** 休赛期结束、准备推进：清掉 break_until 但保留 break_after，避免同一轮再次插入。 */
@@ -943,7 +965,9 @@ export function commentCounts(cid: number, snap?: DB): Record<number, number> {
 }
 
 // ── admin observability: audit trail + vote invalidation ──────────────────────
-const AUDIT_MAX = 500;
+// 2000 而不是 500：审计日志现在也收容器启动记录（见 instrumentation.ts）。若遇到崩溃重启循环，
+// 500 条的窗口会被启动记录迅速填满，把真正要追查的管理操作挤出去 —— 那正是最需要它们的时候。
+const AUDIT_MAX = 2000;
 
 /** Append one entry to the admin audit trail (newest kept; capped at AUDIT_MAX). */
 export function logAudit(action: string, summary: string, phase: string | null): void {

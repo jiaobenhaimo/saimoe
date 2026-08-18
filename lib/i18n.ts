@@ -85,6 +85,11 @@ const D: Record<string, Entry> = {
   // 休赛期：本轮投票已结束、结算前的查票窗口。用户看到的是「等下一轮」，不是「出故障了」。
   "break.now": { zh: "休赛期：本轮投票已结束，正在核对票数", en: "Intermission — voting for this round is closed while results are checked", ja: "休止期間：このラウンドの投票は終了し、票の確認中です" },
   "break.until": { zh: "预计 {to} 开始下一轮", en: "next round expected {to}", ja: "次のラウンドは {to} 開始予定" },
+  "break.body": { zh: "本轮的票正在清算核对，期间暂停投票与提名。核对完成后下一轮会自动开始，届时刷新本页即可参与。", en: "This round's votes are being tallied and checked, so voting and nominating are paused. The next round starts automatically once the check is done — refresh this page then.", ja: "このラウンドの票を集計・確認しています。その間、投票と推薦は停止します。確認が終わると次のラウンドが自動的に始まりますので、ページを再読み込みしてご参加ください。" },
+  "break.viewPast": { zh: "想回看之前的结果，点上方的阶段标签。", en: "To review earlier results, use the stage tabs above.", ja: "これまでの結果は上のステージタブから確認できます。" },
+  "break.nextGroup": { zh: "{g} 组小组赛开始", en: "Group stage {g} opens", ja: "{g} 組のグループ戦開始" },
+  "break.nextKo": { zh: "{r}开始", en: "{r} opens", ja: "{r} 開始" },
+  "break.nextGeneric": { zh: "下一轮开始", en: "Next round opens", ja: "次のラウンド開始" },
   "break.nomHint": { zh: "提名已截止，正在核对提名票；小组赛名单将在休赛期结束后产生。", en: "Nominations are closed and the tallies are being checked; the group-stage line-up is drawn once the intermission ends.", ja: "推薦は締め切り、票の確認中です。グループ組分けは休止期間の終了後に確定します。" },
   "nom.mergedInto": { zh: "已并入「{name}」，票数计入该角色", en: "merged into “{name}” — votes count there", ja: "「{name}」に統合：票はそちらに集計" },
   "jp.filtered": { zh: "已隐藏 {n} 个非日本作品角色", en: "{n} non-Japanese-work characters hidden", ja: "日本作品でないキャラ {n} 件を非表示" },

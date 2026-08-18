@@ -128,6 +128,53 @@ check("extendBreak pushes the end out", ext != null && ext - Date.now() > 8.5 * 
 check("endBreakNow clears it", db.endBreakNow(cid3) === true && db.breakState(cid3).active === false);
 check("endBreakNow on no intermission is a no-op", db.endBreakNow(cid3) === false);
 
+// ── the deadline grid must not drift because of breaks ──
+// If the next round's deadline were measured from the moment the break ended, every round would
+// land N hours later than the last and after a few matchdays the daily cut-off has wandered right
+// across the clock. The break is taken OUT of the round's voting time instead: with a 23:00 daily
+// deadline and a 2h break, the next round runs 01:00-23:00.
+{
+  const cidD = db.createCompetition("no-drift");
+  // 16 entrants / 4 per group / 2 groups per day = 4 groups over 2 matchdays, so there IS a
+  // second matchday to advance into (with 2 groups it would roll straight into the knockout).
+  db.addCandidates(cidD, Array.from({ length: 16 }, (_, i) => ({ bgmId: "d" + i, name: "D" + i })));
+  const p = db.readDb().candidates.filter((c) => c.competition_id === cidD);
+  p.forEach((c, i) => { for (let v = 0; v <= p.length - i; v++) db.toggleNomination(cidD, c.id, `dv_${c.id}_${v}`); });
+
+  const DAY = 86_400_000;
+  // nomination closed at a 23:00-style anchor an hour ago; 1 day per matchday; 2h break
+  const nomEnd = Date.now() - 3600_000;
+  setField(cidD, { auto_size: 16, group_size: 4, groups_per_day: 2, group_round_days: 1,
+    nom_ends_at: nomEnd, break_hours: 2 });
+
+  sch.runTick(true);                                   // -> enters the break
+  check("nomination deadline starts a break", db.breakState(cidD).active === true);
+  setField(cidD, { break_until: Date.now() - 1000 });   // break expires
+  sch.runTick(true);                                    // -> group stage opens
+  const c1 = db.readDb().competitions.find((c) => c.id === cidD)!;
+  check("group stage opened", c1.phase === "group");
+  // The matchday-1 deadline must sit on the grid (nomEnd + 1 day), NOT break-end + 1 day.
+  const drift = Math.abs((c1.group_round_ends_at ?? 0) - (nomEnd + DAY));
+  check("matchday 1 deadline sits on the grid, not after the break",
+    drift < 5_000, `off by ${Math.round(drift / 60_000)} min`);
+  check("break_anchor was consumed", c1.break_anchor == null);
+
+  // And again for the next matchday. Use a grid point that has just passed, so the deadline is
+  // actually due (the previous step's grid point is still ~23h out).
+  const gridPt = Date.now() - 3600_000;
+  setField(cidD, { group_round_ends_at: gridPt, break_after: "consumed" });
+  sch.runTick(true);
+  check("a matchday deadline starts a break too", db.breakState(cidD).active === true);
+  check("the anchor recorded is the matchday deadline, not now",
+    Math.abs((db.readDb().competitions.find((c) => c.id === cidD)!.break_anchor ?? 0) - gridPt) < 5_000);
+  setField(cidD, { break_until: Date.now() - 1000 });
+  sch.runTick(true);
+  const c2 = db.readDb().competitions.find((c) => c.id === cidD)!;
+  const drift2 = Math.abs((c2.group_round_ends_at ?? 0) - (gridPt + DAY));
+  check("the next deadline is one grid step on from the last, with no drift",
+    drift2 < 5_000, `off by ${Math.round(drift2 / 60_000)} min`);
+}
+
 // ── the pool must not change during an intermission ──
 // The break exists so the operator can check a STATIONARY pool. Orphan sweeping used to run before
 // the break check, so 0-vote self-nominations were deleted mid-review: the list moved under them,
@@ -152,6 +199,41 @@ check("endBreakNow on no intermission is a no-op", db.endBreakNow(cid3) === fals
   sch.runTick(true);
   check("after the intermission the sweep runs again",
     !db.readDb().candidates.some((c) => c.id === orph.id));
+}
+
+// ── the schedule preview must show the break carved out of the round, not added to it ──
+// The round's start moves past the break but its deadline stays on the grid, so the previewed
+// window is (round length − break). Computing end as start + roundMs counted the break twice and
+// showed a deadline hours later than the real one.
+{
+  const cidV = db.createCompetition("preview");
+  db.addCandidates(cidV, Array.from({ length: 16 }, (_, i) => ({ bgmId: "v" + i, name: "V" + i })));
+  const pv = db.readDb().candidates.filter((c) => c.competition_id === cidV);
+  pv.forEach((c, i) => { for (let v = 0; v <= pv.length - i; v++) db.toggleNomination(cidV, c.id, `pv_${c.id}_${v}`); });
+  const nomEnd2 = Date.now() + 3600_000;
+  setField(cidV, { auto_size: 16, group_size: 4, groups_per_day: 2, group_round_days: 1,
+    round_hours: 24, nom_ends_at: nomEnd2, break_hours: 2, break_until: null, break_after: null });
+
+  const sc = eng.projectSchedule(db.readDb(), db.readDb().competitions.find((c) => c.id === cidV)! as any);
+  check("preview reports the configured break", sc.breakHours === 2, `${sc.breakHours}`);
+  const d1 = sc.group[0];
+  check("matchday 1 starts one break after nomination closes",
+    d1?.start != null && Math.abs(d1.start - (nomEnd2 + 2 * 3600_000)) < 5_000,
+    `start=${d1?.start} want=${nomEnd2 + 2 * 3600_000}`);
+  check("matchday 1 deadline stays on the grid (break not added twice)",
+    d1?.end != null && Math.abs(d1.end - (nomEnd2 + 86_400_000)) < 5_000,
+    `end=${d1?.end} want=${nomEnd2 + 86_400_000}`);
+  check("the visible voting window is round length minus the break",
+    d1?.start != null && d1?.end != null && Math.abs((d1.end - d1.start) - (86_400_000 - 2 * 3600_000)) < 5_000,
+    `${((d1!.end! - d1!.start!) / 3600_000).toFixed(2)}h`);
+  const d2 = sc.group[1];
+  check("matchday 2 is exactly one grid step after matchday 1",
+    d2?.end != null && d1?.end != null && Math.abs((d2.end - d1.end) - 86_400_000) < 5_000,
+    `${(((d2?.end ?? 0) - (d1?.end ?? 0)) / 3600_000).toFixed(2)}h`);
+  const ko1 = sc.knockout[0];
+  check("the first knockout round also starts one break after the last group deadline",
+    ko1?.start != null && d2?.end != null && Math.abs(ko1.start - (d2.end + 2 * 3600_000)) < 5_000,
+    `ko start=${ko1?.start}`);
 }
 
 // ── the 公众号 reminder must not hand out a vote link as if voting were open ──

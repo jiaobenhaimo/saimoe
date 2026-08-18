@@ -203,6 +203,22 @@ function fmtAbs(ms: number, lang: Lang): string {
     return new Date(ms).toLocaleString(loc, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   } catch { return ""; }
 }
+/** 只要时间，不要日期。 */
+function fmtTime(ms: number, lang: Lang): string {
+  const loc = lang === "en" ? "en-US" : lang === "ja" ? "ja-JP" : "zh-CN";
+  try {
+    return new Date(ms).toLocaleString(loc, { hour: "2-digit", minute: "2-digit" });
+  } catch { return ""; }
+}
+/** 同一天的话省略第二个日期：`08/21 01:00-23:00`；跨天才写全 `08/21 23:00 → 08/22 01:00`。 */
+function fmtRange(a: number | null | undefined, b: number | null | undefined, lang: Lang): string {
+  if (a == null && b == null) return t(lang, "match.upcoming");
+  if (a == null) return "→ " + fmtAbs(b as number, lang);
+  if (b == null) return fmtAbs(a, lang) + " →";
+  const da = new Date(a), dbb = new Date(b);
+  const sameDay = da.getFullYear() === dbb.getFullYear() && da.getMonth() === dbb.getMonth() && da.getDate() === dbb.getDate();
+  return sameDay ? `${fmtAbs(a, lang)}-${fmtTime(b, lang)}` : `${fmtAbs(a, lang)} → ${fmtAbs(b, lang)}`;
+}
 
 function useLang(): [Lang, (l: Lang) => void] {
   const [lang, setLang] = useState<Lang>("zh");
@@ -564,12 +580,21 @@ export default function Page() {
     phase === "group" ? (state?.group?.mode === "approval" ? [] : (state?.group?.groups ?? []).flatMap((g: any) => g.matchups ?? []).filter((m: Match) => (m.matchday ?? 0) === ((state?.group?.matchday ?? 0) + 1) && m.a && m.b))
     : [];
 
-  const deadline: number | null =
+  // 休赛期里那个截止时间已经过去了，继续显示「提名截止 …… 剩 0 分」毫无意义。
+  // 换成「下一轮什么时候开始」：A、B 组小组赛开始 08/21 01:00 · 还剩 …
+  const nextUp = comp?.onBreak?.nextUp ?? null;
+  const nextUpLabel = (): string => {
+    if (!nextUp) return T("break.nextGeneric");
+    if (nextUp.kind === "group")
+      return T("break.nextGroup", { g: (nextUp.groups || []).map((n: number) => groupLabel(n)).join("、") });
+    return T("break.nextKo", { r: roundLabelT(lang, nextUp.label) });
+  };
+  const deadline: number | null = onBreak ? breakUntil :
     phase === "nomination" ? comp?.nomEndsAt ?? null :
     phase === "group" ? comp?.groupRoundEndsAt ?? null :
     phase === "playoff" ? comp?.groupRoundEndsAt ?? null :
     phase === "knockout" ? comp?.koRoundEndsAt ?? null : null;
-  const deadlineLabel =
+  const deadlineLabel = onBreak ? nextUpLabel() :
     phase === "nomination" ? T("dl.nomination") : phase === "group" ? T("dl.group") : phase === "playoff" ? T("dl.playoff") : phase === "knockout" ? T("dl.knockout") : "";
 
   const koRounds: any[] = state?.knockout?.rounds || [];
@@ -642,7 +667,21 @@ export default function Page() {
         </div>
       )}
 
-      {!loading && comp && openMatches.length > 0 && (
+      {/* ── 休赛期：正文只留一段说明 ────────────────────────────────────────────
+          刻意把下面所有投票相关的区块整体隐藏（现在开放的对战、下一轮预告、提名池、小组/淘汰
+          赛面板）。理由：休赛期里这些东西**一个都不能点**，留在页面上只会让人反复去点被禁用的
+          按钮、或以为自己那一票没投上。只说清楚「票正在清算，下一轮什么时候开始」。
+          历史结果照样可以看 —— 上面的阶段 chip 仍然能切到已结束的阶段。 */}
+      {!loading && comp && onBreak && !viewingPast && (
+        <div className="breakpanel">
+          <div className="breakpanel-h">⏸ {T("break.now")}</div>
+          <p className="breakpanel-b">{T("break.body")}</p>
+          {breakUntil ? <p className="breakpanel-b">{T("break.until", { to: fmtAbs(breakUntil, lang) })}</p> : null}
+          <p className="breakpanel-n">{T("break.viewPast")}</p>
+        </div>
+      )}
+
+      {!loading && comp && !onBreak && openMatches.length > 0 && (
         <div className="votenow">
           <div className="votenow-h">
             <span className="votenow-title">🔴 {T("vote.now.title")}</span>
@@ -655,7 +694,7 @@ export default function Page() {
       )}
 
       {/* ── 下一轮比赛预告 ── */}
-      {!loading && comp && (
+      {!loading && comp && !onBreak && (
         phase === "group" ? (nextMatches.length > 0 && (
           <div className="nextup">
             <div className="nextup-h">📅 {T("next.group", { d: (state?.group?.matchday ?? 0) + 1, n: state?.group?.matchdayCount ?? 0 })}</div>
@@ -703,7 +742,7 @@ export default function Page() {
       )}
 
       {/* ── NOMINATION (interactive; only during the live nomination phase) ── */}
-      {!loading && comp && showKey === "nomination" && phase === "nomination" && (
+      {!loading && comp && !onBreak && showKey === "nomination" && phase === "nomination" && (
         <>
           <div className="sectlabel">{T("nom.section")}</div>
           <div className="searchbox">
@@ -800,7 +839,7 @@ export default function Page() {
       )}
 
       {/* ── GROUP ── */}
-      {!loading && comp && showKey === "group" && state?.group && (
+      {!loading && comp && (!onBreak || viewingPast) && showKey === "group" && state?.group && (
         <>
           {viewingPast && <div className="viewback">{T("view.back")}</div>}
           <div className="sec"><h2>{T("group.title")}</h2><div className="meta2">{comp.koTarget ? T((comp.groupsCount && comp.koTarget <= 2 * comp.groupsCount) ? "group.wc2" : "group.wc", { n: comp.koTarget }) : ""}</div></div>
@@ -889,7 +928,7 @@ export default function Page() {
       )}
 
       {/* ── THIRD-PLACE PLAYOFF （shown within the 淘汰赛 view） ── */}
-      {!loading && comp && showKey === "knockout" && state?.playoff && (
+      {!loading && comp && (!onBreak || viewingPast) && showKey === "knockout" && state?.playoff && (
         <>
           <div className="sec"><h2>{T("playoff.title")}</h2><div className="meta2">{T("playoff.desc", { n: state.playoff.slots })}</div></div>
           <div className="groupwrap">
@@ -911,7 +950,7 @@ export default function Page() {
       )}
 
       {/* ── KNOCKOUT / FINISHED ── */}
-      {!loading && comp && showKey === "knockout" && state?.knockout && (
+      {!loading && comp && (!onBreak || viewingPast) && showKey === "knockout" && state?.knockout && (
         <>
           {viewingPast && !state.knockout.champion && <div className="viewback">{T("view.back")}</div>}
           {state.knockout.champion && (
