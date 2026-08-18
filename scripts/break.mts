@@ -128,5 +128,64 @@ check("extendBreak pushes the end out", ext != null && ext - Date.now() > 8.5 * 
 check("endBreakNow clears it", db.endBreakNow(cid3) === true && db.breakState(cid3).active === false);
 check("endBreakNow on no intermission is a no-op", db.endBreakNow(cid3) === false);
 
+// ── the pool must not change during an intermission ──
+// The break exists so the operator can check a STATIONARY pool. Orphan sweeping used to run before
+// the break check, so 0-vote self-nominations were deleted mid-review: the list moved under them,
+// and the top-N cut afterwards was computed on a different pool than the one they inspected.
+// Nominating is blocked during a break too, so the owner couldn't even rescue one with a vote.
+{
+  const cidS = db.createCompetition("sweep-during-break");
+  db.addCandidates(cidS, [{ bgmId: "orph", name: "Orphan" }], "fp_owner"); // self-nominated, 0 votes
+  const orph = db.readDb().candidates.find((c) => c.competition_id === cidS && c.bgm_id === "orph")!;
+  // age it past any grace period
+  {
+    const d = db.readDb();
+    d.candidates.find((c) => c.id === orph.id)!.nominated_at = Date.now() - 86_400_000;
+    db.writeDb(d);
+  }
+  setField(cidS, { break_hours: 6, break_until: Date.now() + 6 * 3600_000, break_after: "manual" });
+  sch.runTick(true);
+  check("an un-voted nomination survives the intermission",
+    db.readDb().candidates.some((c) => c.id === orph.id));
+  // once the break ends, the sweep resumes as before
+  setField(cidS, { break_until: null, break_after: "manual" });
+  sch.runTick(true);
+  check("after the intermission the sweep runs again",
+    !db.readDb().candidates.some((c) => c.id === orph.id));
+}
+
+// ── the 公众号 reminder must not hand out a vote link as if voting were open ──
+// Replying 「投票」 during a break used to return "投票截止：…" plus a link that /api/vote answers
+// with 503. From the voter's side that is indistinguishable from the site being broken.
+{
+  const rem = await import("../lib/reminder");
+  const live = eng.getActiveCompetition()!;
+  db.setBreakHours(live.id, 6);
+  db.beginBreak(live.id, 6, "manual");
+  const onBreak = rem.buildRoundReminder({ voteUrl: "https://example.test/v?k=abc" });
+  check("reminder announces the intermission", /休赛期/.test(onBreak.text), onBreak.text.slice(0, 80));
+  check("reminder marks the link as post-resume", /恢复后点此投票/.test(onBreak.text));
+  check("hasRound is false while paused (mass-send won't nag)", onBreak.hasRound === false);
+
+  db.endBreakNow(live.id);
+  db.setFreeze(live.id, { on: true, note: "维护中" });
+  const frozen = rem.buildRoundReminder({ voteUrl: "https://example.test/v?k=abc" });
+  check("reminder announces a maintenance freeze too", /维护/.test(frozen.text));
+  check("hasRound is false while frozen", frozen.hasRound === false);
+  db.setFreeze(live.id, { on: false });
+
+  const open = rem.buildRoundReminder({ voteUrl: "https://example.test/v?k=abc" });
+  check("with nothing paused the link is presented normally",
+    /👉 点此投票/.test(open.text) && !/休赛期/.test(open.text));
+}
+
+// ── inbound WeChat values can't break out of the CDATA block ──
+{
+  const wx = await import("../lib/wx");
+  const xml = wx.textReplyXml("u]]><Evil>x</Evil>", "acct", "body]]> text");
+  check("`]]>` in an inbound value cannot terminate the CDATA section",
+    !/\]\]><Evil>/.test(xml) && /\]\]\]\]><!\[CDATA\[>/.test(xml), xml.slice(0, 100));
+}
+
 console.log(failures ? `\n${failures} failure(s)` : "\nall intermission checks passed");
 process.exit(failures ? 1 : 0);

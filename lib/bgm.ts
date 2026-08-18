@@ -51,13 +51,18 @@ const waiting: (() => void)[] = [];
 
 async function acquire(): Promise<void> {
   if (inflight < MAX_INFLIGHT) { inflight++; return; }
+  // No increment after waking: release() hands its slot straight to us (see below).
   await new Promise<void>((resolve) => waiting.push(resolve));
-  inflight++;
 }
 function release(): void {
-  inflight--;
+  // BUG FIX: this used to decrement first and then wake a waiter. The woken continuation only
+  // re-increments on a later microtask, so during that gap a fresh acquire() saw a free slot and
+  // took it too -- the cap could be exceeded by however many wakeups were in flight, which defeats
+  // the whole point of bounding requests to Bangumi. Transfer the slot instead: if someone is
+  // waiting, the count stays as-is and becomes theirs; only drop it when nobody wants it.
   const next = waiting.shift();
   if (next) next();
+  else inflight--;
 }
 
 /** Deduplicate concurrent identical requests: 40 voters importing the same series share one fetch. */

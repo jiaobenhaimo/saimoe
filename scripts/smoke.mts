@@ -89,5 +89,31 @@ let ga = 0; while ((getActiveCompetition() as any)?.group_matchday && (getActive
 startKnockout(cid2);
 check("approval → knockout handoff", getActiveCompetition()?.phase === "knockout");
 
+// ── bracket construction refuses to write a corrupt matchup ──
+// A knockout matchup with a missing side can never be resolved by voting: decide() reads a
+// candidate that isn't there and the round wedges. resolvePlayoff could produce exactly that
+// whenever the bracket had more holes than the playoff had survivors, so both layers now refuse.
+{
+  const cidP = createCompetition("bracket-guard");
+  for (let i = 1; i <= 4; i++) addCandidate(cidP, "pg" + i, "PG" + i, "", "");
+  const ids = db.readDb().candidates.filter((c: any) => c.competition_id === cidP).map((c: any) => c.id);
+  const d = db.readDb();
+  const cp = d.competitions.find((x: any) => x.id === cidP)!;
+  cp.phase = "playoff";
+  cp.playoff_slots = 3;                                  // three holes to fill…
+  cp.ko_seed_ids = [ids[0], null, null, null] as any;
+  d.matchups.push({ id: ++d.seq.matchup, competition_id: cidP, stage: "playoff", round_no: 1,
+    group_no: null, slot: 0, a_id: ids[1], b_id: ids[2], winner_id: null, decided: false });
+  db.writeDb(d);
+
+  let threw = "";
+  try { eng.resolvePlayoff(cidP); } catch (e: any) { threw = e?.message || "?"; }
+  check("resolvePlayoff refuses to fill more holes than it has survivors", /名额待填/.test(threw), threw);
+  const ko = db.readDb().matchups.filter((m: any) => m.competition_id === cidP && m.stage === "knockout");
+  check("no knockout matchup was written", ko.length === 0, `wrote ${ko.length}`);
+  check("the playoff phase is left intact and retryable",
+    (db.readDb().competitions.find((x: any) => x.id === cidP) as any).phase === "playoff");
+}
+
 console.log(failures ? `\n${failures} failure(s)` : "\nall smoke checks passed");
 process.exit(failures ? 1 : 0);

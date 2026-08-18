@@ -39,12 +39,16 @@ export function runTick(force = false): void {
     // 若定时器照旧把比赛日推进/开淘汰赛，就等于一边修一边被改。
     if (freezeOf(comp).active) return;
 
-    // garbage-collect abandoned 0-vote self-nominations while nomination is open
-    if (comp.phase === "nomination") sweepOrphanNominations(comp.id, ORPHAN_GRACE_MIN * 60_000);
-
     const brk = breakOf(comp, now);
     // 休赛期中：什么都不做，等它自然到点（停投由 /api/vote、/api/nominate 各自拦下）。
+    //
+    // BUG FIX：孤儿提名清理原本在这一行**之前**，于是休赛期里照样在删角色。那正好破坏休赛期的
+    // 前提——池子静止、运营可以放心核对：名单会在他们眼下变化，而休赛期结束后取前 N 名算的
+    // 又是变化之后的池子。而且此时提名已被拦下，被清理者连"补一票救回来"的机会都没有。
     if (brk.active) return;
+
+    // garbage-collect abandoned 0-vote self-nominations while nomination is open
+    if (comp.phase === "nomination") sweepOrphanNominations(comp.id, ORPHAN_GRACE_MIN * 60_000);
 
     const round = roundKeyOf(comp);
     /**

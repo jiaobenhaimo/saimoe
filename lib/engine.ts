@@ -810,13 +810,31 @@ export function startKnockout(cid: number) {
 
 /** Build the round-1 bracket from an ordered advancer list (index 0 = strongest). */
 function buildKnockout(db: DB, comp: Competition, cid: number, seedIds: number[]) {
+  // Validate the seed list BEFORE writing anything. A hole here (null/undefined/duplicate) used to
+  // be serialised straight into the data file as a matchup with a missing side -- votes for it can
+  // never resolve it, decide() picks a winner that doesn't exist, and the only way out is editing
+  // the JSON by hand. resolvePlayoff could produce exactly that whenever there were fewer playoff
+  // contenders than slots to fill. Fail loudly instead: the caller is an admin action, so an error
+  // message is recoverable while a corrupt bracket mid-tournament is not.
+  const n = seedIds.length;
+  if (n < 2 || (n & (n - 1)) !== 0)
+    throw new Error(`淘汰赛名额数必须是 2 的幂且至少 2（当前 ${n}），无法生成对阵。`);
+  const holes = seedIds.filter((x) => x == null || !Number.isFinite(x)).length;
+  if (holes > 0)
+    throw new Error(`淘汰赛有 ${holes} 个名额没有确定的角色，无法生成对阵。请检查加赛结果/晋级人数配置后重试。`);
+  const dupes = seedIds.length - new Set(seedIds).size;
+  if (dupes > 0)
+    throw new Error(`淘汰赛名额里有 ${dupes} 个重复的角色，无法生成对阵。`);
+  const missing = seedIds.filter((id) => !db.candidates.some((c) => c.id === id && c.competition_id === cid));
+  if (missing.length)
+    throw new Error(`淘汰赛名额里有 ${missing.length} 个角色已不在本届（可能被移除），无法生成对阵。`);
+
   const advSet = new Set(seedIds);
   for (const cd of db.candidates) if (cd.competition_id === cid && cd.group_no != null && !advSet.has(cd.id)) cd.eliminated = true;
   comp.phase = "knockout"; comp.ko_round = 1;
   comp.group_round_ends_at = null; comp.group_ends_at = null;
   comp.ko_seed_ids = null; comp.playoff_slots = null;
   comp.ko_round_ends_at = comp.round_hours ? Date.now() + comp.round_hours * 3600_000 : null;
-  const n = seedIds.length;
   const order = bracketSeedOrder(n);
   const placed = order.map((seed) => seedIds[seed - 1]);
   for (let i = 0; i < placed.length; i += 2) {
@@ -853,8 +871,14 @@ export function resolvePlayoff(cid: number) {
   rows.sort((x, y) => y.wins - x.wins || y.vf - x.vf || y.votes - x.votes || seedOf(x.id) - seedOf(y.id));
 
   const slots = comp.playoff_slots ?? 0;
+  const holes = (comp.ko_seed_ids || []).filter((x) => x == null).length;
+  // Guard before mutating: there must be at least as many playoff survivors as bracket holes to
+  // fill. Otherwise we would leave nulls in the seed list, which buildKnockout used to write out
+  // as matchups with a missing side. Throwing here keeps the playoff phase intact and reversible.
+  if (rows.length < holes)
+    throw new Error(`加赛只有 ${rows.length} 个角色，但淘汰赛还有 ${holes} 个名额待填，无法生成对阵。请调整晋级人数后重试。`);
   for (const r of rows.slice(slots)) { const c = db.candidates.find((x) => x.id === r.id); if (c) c.eliminated = true; }
-  const winners = rows.slice(0, slots).map((r) => r.id);
+  const winners = rows.slice(0, Math.max(slots, holes)).map((r) => r.id);
   const seedIds = (comp.ko_seed_ids || []).slice();
   let w = 0;
   for (let i = 0; i < seedIds.length; i++) if (seedIds[i] == null) seedIds[i] = winners[w++];

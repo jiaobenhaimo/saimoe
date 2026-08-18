@@ -229,7 +229,6 @@ export default function Page() {
   const [nomPending, setNomPending] = useState<Set<string>>(new Set()); // pool/搜索结果里正在提交的项（即时反馈）
   const [justDone, setJustDone] = useState<Set<string>>(new Set()); // 刚提交成功的项：短暂高亮一下，给一个「成功了」的确认
   const [liveMsg, setLiveMsg] = useState(""); // 读屏播报（aria-live）
-  /** 成功后的收尾：闪一下 + 轻微触感 + 播报，让点击有明确回应。 */
   // 提名后要高亮的池内角色 id（配合 jumpToCandidate 用）
   const [flashCand, setFlashCand] = useState<number | null>(null);
 
@@ -245,6 +244,7 @@ export default function Page() {
     setTimeout(() => setFlashCand((v) => (v === candidateId ? null : v)), 2600);
   }, []);
 
+  /** 成功后的收尾：闪一下 + 轻微触感 + 播报，让点击有明确回应。 */
   const settle = useCallback((key: string, msg: string) => {
     setJustDone((s2) => new Set(s2).add(key));
     setTimeout(() => setJustDone((s2) => { const n = new Set(s2); n.delete(key); return n; }), 700);

@@ -1,4 +1,4 @@
-import { readDb } from "./db";
+import { readDb, freezeOf, breakOf } from "./db";
 import { groupLabel } from "./i18n";
 import { getActiveCompetition, projectSchedule, type SchedMatch } from "./engine";
 
@@ -45,6 +45,13 @@ export function buildRoundReminder(opts: ReminderOpts = {}): { text: string; has
   const L: string[] = [];
   let hasRound = false;
 
+  // 停投期间不能照常说「投票截止：…」再附一个投票链接 —— 用户点进去只会被 503 挡回来，
+  // 看起来就是网站坏了。休赛期和维护都要先说清楚现在投不了、什么时候能投。
+  // 链接仍然照给：它同时是「领取投票会话」的入口，提前拿到，恢复后可以直接投。
+  const fz = freezeOf(comp);
+  const bk = breakOf(comp);
+  const paused = fz.active || bk.active;
+
   if (comp.phase === "group") {
     const cur = sc.group.find((d) => d.current) || sc.group[0];
     if (cur) {
@@ -87,7 +94,21 @@ export function buildRoundReminder(opts: ReminderOpts = {}): { text: string; has
     L.push(`【${name}】本届已结束，感谢参与！`);
   }
 
+  if (paused) {
+    L.push("");
+    if (bk.active) {
+      L.push("⏸ 本轮投票已结束，正在休赛期核对票数。");
+      if (bk.until) L.push(`预计 ${fmt(bk.until)} 开始下一轮。`);
+    } else {
+      L.push("⏸ " + (fz.note || "系统维护中，暂停投票。"));
+      if (fz.to) L.push(`预计 ${fmt(fz.to)} 恢复。`);
+    }
+  }
+
   L.push("");
-  L.push(opts.voteUrl ? `👉 点此投票：${opts.voteUrl}` : "👉 在本公众号回复「投票」获取你的专属投票链接");
-  return { text: L.join("\n"), hasRound, phase: comp.phase };
+  L.push(opts.voteUrl
+    ? (paused ? `👉 恢复后点此投票：${opts.voteUrl}` : `👉 点此投票：${opts.voteUrl}`)
+    : "👉 在本公众号回复「投票」获取你的专属投票链接");
+  // hasRound 表示「现在有一轮可投」——停投期间为 false，群发定时任务据此不会催票
+  return { text: L.join("\n"), hasRound: hasRound && !paused, phase: comp.phase };
 }

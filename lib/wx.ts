@@ -31,7 +31,11 @@ export function parseXml(xml: string): WxMsg {
   };
 }
 
-const cdata = (s: string) => `<![CDATA[${s}]]>`;
+// `]]>` inside a CDATA section terminates it, so any value containing that sequence would let the
+// rest of the string be parsed as markup. `toUser`/`fromUser` come straight off the inbound XML and
+// the body embeds the competition title (admin-editable), so none of the three are trustworthy
+// enough to interpolate raw. Split the sequence so it can never close the block.
+const cdata = (s: string) => `<![CDATA[${String(s ?? "").replace(/\]\]>/g, "]]]]><![CDATA[>")}]]>`;
 
 /** Build a passive text reply XML (swaps to/from). */
 export function textReplyXml(toUser: string, fromUser: string, content: string): string {
