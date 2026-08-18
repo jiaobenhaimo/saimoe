@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminOk } from "@/lib/adminauth";
-import { ensureSchema, readAudit } from "@/lib/db";
+import { ensureSchema, readAudit, listJpFlagged } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition } from "@/lib/engine";
 import { detectAnomalies, projectTimeline, liveTallies, dataGaps } from "@/lib/observe";
@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
   ensureSchema();
   const comp = getActiveCompetition();
   const audit = readAudit(200);
-  if (!comp) return NextResponse.json({ competition: null, flags: [], thresholds: {}, totals: { votes: 0, matches: 0, withMeta: 0 }, timeline: [], audit });
+  if (!comp) return NextResponse.json({ competition: null, flags: [], thresholds: {}, totals: { votes: 0, matches: 0, withMeta: 0 }, timeline: [], audit, jpFlagged: [] });
   // 可疑票溯源：带 by/key 时只回这个身份的逐票明细，供运营点开查看。
   // ip64=1 时把 key 按 /64 归一化匹配（同一宽带 IPv6 后缀频繁变化，/64 前缀才是稳定身份）。
   const by = req.nextUrl.searchParams.get("by");
@@ -39,5 +39,7 @@ export async function GET(req: NextRequest) {
   const timeline = projectTimeline(comp.id);
   const tallies = liveTallies(comp.id);
   const gaps = dataGaps(comp.id);
-  return NextResponse.json({ competition: { id: comp.id, phase: comp.phase }, flags, thresholds, totals, timeline, tallies, gaps, audit });
+  // 日本产地复核队列：提名时明确没查到「日本」标签的角色（用户已被告知"管理员会复核"）
+  const jpFlagged = listJpFlagged(comp.id);
+  return NextResponse.json({ competition: { id: comp.id, phase: comp.phase }, flags, thresholds, totals, timeline, tallies, gaps, audit, jpFlagged });
 }

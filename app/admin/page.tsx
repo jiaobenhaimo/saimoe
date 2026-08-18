@@ -684,6 +684,44 @@ export default function Admin() {
       {/* ── 内容管理 ── */}
       {comp && (<div className="admin-section">🗂️ 内容管理</div>)}
 
+      {/* ── 日本产地复核队列 ──────────────────────────────────────────────────
+          提名时服务端查角色关联作品是否带「日本」标签，明确没查到的会入池但标记「待复核」，
+          并对提名者显示「已提交，管理员会复核」。这个面板就是那句承诺的落地处：
+          放行 = 判定合规（角色留在池里，去掉标记）；移除 = 判定确实不是日本作品。
+          注意队列里**不包含**「查不到」的角色 —— 上游超时不是证据，不该占用人工复核。 */}
+      {comp && obs?.jpFlagged && obs.jpFlagged.length > 0 && (
+        <div className="card wide">
+          <h3>产地复核 <span className="gstatus" style={{ color: "var(--danger)" }}>{obs.jpFlagged.length} 个待复核</span></h3>
+          <p className="hint">这些角色的关联作品（前三部）里**没有**查到「日本」标签，已按规则先入池并提示提名者「管理员会复核」。请逐个核对后放行或移除。<b>放行</b>后角色正常参赛且不再显示标记；<b>移除</b>会连带删除它已获得的提名票。{" "}<a onClick={loadObs}>刷新</a></p>
+          <div className="pool-admin">
+            {obs.jpFlagged.map((r: any) => (
+              <div className="prow" key={r.id}>
+                <div className="meta">
+                  <div className="nm">{r.nameCn || r.name}</div>
+                  <div className="sub">
+                    {r.bgmId}{r.subjectName ? " · " + r.subjectName : ""} · 已获 {r.votes} 提名票
+                    {r.reason ? <><br /><span style={{ opacity: .8 }}>判定依据：{r.reason}</span></> : null}
+                  </div>
+                </div>
+                <a className="hint" style={{ whiteSpace: "nowrap" }} href={`https://bgm.tv/character/${String(r.bgmId).replace(/^c/, "")}`} target="_blank" rel="noreferrer">在 bangumi 查看 ↗</a>
+                <button className="btn" disabled={busy} onClick={() => act("jp_clear", { ids: [r.id] })}>放行</button>
+                <button className="btn danger" disabled={busy || phase !== "nomination"}
+                  title={phase !== "nomination" ? "仅在提名阶段可移除角色" : "移除该角色及其提名票"}
+                  onClick={() => { if (confirm(`确认移除「${r.nameCn || r.name}」？它已获得的 ${r.votes} 张提名票会一并删除。`)) act("jp_remove", { ids: [r.id] }); }}>移除</button>
+              </div>
+            ))}
+          </div>
+          {obs.jpFlagged.length > 1 && (
+            <div style={{ marginTop: 10 }}>
+              <button className="btn" disabled={busy}
+                onClick={() => { if (confirm(`确认一次性放行全部 ${obs.jpFlagged.length} 个角色？`)) act("jp_clear", { ids: obs.jpFlagged.map((x: any) => x.id) }); }}>
+                全部放行（{obs.jpFlagged.length}）
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {comp && obs?.gaps && (
         <div className="card wide">
           <h3>资料缺失盘点 {obs.gaps.rows.length > 0

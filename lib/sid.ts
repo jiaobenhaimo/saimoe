@@ -8,7 +8,13 @@ import crypto from "node:crypto";
 //  and the per-IP limit still applies.)
 
 function secret(): string {
-  return process.env.SESSION_SECRET || process.env.ADMIN_TOKEN || "dev-insecure-secret-change-me";
+  const s = process.env.SESSION_SECRET || process.env.ADMIN_TOKEN || "";
+  if (s) return s;
+  // Falling back to a hardcoded string in production would mean anyone who read this repo could
+  // forge a signed sid cookie. Fail loudly instead of quietly issuing forgeable sessions.
+  if (process.env.NODE_ENV === "production")
+    throw new Error("saimoe: SESSION_SECRET (or ADMIN_TOKEN) must be set in production — refusing to sign cookies with a known default.");
+  return "dev-insecure-secret-change-me";
 }
 function sign(raw: string): string {
   return crypto.createHmac("sha256", secret()).update(raw).digest("base64url");

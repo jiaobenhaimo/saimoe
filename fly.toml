@@ -23,6 +23,11 @@ primary_region = 'nrt'
   DATA_DIR = '/data'            # live JSON store — on the persistent volume
   BACKUP_DIR = '/data/backups'  # snapshots; lib/db.ts auto-restores from the newest valid one
   BACKUP_KEEP = '48'
+  # Fly's edge sets this to the true client IP and always overwrites it, unlike the first
+  # x-forwarded-for entry (which the client can pre-seed). See lib/ip.ts.
+  # NOTE: turning this on changes how device_bucket is hashed, so new buckets won't be
+  # comparable with ones already stored -- set it BETWEEN tournaments, not during one.
+  PROXY_IP_HEADER = 'Fly-Client-IP'
   # Secrets go in `fly secrets set`, never here (this file is committed):
   #   ADMIN_TOKEN, SESSION_SECRET, PUBLIC_BASE_URL, and WX_TOKEN / WX_VOTE_GATE if using the 公众号 gate.
 

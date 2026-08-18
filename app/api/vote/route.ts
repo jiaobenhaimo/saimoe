@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema, toggleNomination, castMatchVote, castApprovalVote, resolveCandidate, freezeState, voterSanction, roundKeyOf } from "@/lib/db";
+import { ensureSchema, readDbRO, toggleNomination, castMatchVote, castApprovalVote, resolveCandidate, freezeState, voterSanction, roundKeyOf } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getVoterId, getDeviceBucket } from "@/lib/voter";
 import { getSid } from "@/lib/sid";
 import { getActiveCompetition } from "@/lib/engine";
 import { rateLimited } from "@/lib/ratelimit";
 import { verifyToken, gateOn, VOTER_COOKIE } from "@/lib/wxsession";
-
-function clientIp(req: NextRequest): string {
-  return (req.headers.get("x-forwarded-for") || "").split(",")[0]?.trim() || "unknown";
-}
+import { clientIp } from "@/lib/ip";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +17,7 @@ export async function POST(req: NextRequest) {
     ensureSchema();
     const vid = await getVoterId();
     const bucket = await getDeviceBucket();
-    const ip = clientIp(req);
+    const ip = clientIp(req.headers);
     const meta = { bucket, ip };
 
     // WeChat gate (admin-toggleable): only users who opened a per-user link from the 公众号
@@ -43,16 +40,20 @@ export async function POST(req: NextRequest) {
     if (rateLimited("vote:" + ip, strict ? 120 : 1000, 60_000))
       return NextResponse.json({ error: "该网络投票过于密集，请稍后再试。" }, { status: 429 });
 
-    const comp = getActiveCompetition();
+    // One snapshot for all pre-flight checks. Previously each of getActiveCompetition,
+    // freezeState, voterSanction and resolveCandidate deep-cloned the entire data file, so a
+    // single vote cost five clones before it wrote anything.
+    const snap = readDbRO();
+    const comp = getActiveCompetition(snap);
     if (!comp) return NextResponse.json({ error: "没有进行中的比赛。" }, { status: 400 });
 
     // 维护冻结：停投期间一律不写票，admin 可安心改数据
-    const fz = freezeState(comp.id);
+    const fz = freezeState(comp.id, Date.now(), snap);
     if (fz.active) return NextResponse.json({ error: fz.note || "系统维护中，暂停投票，请稍后再来。", frozen: true }, { status: 503 });
 
     // 本轮被作废过票的身份，本轮不得再投（换 voter_id 也拦得住：设备标识已含 IP）
     const round = roundKeyOf(comp);
-    const sanc = voterSanction({ voterId, bucket: meta.bucket }, round);
+    const sanc = voterSanction({ voterId, bucket: meta.bucket }, round, snap);
     if (sanc?.blockedThisRound)
       return NextResponse.json({ error: `你在本轮有 ${sanc.count} 张票因异常投票被作废，本轮已不能再投票。下一轮可正常参与。`, sanctioned: true }, { status: 403 });
 

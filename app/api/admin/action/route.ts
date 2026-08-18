@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminOk } from "@/lib/adminauth";
-import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, editCandidate, mergeCandidates, setBlocklist, setFreeze, clearFreezePlan, invalidateVoteIds } from "@/lib/db";
+import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, editCandidate, mergeCandidates, setBlocklist, setFreeze, clearFreezePlan, invalidateVoteIds, clearJpFlag, listJpFlagged } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline, setPace, setGroupDayCap, resolvePlayoff, canStartKnockout } from "@/lib/engine";
 
@@ -136,6 +136,29 @@ export async function POST(req: NextRequest) {
       rec("更新黑名单");
       return NextResponse.json({ ok: true, message: "黑名单已保存。" });
     }
+    // ── 日本产地复核（对应提名时给用户的「管理员会复核」提示）──
+    if (action === "jp_clear") {
+      const ids: number[] = Array.isArray(body.ids) ? body.ids.map(Number).filter(Boolean) : [Number(body.candidateId)].filter(Boolean);
+      if (!ids.length) return NextResponse.json({ error: "缺少要放行的角色。" }, { status: 400 });
+      let n = 0;
+      for (const id of ids) if (clearJpFlag(comp.id, id)) n++;
+      rec(`产地复核：放行 ${n} 个角色`);
+      return NextResponse.json({ ok: true, cleared: n, message: `已放行 ${n} 个角色，不再显示待复核。` });
+    }
+    if (action === "jp_remove") {
+      // 复核后判定确实不是日本作品 → 直接移出提名池（连带它的提名票）
+      const ids: number[] = Array.isArray(body.ids) ? body.ids.map(Number).filter(Boolean) : [Number(body.candidateId)].filter(Boolean);
+      if (!ids.length) return NextResponse.json({ error: "缺少要移除的角色。" }, { status: 400 });
+      if (comp.phase !== "nomination") return NextResponse.json({ error: "仅在提名阶段可移除角色。" }, { status: 400 });
+      let n = 0;
+      for (const id of ids) if (removeCandidate(comp.id, id)) n++;
+      rec(`产地复核：移除 ${n} 个非日本作品角色`);
+      return NextResponse.json({ ok: true, removed: n, message: `已移除 ${n} 个角色。` });
+    }
+    if (action === "jp_list") {
+      return NextResponse.json({ ok: true, flagged: listJpFlagged(comp.id) });
+    }
+
     if (action === "undo") { const message = undoLastTransition(comp.id); rec(`撤回上一步：${message}`); return NextResponse.json({ ok: true, message }); }
     if (action === "resettle") { const message = resettleCurrentRound(comp.id); rec(`重算本轮：${message}`); return NextResponse.json({ ok: true, message }); }
     if (action === "invalidate_votes") {

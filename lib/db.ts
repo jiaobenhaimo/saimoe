@@ -65,6 +65,19 @@ export interface Candidate {
   parent_id?: number | null;
   // epoch ms a *user* self-nominated this (null for admin/subject-imported bulk → never swept)
   nominated_at?: number | null;
+  /** 日本产地校验结果（规则见 rules.s5.jp）。字段**可缺失**：老数据（本次升级前入池的角色）
+   *  一律视为 "legacy" —— 既不打「待复核」标记，也不进复核队列，避免升级瞬间几百个角色
+   *  全被标成可疑。只有升级后新提名/新导入的角色才会带上真实判定值。
+   *   ok      = 关联作品里查到「日本」标签
+   *   flagged = 明确没查到 → 已入池，但等管理员复核
+   *   unknown = 上游查不通（网络/限流）→ 不打扰用户，也不进复核队列
+   *   cleared = 管理员复核后判定合规（等同 ok，但记录「人工确认过」） */
+  jp_status?: "ok" | "flagged" | "unknown" | "cleared" | null;
+  /** 判定依据（查了哪几部作品 / 为什么查不了），给管理员复核时看。 */
+  jp_reason?: string | null;
+  jp_checked_at?: number | null;
+  /** 复核处理时间（cleared 时写入）。 */
+  jp_reviewed_at?: number | null;
 }
 export interface Matchup {
   id: number; competition_id: number; stage: "group" | "knockout" | "playoff"; round_no: number;
@@ -234,6 +247,35 @@ export function readDb(): DB {
     return clone;
   }
 }
+/**
+ * READ-ONLY view of the store — the cached object itself, WITHOUT the deep clone.
+ *
+ * Why this exists: `readDb()` structuredClone()s the whole file on every call so callers can
+ * mutate freely. Read paths never mutate, and they were paying that clone several times per
+ * request (e.g. GET /api/state used to clone in getState, again in commentCounts, again in
+ * voterSanction). On a tournament-sized file that dominated the request.
+ *
+ * CONTRACT: the returned object and everything reachable from it MUST NOT be mutated — it is
+ * the process-wide cache. Deriving new arrays/objects is fine (`filter`, `map`, spread, and
+ * `sort` on an array you just created), but never assign to a field, never `sort()` a live
+ * `db.*` array in place, and never pass the result to writeDb(). If a code path might mutate,
+ * use readDb() instead. Audited callers: getState / getActiveCompetition / commentCounts /
+ * listComments / voterSanction / freezeState / getWxGate / listAudit / the observe+fraud reports.
+ */
+export function readDbRO(): DB {
+  try {
+    const st = fs.statSync(FILE);
+    if (cache && cache.mtimeMs === st.mtimeMs) return cache.db;
+    const db = normalize(JSON.parse(fs.readFileSync(FILE, "utf8")));
+    backfillVoteIds(db); // in-memory only; persisted by whichever write comes next
+    cache = { mtimeMs: st.mtimeMs, db };
+    return db;
+  } catch {
+    // Missing/corrupt file: fall back to the cloning path, which handles quarantine + restore.
+    return readDb();
+  }
+}
+
 /** Persist the store atomically (write temp file, then rename), and refresh the cache.
  *
  *  Lost-update guard: every mutation is read-modify-write over the whole file. Today that's
@@ -313,11 +355,105 @@ export function deleteCompetition(cid: number): void {
 
 /** Insert a candidate; returns false if (competition, bgm_id) already exists. */
 export function addCandidate(cid: number, bgmId: string, name: string, nameCn: string, image: string, subjectName = "", addedBy = "", nameEn = "", subjectNameJa = "", subjectNameEn = ""): boolean {
+  return addCandidates(cid, [{ bgmId, name, nameCn, image, subjectName, nameEn, subjectNameJa, subjectNameEn }], addedBy).added === 1;
+}
+
+/** One row to insert. Field names mirror the client payload; jpStatus/jpReason are optional
+ *  (omit them and the candidate simply carries no origin-check verdict). */
+export interface NewCandidate {
+  bgmId: string; name: string; nameCn?: string; image?: string;
+  subjectName?: string; nameEn?: string; subjectNameJa?: string; subjectNameEn?: string;
+  jpStatus?: "ok" | "flagged" | "unknown" | null; jpReason?: string | null;
+}
+
+/**
+ * Insert many candidates in ONE read-modify-write.
+ *
+ * The previous per-character addCandidate() meant a 60-character subject import did 60 whole-file
+ * read → clone → stringify → fsync cycles, which is what made importing a series feel slow and
+ * hammered the disk. Deduping happens inside the single pass, both against existing rows and
+ * within the incoming batch.
+ */
+export function addCandidates(cid: number, rows: NewCandidate[], addedBy = ""): { added: number; skipped: number } {
+  if (!rows.length) return { added: 0, skipped: 0 };
   const db = readDb();
-  const dup = db.candidates.find((c) => c.competition_id === cid && (c.bgm_id === bgmId || (c.aliases || []).includes(bgmId)));
-  if (dup) return false; // 已存在，或曾作为别名被合并进某个角色
-  const id = ++db.seq.candidate;
-  db.candidates.push({ id, competition_id: cid, bgm_id: bgmId, name, name_cn: nameCn || null, image: image || null, group_no: null, seed: null, eliminated: false, subject_name: subjectName || null, subject_name_ja: subjectNameJa || null, subject_name_en: subjectNameEn || null, added_by: addedBy || null, name_en: nameEn || null, aliases: [], parent_id: null, nominated_at: addedBy ? Date.now() : null });
+  const taken = new Set<string>();
+  for (const c of db.candidates) {
+    if (c.competition_id !== cid) continue;
+    taken.add(c.bgm_id);
+    for (const a of c.aliases || []) taken.add(a);
+  }
+  const now = Date.now();
+  let added = 0, skipped = 0;
+  for (const r of rows) {
+    const bgmId = String(r.bgmId || "").trim();
+    const name = String(r.name || "").trim();
+    if (!bgmId || !name || taken.has(bgmId)) { skipped++; continue; }
+    taken.add(bgmId);
+    const id = ++db.seq.candidate;
+    db.candidates.push({
+      id, competition_id: cid, bgm_id: bgmId, name,
+      name_cn: (r.nameCn || "").trim() || null, image: (r.image || "").trim() || null,
+      group_no: null, seed: null, eliminated: false,
+      subject_name: (r.subjectName || "").trim() || null,
+      subject_name_ja: (r.subjectNameJa || "").trim() || null,
+      subject_name_en: (r.subjectNameEn || "").trim() || null,
+      added_by: addedBy || null, name_en: (r.nameEn || "").trim() || null,
+      aliases: [], parent_id: null, nominated_at: addedBy ? now : null,
+      jp_status: r.jpStatus ?? null, jp_reason: r.jpReason ?? null,
+      jp_checked_at: r.jpStatus ? now : null, jp_reviewed_at: null,
+    });
+    added++;
+  }
+  if (added) writeDb(db);
+  return { added, skipped };
+}
+
+/** 日本产地复核队列：只列出**明确**没查到「日本」标签、且尚未被管理员放行的角色。
+ *  字段缺失的老数据不会出现在这里（见 Candidate.jp_status 注释）。 */
+export function listJpFlagged(cid: number): {
+  id: number; bgmId: string; name: string; nameCn: string | null; image: string | null;
+  subjectName: string | null; reason: string | null; at: number | null; votes: number;
+}[] {
+  const db = readDbRO();
+  const votes = new Map<number, number>();
+  for (const v of db.nominationVotes) if (v.competition_id === cid) votes.set(v.candidate_id, (votes.get(v.candidate_id) || 0) + 1);
+  return db.candidates
+    .filter((c) => c.competition_id === cid && c.jp_status === "flagged")
+    .map((c) => ({
+      id: c.id, bgmId: c.bgm_id, name: c.name, nameCn: c.name_cn, image: c.image,
+      subjectName: c.subject_name ?? null, reason: c.jp_reason ?? null, at: c.jp_checked_at ?? null,
+      votes: votes.get(c.id) || 0,
+    }))
+    .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+}
+
+/** How many candidates are awaiting origin review (drives the admin badge). */
+export function jpFlaggedCount(cid: number): number {
+  return readDbRO().candidates.filter((c) => c.competition_id === cid && c.jp_status === "flagged").length;
+}
+
+/** 管理员复核：放行（cleared）。移除走既有的 removeCandidate。 */
+export function clearJpFlag(cid: number, candidateId: number): boolean {
+  const db = readDb();
+  const c = db.candidates.find((x) => x.id === candidateId && x.competition_id === cid);
+  if (!c) return false;
+  c.jp_status = "cleared";
+  c.jp_reviewed_at = Date.now();
+  writeDb(db);
+  return true;
+}
+
+/** Record an origin-check verdict for a candidate that already exists (e.g. re-checked later). */
+export function setJpStatus(cid: number, candidateId: number, status: "ok" | "flagged" | "unknown", reason?: string | null): boolean {
+  const db = readDb();
+  const c = db.candidates.find((x) => x.id === candidateId && x.competition_id === cid);
+  if (!c) return false;
+  // never silently un-clear an admin decision
+  if (c.jp_status === "cleared") return true;
+  c.jp_status = status;
+  c.jp_reason = reason ?? null;
+  c.jp_checked_at = Date.now();
   writeDb(db);
   return true;
 }
@@ -458,8 +594,8 @@ export function freezeOf(c: Competition | undefined, now = Date.now()): FreezeIn
   const inWindow = from != null && now >= from && (to == null || now < to);
   return { active: manual || inWindow, manual, from, to, note: c?.freeze_note || "", upcoming: from != null && now < from };
 }
-export function freezeState(cid: number, now = Date.now()): FreezeInfo {
-  const c = readDb().competitions.find((x) => x.id === cid);
+export function freezeState(cid: number, now = Date.now(), snap?: DB): FreezeInfo {
+  const c = (snap ?? readDbRO()).competitions.find((x) => x.id === cid);
   return freezeOf(c, now);
 }
 /** 设置冻结（admin）。 */
@@ -529,8 +665,9 @@ export function nominationTally(db: DB, cid: number): { total: Map<number, numbe
 
 /** item3：读黑名单。 */
 export function getBlocklist(cid: number): { tags: string[]; subjects: string[] } {
-  const c = readDb().competitions.find((x) => x.id === cid);
-  return { tags: c?.blocked_tags || [], subjects: c?.blocked_subjects || [] };
+  const c = readDbRO().competitions.find((x) => x.id === cid);
+  // copy: readDbRO hands back the shared cache, and callers must not be able to mutate it
+  return { tags: [...(c?.blocked_tags || [])], subjects: [...(c?.blocked_subjects || [])] };
 }
 /** item3：写黑名单（admin）。空行/重复自动清理。 */
 export function setBlocklist(cid: number, tags: string[], subjects: string[]): void {
@@ -559,9 +696,10 @@ export function isBlocked(cid: number, subjectName: string, tags: string[] = [])
 
 /** item1：把任意标识符（内部 id、bangumi id 如 "c123"、或合并留下的别名）解析成候选角色。
  *  投票接口对外以 bangumi id 为准，合并过的角色用旧 id 也能投到同一个人。 */
+/** Look up a candidate by numeric id or bangumi id. NOTE: the returned object belongs to the
+ *  read-only cache — read from it, never assign to it. Callers want `.id`. */
 export function resolveCandidate(cid: number, ref: string | number): Candidate | null {
-  const db = readDb();
-  return resolveIn(db, cid, ref);
+  return resolveIn(readDbRO(), cid, ref);
 }
 function resolveIn(db: DB, cid: number, ref: string | number): Candidate | null {
   const list = db.candidates.filter((c) => c.competition_id === cid);
@@ -688,8 +826,8 @@ function addCommentOnce(cid: number, matchupId: number, voterId: string, name: s
   writeDb(db);
   return { ok: true, comment: c };
 }
-export function listComments(cid: number, matchupId: number, limit = 100): Comment[] {
-  const db = readDb();
+export function listComments(cid: number, matchupId: number, limit = 100, snap?: DB): Comment[] {
+  const db = snap ?? readDbRO();
   return db.comments
     .filter((c) => c.competition_id === cid && c.matchup_id === (matchupId || 0))
     .sort((a, b) => b.created_at - a.created_at)
@@ -700,8 +838,8 @@ export function deleteComment(cid: number, commentId: number): void {
   db.comments = db.comments.filter((c) => !(c.competition_id === cid && c.id === commentId));
   writeDb(db);
 }
-export function commentCounts(cid: number): Record<number, number> {
-  const db = readDb();
+export function commentCounts(cid: number, snap?: DB): Record<number, number> {
+  const db = snap ?? readDbRO();
   const out: Record<number, number> = {};
   for (const c of db.comments) if (c.competition_id === cid) out[c.matchup_id] = (out[c.matchup_id] || 0) + 1;
   return out;
@@ -720,7 +858,7 @@ export function logAudit(action: string, summary: string, phase: string | null):
 
 /** Read the audit trail newest-first (optionally limited). */
 export function readAudit(limit = 200): AuditEntry[] {
-  const db = readDb();
+  const db = readDbRO();
   return db.auditLog.slice(-limit).reverse();
 }
 
@@ -780,7 +918,7 @@ export function listVotesBy(cid: number, by: "bucket" | "ip" | "voter" | "ip64",
   target: string; detail: string; voterId: string; bucket: string | null; ip: string | null;
 }[] {
   if (!key) return [];
-  const db = readDb();
+  const db = readDbRO();
   const match = voteMatcher(by, key);
   const nameOf = (id: number) => {
     const c = db.candidates.find((x) => x.id === id);
@@ -863,9 +1001,9 @@ function recordSanctions(db: DB, cid: number, victims: { voter_id: string; devic
 }
 
 /** 这个身份是否被作废过票（本人提示用）。按 voter_id 或设备指纹匹配，不按 IP。 */
-export function voterSanction(who: { voterId?: string | null; bucket?: string | null }, round?: string):
+export function voterSanction(who: { voterId?: string | null; bucket?: string | null }, round?: string, snap?: DB):
   { count: number; at: number; rounds: string[]; blockedThisRound: boolean } | null {
-  const list = readDb().sanctions || [];
+  const list = (snap ?? readDbRO()).sanctions || [];
   if (!list.length) return null;
   let count = 0, at = 0; const rounds = new Set<string>(); let blocked = false;
   for (const s of list) {
@@ -893,7 +1031,7 @@ export function planSmartInvalidate(cid: number, by: "bucket" | "ip" | "voter" |
 } {
   const empty = { ids: [], perTarget: [], perIdentity: [], zeroed: [] };
   if (!key) return empty;
-  const db = readDb();
+  const db = readDbRO();
   const rows = listVotesBy(cid, by, key);
   if (!rows.length) return empty;
 

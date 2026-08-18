@@ -403,6 +403,17 @@ body { font-size: 15px; line-height: 1.6; }
 .sched-pairs .pair b { color: var(--rose); font-weight: 800; }
 .sched-pairs .tbd { font-size: 13px; color: var(--muted); font-style: italic; }
 
+/* ─────────── 「待复核」标记（日本产地校验没通过、等管理员复核的角色）───────────
+   提名池与管理台共用。刻意做得低调：这不是错误，角色照样能被投票，只是标注一下状态。 */
+.tag.warn {
+  display: inline-block; margin-left: 6px; vertical-align: 1px;
+  font-size: 11px; font-weight: 700; line-height: 1.6;
+  padding: 0 7px; border-radius: 999px; white-space: nowrap;
+  color: var(--rose-deep); background: color-mix(in srgb, var(--rose-deep) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--rose-deep) 30%, transparent);
+  cursor: help;
+}
+
 /* ─────────── admin section headers ─────────── */
 .admin-section { margin: 26px 0 4px; padding-bottom: 6px; border-bottom: 2px solid var(--line); font-size: 15px; font-weight: 900; letter-spacing: .02em; color: var(--ink); display: flex; align-items: center; gap: 8px; }
 .admin-section:first-of-type { margin-top: 8px; }

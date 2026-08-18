@@ -3,11 +3,18 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "3000:80"          # host 3000 → container 80
+      # BUG FIX: this used to map to container port 80, but the Dockerfile sets PORT=8080 and the
+      # standalone server binds that -- so nothing listened on :80 and localhost:3000 was dead,
+      # i.e. the README's "one command to run it" never worked. Map to 8080 instead.
+      - "3000:8080"        # host 3000 → container 8080
     environment:
       API_ENABLED: "true"
       ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me}
-      DATA_DIR: /data        # live JSON store lives here
+      # Signs the sid / WeChat-link cookies. Without it lib/sid.ts falls back to ADMIN_TOKEN, and
+      # if that is still the "change-me" default the signatures are guessable. Set a long random
+      # string in .env before exposing the site.
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      DATA_DIR: /data        # live JSON store lives here (头像磁盘缓存默认也在 $DATA_DIR/imgcache)
       BACKUP_DIR: /mnt/sml-data   # snapshots land here (NAS / persistent mount)
       BACKUP_KEEP: "48"      # keep last 48 snapshots (~24h at 30-min interval)
     volumes:

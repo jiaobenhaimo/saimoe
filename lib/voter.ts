@@ -59,7 +59,13 @@ export async function getDeviceBucket(): Promise<string | null> {
   const h = await headers();
   const raw = h.get("x-db");
   if (!raw || !/^[a-f0-9]{16,128}$/.test(raw)) return null;
-  const ip = (h.get("x-forwarded-for") || "").split(",")[0]?.trim() || h.get("x-real-ip") || "";
+  const { clientIp } = await import("./ip");
+  // NOTE the "unknown" → "" mapping: clientIp() returns the string "unknown" when no proxy header
+  // is present, but the buckets already stored in an in-flight tournament were hashed with an
+  // EMPTY string in that case. Keeping the old input means new buckets stay comparable with old
+  // ones, so the /admin duplicate-device signals don't go blind across an upgrade.
+  const resolved = clientIp(h);
+  const ip = resolved === "unknown" ? "" : resolved;
   const crypto = await import("node:crypto");
   return crypto.createHash("sha256").update(raw + "|" + ip).digest("hex");
 }

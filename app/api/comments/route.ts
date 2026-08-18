@@ -5,13 +5,11 @@ import { getVoterId } from "@/lib/voter";
 import { getActiveCompetition } from "@/lib/engine";
 import { rateLimited } from "@/lib/ratelimit";
 import { gateOn } from "@/lib/wxsession";
+import { clientIp } from "@/lib/ip";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function clientIp(req: NextRequest): string {
-  return (req.headers.get("x-forwarded-for") || "").split(",")[0]?.trim() || "unknown";
-}
 
 export async function GET(req: NextRequest) {
   if (!apiEnabled()) return NextResponse.json({ error: "服务 API 已禁用。", disabled: true }, { status: 503 });
@@ -27,7 +25,7 @@ export async function POST(req: NextRequest) {
     if (!apiEnabled()) return NextResponse.json({ error: "服务 API 已禁用。", disabled: true }, { status: 503 });
     ensureSchema();
     const vid = await getVoterId();
-    const ip = clientIp(req);
+    const ip = clientIp(req.headers);
     // 反刷：每个身份每分钟最多 10 条；IP 上限仅作粗粒度防滥用，门禁关闭时放宽（NAT 共享）
     if (rateLimited("cmt:" + vid, 10, 60_000) || rateLimited("cmtip:" + ip, gateOn() ? 20 : 120, 60_000))
       return NextResponse.json({ error: "评论太频繁，请稍后再试。" }, { status: 429 });

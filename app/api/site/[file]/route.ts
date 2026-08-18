@@ -14,6 +14,15 @@ const TYPES: Record<string, string> = {
   ".webp": "image/webp", ".gif": "image/gif", ".svg": "image/svg+xml",
 };
 
+// SVG is served here, and an SVG loaded from our own origin can execute script -- so it would run
+// with access to this site's cookies. The files are operator-supplied (they sit on the server's
+// data volume, not uploaded by users), so this is defence in depth rather than a live hole, but
+// it costs nothing: forbid sniffing and forbid the document from loading or running anything.
+const SAFE_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+};
+
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ file: string }> }) {
   if (!apiEnabled()) return new NextResponse("disabled", { status: 503 });
   const { file } = await ctx.params;
@@ -32,7 +41,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ file: stri
     const buf = fs.readFileSync(path.join(siteDir(), name));
     return new NextResponse(new Uint8Array(buf), {
       status: 200,
-      headers: { "Content-Type": type, "Cache-Control": "public, max-age=3600" },
+      headers: { "Content-Type": type, "Cache-Control": "public, max-age=3600", ...SAFE_HEADERS },
     });
   } catch {
     return new NextResponse("not found", { status: 404 });

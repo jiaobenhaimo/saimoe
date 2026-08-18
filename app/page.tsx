@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { t, roundLabelT, LANGS, groupLabel, type Lang } from "@/lib/i18n";
 
-type Slim = { id: number; name: string; nameCn: string | null; nameEn?: string | null; image: string | null; subjectName?: string | null; subjectNameJa?: string | null; subjectNameEn?: string | null };
+type Slim = { id: number; name: string; nameCn: string | null; nameEn?: string | null; image: string | null; subjectName?: string | null; subjectNameJa?: string | null; subjectNameEn?: string | null; jpPending?: boolean };
 type PoolItem = Slim & { votes: number; voted: boolean; mine: boolean };
 type Match = {
   id: number; stage: string; round: number; group: number | null; slot: number;
@@ -77,33 +77,9 @@ async function fetchT(url: string, opts: RequestInit = {}, ms = 10_000): Promise
   finally { clearTimeout(timer); }
 }
 
-/** 直连 Bangumi 与「经本站代理」两条通道同时发，取先成功的那条。
- *  慢网络/跨域被拦时不再等到超时才失败，也不必让用户手动切换。 */
-async function firstOk<T>(tasks: (() => Promise<T>)[]): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    let left = tasks.length, done = false, lastErr: any = null;
-    if (!left) { reject(new Error("no channel")); return; }
-    tasks.forEach((run) => {
-      run().then((v) => { if (!done) { done = true; resolve(v); } })
-        .catch((e) => { lastErr = e; if (--left === 0 && !done) reject(lastErr); });
-    });
-  });
-}
-/** 搜索/取详情统一入口：direct = 浏览器直连；proxy = /api/bgm 代理。
- *  第一次调用两条通道赛跑并「记住赢家」，之后只走赢家（失败才切另一条）。
- *  这样既拿到快的那条，又不会每次都双倍打 Bangumi——上游限流本身就是搜不出来的原因之一。 */
-let bgmChannel: "direct" | "proxy" | null = null;
-async function bgmJson(direct: () => Promise<Response>, proxyQS: string, ms = 12_000): Promise<any> {
-  const asJson = async (r: Response) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); };
-  const viaDirect = async () => asJson(await direct());
-  const viaProxy = async () => asJson(await fetchT("/api/bgm?" + proxyQS, { cache: "no-store" }, ms));
-  if (bgmChannel === "direct") { try { return await viaDirect(); } catch { bgmChannel = "proxy"; return viaProxy(); } }
-  if (bgmChannel === "proxy") { try { return await viaProxy(); } catch { bgmChannel = "direct"; return viaDirect(); } }
-  return firstOk<any>([
-    async () => { const v = await viaDirect(); bgmChannel ??= "direct"; return v; },
-    async () => { const v = await viaProxy(); bgmChannel ??= "proxy"; return v; },
-  ]);
-}
+// 注：以前这里有一套「浏览器直连 Bangumi ↔ 走本站代理」双通道赛跑的逻辑（firstOk / bgmJson）。
+// 现在所有 Bangumi 访问都在服务端完成（lib/bgm.ts），浏览器只跟本站说话，双通道自然就不需要了 ——
+// 也顺带去掉了「同一次搜索打两遍上游」这个会加速触发 Bangumi 限流的副作用。
 
 function api(path: string, opts: RequestInit = {}) {
   const headers = new Headers(opts.headers);
@@ -151,29 +127,35 @@ function optimisticPlayoff(pl: any, matchupId: number, choiceId: number): any {
   return { ...pl, matchups: flipChoice(pl.matchups, matchupId, choiceId) };
 }
 
-// 浏览器直接加载 Bangumi 图片（用户网络可达，不经服务端）；统一转成方形 grid 尺寸。
+/** 统一成方形 grid 尺寸并升到 https（老接口返回 http:// 链接，HTTPS 站点会按混合内容拦掉）。 */
 function imgSrc(url?: string | null): string {
   if (!url) return "";
-  // item4：Bangumi 老接口（/search/subject）返回的是 http:// 链接，而本站是 HTTPS，
-  // 浏览器会按「混合内容」直接拦掉，表现就是图片一张都不显示。统一升到 https。
   let u = url.trim();
   if (u.startsWith("//")) u = "https:" + u;
   u = u.replace(/^http:\/\//i, "https://");
   return u.replace(/(\/pic\/crt\/)[a-z](\/)/, "$1g$2");
 }
-/** 直连图床失败时改走本站代理（部分网络访问不到 lain.bgm.tv）。 */
+/** 头像统一走本站代理（服务端取一次并落盘缓存，见 /api/img）。 */
 function imgProxy(url: string): string {
   return "/api/img?u=" + encodeURIComponent(url);
 }
 
 function initials(n?: string) { return n?.trim()?.[0]?.toUpperCase() || "?"; }
 
+/**
+ * 头像。**默认走本站代理**，直连图床只作为代理失败时的兜底 —— 与之前的顺序正好相反。
+ *
+ * 为什么反过来：一个 200 人的提名池就是 200 张图，以前每个访客都直接去 lain.bgm.tv 取，
+ * 于是 ①访问不到图床的网络整页都是空白 ②图床防盗链会挡掉一部分 ③上游要承受
+ * 「访客数 × 图片数」的请求量。改成先走 /api/img 后，服务端对每张图只取一次并落盘，
+ * 之后所有人都是同源缓存命中，既快又稳。
+ */
 function Avatar({ c, lg }: { c: Slim | null; lg?: boolean }) {
-  const [stage, setStage] = useState<0 | 1 | 2>(0); // 0=直连 1=走代理 2=放弃用首字母
+  const [stage, setStage] = useState<0 | 1 | 2>(0); // 0=本站代理 1=直连兜底 2=放弃，用首字母
   if (!c) return null;
   const src = imgSrc(c.image);
   if (!src || stage === 2) return <div className={"av-ph" + (lg ? " lg" : "")}>{initials(c.name)}</div>;
-  return <img className={"av" + (lg ? " lg" : "")} src={stage === 0 ? src : imgProxy(src)} alt={c.name}
+  return <img className={"av" + (lg ? " lg" : "")} src={stage === 0 ? imgProxy(src) : src} alt={c.name}
     referrerPolicy="no-referrer" loading="lazy" onError={() => setStage((v) => (v === 0 ? 1 : 2))} />;
 }
 
@@ -329,72 +311,39 @@ export default function Page() {
     return () => window.removeEventListener("pagehide", onHide);
   }, []);
 
-  // 角色搜索：v0 只有 POST /v0/search/characters。把它发成 CORS「简单请求」（text/plain）绕过预检；
-  // 能否成功取决于 Bangumi 是否给 POST 附跨域头，失败则提示改用「搜作品名」导入。
+  // ── 提名相关的网络操作：全部改成「跟本站说一句话」──────────────────────────
+  //
+  // 以前这些都在浏览器里做：搜角色 → 逐个角色查详情补简体中文名 → 查关联作品 → 查作品
+  // 标签判定产地。导入一部作品要跨境往返 1 + N + N 次（N 可以是 60），在大陆移动网络下
+  // 经常走不完，用户看到的就是「转圈转到超时」。现在这些活都搬到服务端（lib/bgm.ts），
+  // 那里离 Bangumi 更近、有全站共享的缓存、并且自己限制并发；浏览器一次点击只发一个请求。
   const search = async () => {
     const kw = q.trim(); if (!kw) return;
     setSearching(true); setSearchErr(""); setHits(null); setSubHits(null); setImportMsg("");
     try {
-      const j = await bgmJson(
-        () => fetchT("https://api.bgm.tv/v0/search/characters?limit=20", {
-          method: "POST",
-          headers: { "Content-Type": "text/plain;charset=UTF-8", Accept: "application/json" },
-          body: JSON.stringify({ keyword: kw }),
-        }),
-        "kind=chars&q=" + encodeURIComponent(kw));
-      const arr = Array.isArray(j?.data) ? j.data : Array.isArray(j?.list) ? j.list : [];
-      const seen = new Set<string>();
-      const items = arr
-        .filter((c: any) => c && c.name && (c.type == null || c.type === 1)) // 只留真正的角色（排除机体/舰船/组织团体）
-        .map((c: any) => ({ bgmId: "c" + c.id, name: c.name, nameCn: "", nameEn: "", image: c.images?.grid || c.images?.medium || "" }))
-        .filter((c: any) => !seen.has(c.bgmId) && (seen.add(c.bgmId), true));
-      // item1：日本作品准入 —— 查每个角色关联的前三部作品是否带「日本」标签，没有就不显示
-      let shown = items;
-      try {
-        const ids = items.map((c: any) => String(c.bgmId).replace(/^c/, "")).filter(Boolean).join(",");
-        if (ids) {
-          const jr = await fetchT("/api/bgm?kind=jpbatch&ids=" + encodeURIComponent(ids), { cache: "no-store" }, 15_000);
-          if (jr.ok) {
-            const jp = (await jr.json())?.jp || {};
-            const keep = items.filter((c: any) => jp[String(c.bgmId).replace(/^c/, "")] !== false);
-            const removed = items.length - keep.length;
-            shown = keep;
-            if (removed > 0) setImportMsg(T("jp.filtered", { n: removed }));
-          }
-        }
-      } catch { /* 判定失败就不过滤，避免因网络问题什么都搜不到 */ }
-      setHits(shown);
-      if (shown.length === 0) setSearchErr(T("search.trysubject"));
-    } catch (e: any) { setSearchErr(T("search.fail", { err: e?.message || "网络不可达，可改用搜作品名导入" })); setHits([]); }
-    finally { setSearching(false); }
+      const r = await fetchT("/api/bgm?kind=searchChars&q=" + encodeURIComponent(kw), { cache: "no-store" }, 20_000);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.error) throw new Error(j?.error || "HTTP " + r.status);
+      const hits2 = Array.isArray(j.hits) ? j.hits : [];
+      setHits(hits2);
+      // 产地过滤在服务端做完了，这里只把「隐藏了几个」告诉用户
+      if (j.filtered > 0) setImportMsg(T("jp.filtered", { n: j.filtered }));
+      if (hits2.length === 0) setSearchErr(T("search.trysubject"));
+    } catch (e: any) {
+      setSearchErr(T("search.fail", { err: e?.message || "网络不可达" }));
+      setHits([]);
+    } finally { setSearching(false); }
   };
 
-  // 浏览器直接调 Bangumi 老接口 GET /search/subject（GET 支持跨域，无需代理/服务端）
   const searchSubjects = async () => {
     const kw = subQ.trim(); if (!kw) return;
     setSubSearching(true); setImportMsg(""); setSubHits(null); setHits(null); setSearchErr("");
     try {
-      const j = await bgmJson(
-        async () => {
-          const rr = await fetchT(`https://api.bgm.tv/search/subject/${encodeURIComponent(kw)}?type=2&responseGroup=large&max_results=20`, { headers: { Accept: "application/json" } });
-          // 老接口偶尔返回 HTML 错误页：视为该通道失败，让代理通道接手
-          if (!(rr.headers.get("content-type") || "").includes("json")) throw new Error("not json");
-          return rr;
-        },
-        "kind=subjects&q=" + encodeURIComponent(kw));
-      const list = Array.isArray(j?.list) ? j.list : [];
-      const lc = kw.toLowerCase();
-      const seen = new Set<string>();
-      const score = (x: any) => {
-        const n = String(x.name || "").toLowerCase(), cn = String(x.name_cn || "").toLowerCase();
-        return (n === lc || cn === lc ? 100 : 0) + (n.startsWith(lc) || cn.startsWith(lc) ? 20 : 0) + (n.includes(lc) || cn.includes(lc) ? 5 : 0) + (x.rank ? Math.max(0, 5 - Math.log10(x.rank + 1)) : 0);
-      };
-      const mapped = list
-        .filter((x: any) => x?.id && !seen.has(String(x.id)) && (seen.add(String(x.id)), true))
-        .sort((a: any, b: any) => score(b) - score(a))
-        .map((x: any) => ({ subjectId: String(x.id), name: x.name || "", nameCn: x.name_cn || "", image: x.images?.grid || x.images?.common || "", year: String(x.air_date || "").slice(0, 4), tags: (Array.isArray(x.tags) ? x.tags : []).map((t: any) => String(t?.name || t)) }))
-        .filter((x: any) => !blockedReason(x.nameCn || x.name, x.tags));
-      setSubHits(mapped);
+      const r = await fetchT("/api/bgm?kind=searchSubjects&q=" + encodeURIComponent(kw), { cache: "no-store" }, 20_000);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.error) throw new Error(j?.error || "HTTP " + r.status);
+      // 黑名单仍在前端先滤一遍，纯粹是为了少点无效点击；真正把关在 /api/nominate
+      setSubHits((Array.isArray(j.hits) ? j.hits : []).filter((x: any) => !blockedReason(x.nameCn || x.name, x.tags)));
     } catch { setImportMsg(T("subject.neterr")); setSubHits([]); }
     finally { setSubSearching(false); }
   };
@@ -407,6 +356,7 @@ export default function Page() {
       return await r.json();
     } finally { busyRef.current = false; }
   };
+
   /** item3：与服务端同一套黑名单判定（前端过滤只为少点无效点击，真正把关在 /api/nominate）。 */
   const blockedReason = (subjectName: string, tags: string[] = []): string | null => {
     const bs: string[] = state?.competition?.blockedSubjects || [];
@@ -419,101 +369,54 @@ export default function Page() {
     return null;
   };
 
-  /** item2：取角色最主要的关联作品名（优先主角作品，其次第一部）。查不到返回空串，不阻断提名。 */
-  const primarySubject = async (rawId: string): Promise<{ zh: string; ja: string }> => {
-    try {
-      const subs = await bgmJson(
-        () => fetchT(`https://api.bgm.tv/v0/characters/${encodeURIComponent(rawId)}/subjects`, { headers: { Accept: "application/json" } }),
-        "kind=charSubjects&id=" + encodeURIComponent(rawId));
-      const arr = Array.isArray(subs) ? subs : [];
-      if (!arr.length) return { zh: "", ja: "" };
-      const main = arr.find((x: any) => String(x?.staff || "").includes("主角")) || arr[0];
-      return { zh: String(main?.name_cn || main?.name || ""), ja: String(main?.name || "") };
-    } catch { return { zh: "", ja: "" }; }
-  };
+  /** 「日本」标签判定结果 → 给用户的提示。null（查不到）时故意什么都不说：
+   *  上游抖一下就警告用户「你提的角色可能不合规」是纯粹的噪音。 */
+  const jpNote = (jp: boolean | null | undefined, subject: boolean): string =>
+    jp === false ? " " + T(subject ? "jp.warn.subject" : "jp.warn.char") : "";
 
-  // ── 日本产地软校验（方案 A）：查 bangumi 作品 tag 是否含「日本」。返回 true/false/null（null=查不了，不阻断） ──
-  const subjectHasJP = async (subjectId: string | number): Promise<boolean | null> => {
-    try {
-      const d = await bgmJson(
-        () => fetchT(`https://api.bgm.tv/v0/subjects/${encodeURIComponent(String(subjectId))}`, { headers: { Accept: "application/json" } }),
-        "kind=subject&id=" + encodeURIComponent(String(subjectId).replace(/\D/g, "")));
-      const names: string[] = [
-        ...((Array.isArray(d?.tags) ? d.tags : []).map((t: any) => (typeof t === "string" ? t : t?.name || ""))),
-        ...((Array.isArray(d?.meta_tags) ? d.meta_tags : []).map((m: any) => (typeof m === "string" ? m : m?.name || ""))),
-      ];
-      return names.some((n) => n.includes("日本"));
-    } catch { return null; }
-  };
-  const characterHasJP = async (rawId: string | number): Promise<boolean | null> => {
-    try {
-      const subs = await bgmJson(
-        () => fetchT(`https://api.bgm.tv/v0/characters/${encodeURIComponent(String(rawId))}/subjects`, { headers: { Accept: "application/json" } }),
-        "kind=charSubjects&id=" + encodeURIComponent(String(rawId).replace(/\D/g, "")));
-      const ids = (Array.isArray(subs) ? subs : []).map((s: any) => s?.id).filter(Boolean).slice(0, 3);
-      if (!ids.length) return null;
-      for (const id of ids) { const jp = await subjectHasJP(id); if (jp) return true; }
-      return false;
-    } catch { return null; }
-  };
-
+  /** 添加单个角色：只把 bangumi id 交给服务端，名字/头像/所属作品/产地判定都由服务端补齐。 */
   const nominate = async (h: any) => {
     setImportMsg("");
     const key = "a" + h.bgmId;
     if (nomPending.has(key)) return;
     setNomPending((s2) => new Set(s2).add(key));
     try {
-      // item2：单个角色也带上「所属作品」（取关联作品里最主要的一部），列表和赛程里就能显示出处
-      const rawId0 = String(h.bgmId).replace(/^c/, "");
-      // 查作品名最多等 1.5 秒：拿到就带上，慢就先把角色加进去，不让「添加」被跨境往返拖住
-      const sj = rawId0 && !h.subjectName
-        ? await Promise.race([primarySubject(rawId0), new Promise<{ zh: string; ja: string }>((r) => setTimeout(() => r({ zh: "", ja: "" }), 1500))])
-        : { zh: h.subjectName || "", ja: "" };
-      const j = await post({ batch: [{ bgmId: h.bgmId, name: h.name, nameCn: h.nameCn, image: h.image, subjectName: sj.zh, subjectNameJa: sj.ja }] });
+      const j = await post({ addChar: h.bgmId });
       if (j?.error) setImportMsg(j.error);
-      else settle(key, T("nom.plus"));
+      else if (j?.duplicate) setImportMsg(T("nom.dup", { name: j.name || h.name }));
+      else {
+        settle(key, T("nom.plus"));
+        // 明确非日本作品时才提示；提示语本身就说明「已提交，管理员会复核」
+        setImportMsg(T("nom.added", { name: j?.name || h.name }) + jpNote(j?.jp, false));
+      }
     } catch { setImportMsg(T("net.slow")); }
     finally { setNomPending((s2) => { const n = new Set(s2); n.delete(key); return n; }); }
     void load(); // 后台刷新提名池
-    // 软校验（纯浏览器端，慢也不阻塞界面）：非日本（明确 false）才警告；查不了（null）不打扰
-    const rawId = String(h.bgmId).replace(/^c/, "");
-    if (rawId) void characterHasJP(rawId).then((jp) => { if (jp === false) setImportMsg(T("jp.warn.char")); }).catch(() => {});
   };
-  // 浏览器直接调 GET（取角色列表 + 逐个补中文名），再交服务端存储；顺带记录作品名。
-  const importSubject = async (subjectId: string, subjectName: string, subjectNameJa = "") => {
+
+  /** 导入整部作品：服务端取角色表 + 逐个补中文名 + 判产地，一次请求搞定。 */
+  const importSubject = async (subjectId: string, subjectName: string, _subjectNameJa = "") => {
     const deny = blockedReason(subjectName);
     if (deny) { setImportMsg(deny); return; }
     setImportMsg(T("import.progress", { name: subjectName }));
     try {
-      const arr = await bgmJson(
-        () => fetchT(`https://api.bgm.tv/v0/subjects/${encodeURIComponent(subjectId)}/characters`, { headers: { Accept: "application/json" } }),
-        "kind=subjectChars&id=" + encodeURIComponent(String(subjectId).replace(/\D/g, "")));
-      const chars = (Array.isArray(arr) ? arr : [])
-        .filter((c: any) => c && c.name && (c.type == null || c.type === 1)) // 只留真正的角色
-        .map((c: any) => ({ rawId: c.id, bgmId: "c" + c.id, name: c.name, nameCn: "", nameEn: "", image: c.images?.grid || c.images?.medium || "", subjectName, subjectNameJa }))
-        .slice(0, 60);
-      if (!chars.length) { setImportMsg(T("import.fail", { err: "no characters" })); return; }
-      // 补中文名：逐个取角色详情 infobox 的「简体中文名」（小并发，尽力而为）
-      for (let i = 0; i < chars.length; i += 8) {
-        setImportMsg(T("import.progress", { name: `${subjectName}(${i}/${chars.length})` }));
-        await Promise.all(chars.slice(i, i + 8).map(async (ch: any) => {
-          try {
-            const d = await bgmJson(
-              () => fetchT(`https://api.bgm.tv/v0/characters/${ch.rawId}`, { headers: { Accept: "application/json" } }),
-              "kind=charDetail&id=" + encodeURIComponent(String(ch.rawId)));
-            const box = Array.isArray(d?.infobox) ? d.infobox : [];
-            const it = box.find((x: any) => typeof x?.key === "string" && (x.key.includes("简体中文名") || x.key === "中文名"));
-            if (it && typeof it.value === "string") ch.nameCn = it.value;
-            const en = box.find((x: any) => typeof x?.key === "string" && x.key.includes("英文名"));
-            if (en && typeof en.value === "string") ch.nameEn = en.value;
-          } catch {}
-        }));
-      }
-      const batch = chars.map((c: any) => ({ bgmId: c.bgmId, name: c.name, nameCn: c.nameCn, nameEn: c.nameEn || "", image: c.image, subjectName: c.subjectName }));
-      const j = await post({ batch });
-      const jp = await subjectHasJP(subjectId); // 方案 A：软校验，仅在明确非日本时追加提醒
-      const warn = jp === false ? " " + T("jp.warn.subject") : "";
-      setImportMsg((j?.error ? T("import.fail", { err: j.error }) : T("import.done", { name: subjectName, added: j?.added ?? 0, imported: chars.length })) + warn);
+      // 服务端要取几十个角色的详情（并发受限），比普通请求慢得多，所以给一个单独的长超时；
+      // 但仍然必须有超时 —— 否则上游卡住时按钮会一直转，用户既看不到结果也无法重试。
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 90_000);
+      let r: Response;
+      try {
+        r = await api("/api/nominate", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ importSubject: subjectId, tags: [] }),
+          signal: ac.signal,
+        });
+      } finally { clearTimeout(timer); }
+      const j = await r.json().catch(() => ({}));
+      if (j?.error) { setImportMsg(T("import.fail", { err: j.error })); return; }
+      const skipped = j?.skipped ? " " + T("import.blocked", { n: j.skipped }) : "";
+      setImportMsg(T("import.done", { name: j?.subjectName || subjectName, added: j?.added ?? 0, imported: j?.imported ?? 0 })
+        + skipped + jpNote(j?.jp, true));
       await load();
     } catch (e: any) {
       setImportMsg(T("import.fail", { err: e?.message || "network" }));
@@ -816,7 +719,10 @@ export default function Page() {
                 <div className="prow" key={p.id}>
                   <div className="rankn num">{i + 1}</div>
                   <Avatar c={p} />
-                  <div className="meta"><div className="nm" lang={srcLang(p, lang)}>{label(p, lang)}</div>
+                  <div className="meta"><div className="nm" lang={srcLang(p, lang)}>{label(p, lang)}
+                    {/* 待复核：服务端明确没查到「日本」标签的角色。与提名时那句「管理员会复核」对应，
+                        让用户看得见自己提交的东西确实在队列里，而不是提示一闪而过就没了下文。 */}
+                    {(p as any).jpPending && <span className="tag warn" title={T("jp.pending.hint")}>{T("jp.pending")}</span>}</div>
                     <div className="sub">{sub(p, lang)}{(p as any).mergedInto ? " · " + T("nom.mergedInto", { name: (p as any).mergedInto }) : ""}</div></div>
                   <div className="votecell num"><div className="c">{p.votes}</div><div className="l">{T("nom.voteLabel")}</div></div>
                   <button className={"btn" + (p.voted ? " solid" : "") + (nomPending.has("n" + p.id) ? " pending" : "") + (justDone.has("n" + p.id) ? " flash" : "")}

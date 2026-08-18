@@ -7,7 +7,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "tsx scripts/smoke.mts"
+    "test": "tsx scripts/smoke.mts && tsx scripts/compat.mts",
+    "test:smoke": "tsx scripts/smoke.mts",
+    "test:compat": "tsx scripts/compat.mts"
   },
   "dependencies": {
     "next": "^15.1.0",

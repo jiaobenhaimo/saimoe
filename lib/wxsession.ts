@@ -7,7 +7,12 @@ import { getWxGate } from "./db";
 // (falls back to ADMIN_TOKEN so a single secret can bootstrap a deployment).
 
 function secret(): string {
-  return process.env.SESSION_SECRET || process.env.ADMIN_TOKEN || "dev-insecure-secret-change-me";
+  const s = process.env.SESSION_SECRET || process.env.ADMIN_TOKEN || "";
+  if (s) return s;
+  // A known signing key means anyone could mint a valid voter session (bypassing the WeChat gate).
+  if (process.env.NODE_ENV === "production")
+    throw new Error("saimoe: SESSION_SECRET (or ADMIN_TOKEN) must be set in production — refusing to sign tokens with a known default.");
+  return "dev-insecure-secret-change-me";
 }
 function b64url(buf: Buffer): string {
   return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");

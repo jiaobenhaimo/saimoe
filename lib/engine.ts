@@ -1,8 +1,10 @@
-import { readDb, writeDb, commentCounts, approvalTally, groupBatch, type DB, type Competition, type Candidate, type Matchup, nominationTally, freezeOf, topLevel } from "./db";
+import { readDb, readDbRO, writeDb, commentCounts, approvalTally, groupBatch, type DB, type Competition, type Candidate, type Matchup, nominationTally, freezeOf, topLevel } from "./db";
 
 // ── reads ─────────────────────────────────────────────────────
-export function getActiveCompetition(): Competition | null {
-  const db = readDb();
+/** The newest competition, or null. Pass `snap` to reuse a snapshot the caller already read —
+ *  routes that need several reads should read once and thread it through (see /api/vote). */
+export function getActiveCompetition(snap?: DB): Competition | null {
+  const db = snap ?? readDbRO();
   if (!db.competitions.length) return null;
   return db.competitions.reduce((a, b) => (b.id > a.id ? b : a));
 }
@@ -18,14 +20,16 @@ function matchCounts(db: DB, cid: number): Map<string, number> {
 }
 
 // ── full state for the UI, personalised to one voter ─────────
-export function getState(voterId: string) {
-  const db = readDb();
+export function getState(voterId: string, snap?: DB) {
+  const db = snap ?? readDbRO();
   const comp = db.competitions.length ? db.competitions.reduce((a, b) => (b.id > a.id ? b : a)) : null;
   if (!comp) return { competition: null };
 
   const cands = db.candidates.filter((c) => c.competition_id === comp.id).sort((a, b) => a.id - b.id);
   const slim = (c: Candidate | undefined) =>
-    c ? { id: c.id, bgmId: c.bgm_id, aliases: c.aliases || [], name: c.name, nameCn: c.name_cn, nameEn: c.name_en ?? null, image: c.image, subjectName: c.subject_name ?? null, subjectNameJa: c.subject_name_ja ?? null, subjectNameEn: c.subject_name_en ?? null } : null;
+    c ? { id: c.id, bgmId: c.bgm_id, aliases: c.aliases || [], name: c.name, nameCn: c.name_cn, nameEn: c.name_en ?? null, image: c.image, subjectName: c.subject_name ?? null, subjectNameJa: c.subject_name_ja ?? null, subjectNameEn: c.subject_name_en ?? null,
+        // 「待复核」标记：只有明确没查到「日本」标签的新角色才为 true（老数据 jp_status 缺失 → false）
+        jpPending: c.jp_status === "flagged" } : null;
 
   const base = {
     competition: {
@@ -70,7 +74,7 @@ export function getState(voterId: string) {
   const ms = db.matchups.filter((m) => m.competition_id === comp.id);
   const cmap = new Map(cands.map((c) => [c.id, c]));
   const counts = matchCounts(db, comp.id);
-  const cc = commentCounts(comp.id);
+  const cc = commentCounts(comp.id, db);
   const myChoice = new Map<number, number>();
   const compMatchIds = new Set(ms.map((m) => m.id));
   for (const v of db.matchVotes) if (v.voter_id === voterId && compMatchIds.has(v.matchup_id)) myChoice.set(v.matchup_id, v.choice_id);
@@ -904,8 +908,18 @@ export function advanceKnockout(cid: number) {
     writeDb(db);
     return;
   }
-  for (let i = 0; i < winners.length; i += 2)
+  // Bug guard: an odd winner count would previously build a matchup with b_id === undefined,
+  // which then serialises into the data file as a broken pair (votes for it can never resolve).
+  // The bracket is a power of two so this shouldn't happen, but undo/resettle/manual edits can
+  // leave a round with an odd size — carry the last winner forward as a bye instead of corrupting.
+  const pairable = winners.length - (winners.length % 2);
+  for (let i = 0; i < pairable; i += 2)
     db.matchups.push({ id: ++db.seq.matchup, competition_id: cid, stage: "knockout", round_no: round + 1, group_no: null, slot: i / 2, a_id: winners[i], b_id: winners[i + 1], winner_id: null, decided: false, bronze: false });
+  if (winners.length % 2 === 1) {
+    const odd = winners[winners.length - 1];
+    console.error(`saimoe: knockout round ${round} produced ${winners.length} winners (odd); #${odd} advances on a bye`);
+    db.matchups.push({ id: ++db.seq.matchup, competition_id: cid, stage: "knockout", round_no: round + 1, group_no: null, slot: pairable / 2, a_id: odd, b_id: odd, winner_id: odd, decided: true, bronze: false });
+  }
   writeDb(db);
 }
 
@@ -964,13 +978,13 @@ export function postponeNomination(cid: number) {
 
 /** How many candidates are currently in the pool (used to decide postpone). */
 export function poolSize(cid: number): number {
-  return readDb().candidates.filter((c) => c.competition_id === cid).length;
+  return readDbRO().candidates.filter((c) => c.competition_id === cid).length;
 }
 
 /** #4: how many candidates clear nom_min_votes — the number startGroups actually ranks
  *  (poolSize counts everyone, which can deadlock auto-open when a threshold is set). */
 export function qualifyingCount(cid: number): number {
-  const db = readDb();
+  const db = readDbRO();
   const comp = db.competitions.find((c) => c.id === cid);
   const minVotes = comp?.nom_min_votes ?? 0;
   const { total: nomCount } = nominationTally(db, cid);
@@ -980,7 +994,7 @@ export function qualifyingCount(cid: number): number {
 /** #5: can the current grouping actually fill the knockout bracket? Checked before advancing
  *  the final matchday so we never commit "group done" and then fail to start the knockout. */
 export function canStartKnockout(cid: number): boolean {
-  const db = readDb();
+  const db = readDbRO();
   const comp = db.competitions.find((c) => c.id === cid);
   if (!comp) return false;
   const grouped = db.candidates.filter((c) => c.competition_id === cid && c.group_no != null);

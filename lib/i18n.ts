@@ -167,6 +167,12 @@ const D: Record<string, Entry> = {
   "rules.ack.qr.pending": { zh: "二维码待上传", en: "QR code coming soon", ja: "QRコード準備中" },
   "jp.warn.char": { zh: "⚠️ 未检测到「日本」标签，该角色可能并非出自日本 ACGN 作品；已提交，管理员会复核。", en: "⚠️ No “日本 (Japan)” tag found — this character may not be from a Japanese ACGN work. Submitted anyway; an admin will review.", ja: "⚠️「日本」タグが見つかりません。日本の ACGN 作品ではない可能性があります。提出は受理、管理者が確認します。" },
   "jp.warn.subject": { zh: "⚠️ 该作品未检测到「日本」标签，可能并非日本产；仍已导入，管理员会复核。", en: "⚠️ No “日本 (Japan)” tag on this work — it may not be Japanese. Imported anyway; an admin will review.", ja: "⚠️ この作品に「日本」タグがありません。日本産ではない可能性があります。取り込みは実行、管理者が確認します。" },
+  // 待复核标记：提名池里那些「明确没查到『日本』标签」的角色，与 jp.warn.char 的承诺对应
+  "jp.pending": { zh: "待复核", en: "Under review", ja: "確認待ち" },
+  "jp.pending.hint": { zh: "未检测到「日本」标签，管理员复核中；不影响投票。", en: "No “日本 (Japan)” tag detected — an admin is reviewing. Voting is unaffected.", ja: "「日本」タグが未検出のため管理者が確認中です。投票には影響しません。" },
+  "nom.added": { zh: "已加入提名池：{name}", en: "Added to the pool: {name}", ja: "推薦プールに追加：{name}" },
+  "nom.dup": { zh: "「{name}」已经在提名池里了。", en: "“{name}” is already in the pool.", ja: "「{name}」はすでにプールにあります。" },
+  "import.blocked": { zh: "已跳过 {n} 个重复角色。", en: "Skipped {n} duplicate characters.", ja: "重複キャラ {n} 件をスキップしました。" },
   "gb.open": { zh: "投票中 · 已选 {n}/{max}", en: "Voting · {n}/{max} picked", ja: "投票中 · {n}/{max} 選択" },
   "gb.closed": { zh: "已结束", en: "Closed", ja: "終了" },
   "gb.upcoming": { zh: "未开放", en: "Upcoming", ja: "未開放" },
