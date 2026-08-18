@@ -48,7 +48,8 @@ export const SESSION_TTL_MS = 7 * 86_400_000;  // voter session cookie: 7 days
 export const VOTER_COOKIE = "sml_voter";
 
 /** Whether the "must come from a WeChat link to vote" gate is enabled.
- *  Sourced from the admin-toggleable DB setting (falls back to env WX_VOTE_GATE). Default OFF —
+ *  Sourced from the WX_VOTE_GATE environment variable (there is no stored setting; changing it
+ *  needs a redeploy). Default OFF —
  *  so the site runs perfectly fine WITHOUT any WeChat integration until an admin turns it on. */
 export function gateOn(): boolean {
   return getWxGate();

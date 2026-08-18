@@ -735,8 +735,12 @@ function toggleNominationOnce(cid: number, candidateId: number, voterId: string,
   return { voted: true };
 }
 
-/** Read/write the runtime WeChat-gate setting (admin-toggleable). Env WX_VOTE_GATE is only
- *  the initial default when the operator has never toggled it in the admin page. */
+/** Is the "must arrive from a WeChat link to vote" gate on?
+ *
+ *  NOTE: this is read from the environment ONLY — there is no stored, admin-toggleable setting,
+ *  and turning it on or off requires a redeploy (the admin page says so). The comment here used to
+ *  claim it was "admin-toggleable, falling back to env", which was left over from a feature that
+ *  never landed; believing it would lead someone to wire up a toggle that silently does nothing. */
 export function getWxGate(): boolean {
   const v = (process.env.WX_VOTE_GATE || "").toLowerCase();
   return v === "on" || v === "1" || v === "true";
@@ -803,8 +807,16 @@ function castMatchVoteOnce(cid: number, matchupId: number, voterId: string, choi
     writeDb(db);
     return { choice: null };
   }
-  if (cur) cur.choice_id = choiceId;
-  else db.matchVotes.push({ id: ++db.seq.vote, matchup_id: matchupId, voter_id: voterId, choice_id: choiceId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
+  if (cur) {
+    cur.choice_id = choiceId;
+    // Refresh the device/IP metadata to describe the vote that now COUNTS. Previously a changed
+    // vote kept the metadata of its first version, so someone who voted from device A and then
+    // switched their pick from device B stayed attributed to A — which is precisely the pattern
+    // the duplicate-device detection is looking for. created_at deliberately stays at first cast,
+    // since the burst detector measures when the voter first acted.
+    cur.device_bucket = meta?.bucket ?? cur.device_bucket ?? null;
+    cur.ip = meta?.ip ?? cur.ip ?? null;
+  } else db.matchVotes.push({ id: ++db.seq.vote, matchup_id: matchupId, voter_id: voterId, choice_id: choiceId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
   writeDb(db);
   return { choice: choiceId };
 }
@@ -916,6 +928,14 @@ export const addComment = (...a: Parameters<typeof addCommentOnce>) => retryOnCo
 export function listVotesBy(cid: number, by: "bucket" | "ip" | "voter" | "ip64", key: string): {
   id: number; kind: "nomination" | "approval" | "match"; at: number | null;
   target: string; detail: string; voterId: string; bucket: string | null; ip: string | null;
+  /** Candidate this vote is FOR. Needed because display names collide -- two different
+   *  characters can both render as e.g. 「アリス」, and grouping by name would treat them as one. */
+  candidateId: number;
+  /** The ballot this vote belongs to: the unit that "one vote each" is measured over.
+   *  Nomination = the pool, approval = a group's ballot, match = a single matchup. Two votes for
+   *  the same character on DIFFERENT ballots (a character playing in matchday 1 and again in
+   *  matchday 2) are both legitimate and must not be collapsed together. */
+  ballot: string;
 }[] {
   if (!key) return [];
   const db = readDbRO();
@@ -930,12 +950,14 @@ export function listVotesBy(cid: number, by: "bucket" | "ip" | "voter" | "ip64",
   for (const v of db.nominationVotes) {
     if (v.competition_id !== cid || !match(v)) continue;
     rows.push({ id: v.id ?? 0, kind: "nomination", at: v.created_at ?? null, target: nameOf(v.candidate_id),
-      detail: "提名投票", voterId: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null });
+      detail: "提名投票", voterId: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null,
+      candidateId: v.candidate_id, ballot: `nom|${v.candidate_id}` });
   }
   for (const v of db.approvalVotes) {
     if (v.competition_id !== cid || !match(v)) continue;
     rows.push({ id: v.id ?? 0, kind: "approval", at: v.created_at ?? null, target: nameOf(v.candidate_id),
-      detail: `小组赛 ${groupLetter(v.group_no)} 组`, voterId: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null });
+      detail: `小组赛 ${groupLetter(v.group_no)} 组`, voterId: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null,
+      candidateId: v.candidate_id, ballot: `app|${v.group_no}|${v.candidate_id}` });
   }
   for (const v of db.matchVotes) {
     const m = compMatch.get(v.matchup_id);
@@ -944,7 +966,8 @@ export function listVotesBy(cid: number, by: "bucket" | "ip" | "voter" | "ip64",
     const stage = m.stage === "group" ? `小组赛 ${groupLetter(m.group_no ?? 0)} 组`
       : m.stage === "playoff" ? "加赛" : `淘汰赛第 ${m.round_no} 轮`;
     rows.push({ id: v.id ?? 0, kind: "match", at: v.created_at ?? null, target: nameOf(v.choice_id),
-      detail: `${stage}：对手 ${nameOf(other)}`, voterId: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null });
+      detail: `${stage}：对手 ${nameOf(other)}`, voterId: v.voter_id, bucket: v.device_bucket ?? null, ip: v.ip ?? null,
+      candidateId: v.choice_id, ballot: `mat|${v.matchup_id}|${v.choice_id}` });
   }
   // 新的在前，方便看「最近这一串是不是连着刷的」
   rows.sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
@@ -956,10 +979,17 @@ function groupLetter(n: number): string {
   return s;
 }
 
-/** 精确作废：只删掉指定 id 的那几票。返回实际删除数。 */
-export function invalidateVoteIds(cid: number, ids: number[]): number {
+/**
+ * 精确作废：只删掉指定 id 的那几票。返回实际删除数。
+ *
+ * `alsoBan` 是「本轮封禁、但不删票」的身份名单。为什么需要它：智能删票要保证
+ * **每个角色留一张票**，于是有些参与刷票的身份手上那张恰好就是要留的那张 ——
+ * 删了它角色就归零了。这些身份仍然必须本轮封禁，所以封禁不能再靠「你有票被删」
+ * 来推导，得能单独指定。（见 planSmartInvalidate 的 banOnly。）
+ */
+export function invalidateVoteIds(cid: number, ids: number[], alsoBan: { voterId: string; bucket: string | null }[] = []): number {
   const want = new Set(ids.filter((n) => Number.isFinite(n) && n > 0));
-  if (!want.size) return 0;
+  if (!want.size && !alsoBan.length) return 0;
   const db = readDb();
   const compMatchIds = new Set(db.matchups.filter((m) => m.competition_id === cid).map((m) => m.id));
   let removed = 0;
@@ -979,17 +1009,26 @@ export function invalidateVoteIds(cid: number, ids: number[]): number {
     if (hit) { removed++; victims.push(v); }
     return !hit;
   });
-  if (removed) {
-    db.nominationVotes = keepNom; db.approvalVotes = keepApp; db.matchVotes = keepMatch;
-    recordSanctions(db, cid, victims); // 记下这些身份：本人会看到提示，且本轮不得再投
+  // 删票为 0 但有封禁名单时也要落盘 —— 否则「保留了它那张票的刷票身份」就漏封了。
+  if (removed || alsoBan.length) {
+    if (removed) { db.nominationVotes = keepNom; db.approvalVotes = keepApp; db.matchVotes = keepMatch; }
+    // 封禁名单以 count:0 记入：本人看到的是「本轮不得再投」，而不是「你有 N 张票被删」——
+    // 它确实没有票被删，谎报数字只会让人以为自己的票没了。
+    recordSanctions(db, cid, victims, alsoBan);
     writeDb(db);
   }
   return removed;
 }
 
-/** 把这些票所属的身份记进 sanctions，供其下次投票时提示本人。 */
-function recordSanctions(db: DB, cid: number, victims: { voter_id: string; device_bucket?: string | null }[]): void {
-  if (!victims.length) return;
+/** 把这些票所属的身份记进 sanctions，供其下次投票时提示本人。
+ *  `alsoBan` 里的身份没有票被删，以 count:0 记入 —— 效果是本轮同样禁投，但不会告诉
+ *  本人「你有票被作废」（那是假话，会引起无谓的申诉）。 */
+function recordSanctions(
+  db: DB, cid: number,
+  victims: { voter_id: string; device_bucket?: string | null }[],
+  alsoBan: { voterId: string; bucket: string | null }[] = [],
+): void {
+  if (!victims.length && !alsoBan.length) return;
   const round = roundKeyOf(db.competitions.find((c) => c.id === cid));
   const byKey = new Map<string, { voterId: string | null; bucket: string | null; count: number }>();
   for (const v of victims) {
@@ -997,22 +1036,33 @@ function recordSanctions(db: DB, cid: number, victims: { voter_id: string; devic
     const cur = byKey.get(k) || { voterId: v.voter_id || null, bucket: v.device_bucket || null, count: 0 };
     cur.count++; byKey.set(k, cur);
   }
-  db.sanctions = [...(db.sanctions || []), ...[...byKey.values()].map((x) => ({ at: Date.now(), round, ...x }))].slice(-500);
+  for (const b of alsoBan) {
+    const k = b.voterId + "|" + (b.bucket || "");
+    if (!byKey.has(k)) byKey.set(k, { voterId: b.voterId || null, bucket: b.bucket || null, count: 0 });
+  }
+  // 上限从 500 提到 5000：一次大规模作废可能一口气产生几百个身份条目，500 的窗口会把
+  // **同一轮**里先记下的封禁挤出去，等于悄悄解封了一部分刷票者。
+  db.sanctions = [...(db.sanctions || []), ...[...byKey.values()].map((x) => ({ at: Date.now(), round, ...x }))].slice(-5000);
 }
 
-/** 这个身份是否被作废过票（本人提示用）。按 voter_id 或设备指纹匹配，不按 IP。 */
+/** 这个身份是否被处理过（本人提示用）。按 voter_id 或设备指纹匹配，不按 IP。
+ *  count 可以是 0：智能删票为了「每个角色留一张」而保留了它那张票，但它仍被本轮封禁。 */
 export function voterSanction(who: { voterId?: string | null; bucket?: string | null }, round?: string, snap?: DB):
   { count: number; at: number; rounds: string[]; blockedThisRound: boolean } | null {
   const list = (snap ?? readDbRO()).sanctions || [];
   if (!list.length) return null;
-  let count = 0, at = 0; const rounds = new Set<string>(); let blocked = false;
+  let count = 0, at = 0, hits = 0; const rounds = new Set<string>(); let blocked = false;
   for (const s of list) {
     const hit = (who.voterId && s.voterId === who.voterId) || (who.bucket && s.bucket && s.bucket === who.bucket);
     if (!hit) continue;
+    hits++;
     count += s.count; at = Math.max(at, s.at); rounds.add(s.round || "");
     if (round && s.round === round) blocked = true;
   }
-  return count > 0 ? { count, at, rounds: [...rounds], blockedThisRound: blocked } : null;
+  // BUG FIX: this used to be `count > 0 ? ... : null`, which threw away any sanction recorded
+  // with count 0 -- i.e. exactly the ban-without-deletion case above -- silently un-banning the
+  // identity whose vote we deliberately kept. Gate on "was there a matching record at all".
+  return hits > 0 ? { count, at, rounds: [...rounds], blockedThisRound: blocked } : null;
 }
 
 /** 智能删票的方案（只计算、不执行；执行仍走 invalidateVoteIds，以便记录受罚身份）。
@@ -1026,55 +1076,104 @@ export function voterSanction(who: { voterId?: string | null; bucket?: string | 
 export function planSmartInvalidate(cid: number, by: "bucket" | "ip" | "voter" | "ip64", key: string): {
   ids: number[];
   perTarget: { target: string; had: number; deleted: number }[];
-  perIdentity: { voterId: string; had: number; deleted: number }[];
+  perIdentity: { voterId: string; had: number; deleted: number; banned: boolean }[];
   zeroed: { target: string; totalBefore: number }[];
+  /** 执行后会掉到 nom_min_votes 以下（即失去参赛资格）的角色。 */
+  belowMin: { target: string; totalBefore: number; totalAfter: number }[];
+  /** 一票都没被删、但仍要本轮封禁的身份。执行时必须一并传给 invalidateVoteIds。 */
+  banOnly: { voterId: string; bucket: string | null }[];
+  /** 保留下来的票数 = 票单数（每个票单恰好留一张）。 */
+  keptPerBallot: number;
 } {
-  const empty = { ids: [], perTarget: [], perIdentity: [], zeroed: [] };
+  const empty = { ids: [], perTarget: [], perIdentity: [], zeroed: [], belowMin: [], banOnly: [], keptPerBallot: 0 };
   if (!key) return empty;
   const db = readDbRO();
   const rows = listVotesBy(cid, by, key);
   if (!rows.length) return empty;
 
-  // (a) 每个角色留最早一张
-  const byTarget = new Map<string, typeof rows>();
-  for (const r of rows) { if (!byTarget.has(r.target)) byTarget.set(r.target, []); byTarget.get(r.target)!.push(r); }
+  // ── (a) 每个「票单」只留最早的一张 ────────────────────────────────────────────
+  //
+  // 刷票的形态就是同一个角色被同一台设备反复投：A 5 票、B 6 票、C 8 票、D 2 票、E 1 票
+  // → 各留 1 张，删掉 17 张。留最早那张，因为第一票通常才是真人那次。
+  //
+  // 按「票单」而不是按角色名分组，有两个原因：
+  //  ① 角色显示名会撞车 —— 不同作品里同名的角色（「アリス」之类）在赛萌里很常见，
+  //     按名字分组会把两个不同角色当成一个，从而把另一个角色仅有的那张票也删掉；
+  //  ② 同一个角色在不同票单上各投一票是**合法**的（它在第 1 比赛日和第 3 比赛日
+  //     各有一场），按角色分组会把第二场那张正常票误判成重复票。
+  const byBallot = new Map<string, typeof rows>();
+  for (const r of rows) { if (!byBallot.has(r.ballot)) byBallot.set(r.ballot, []); byBallot.get(r.ballot)!.push(r); }
+
   const kill = new Set<number>();
-  const perTarget: { target: string; had: number; deleted: number }[] = [];
-  for (const [target, list] of byTarget) {
-    const sorted = [...list].sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
-    const doomed = sorted.slice(1); // 保留最早
-    doomed.forEach((r) => kill.add(r.id));
-    perTarget.push({ target, had: list.length, deleted: doomed.length });
+  /** 每个票单最后留下的那一张（rule (b) 绝不能碰它）。 */
+  const survivors = new Set<number>();
+  const perTargetAgg = new Map<string, { target: string; had: number; deleted: number }>();
+
+  for (const list of byBallot.values()) {
+    const sorted = [...list].sort((a, b) => (a.at ?? 0) - (b.at ?? 0) || a.id - b.id); // at 可能缺失（老票），用 id 兜底保证顺序稳定
+    survivors.add(sorted[0].id);
+    for (const r of sorted.slice(1)) kill.add(r.id);
+    // 展示仍按角色聚合（同一角色跨多个票单的数字合起来看更直观）
+    const k = String(sorted[0].candidateId);
+    const cur = perTargetAgg.get(k) || { target: sorted[0].target, had: 0, deleted: 0 };
+    cur.had += list.length;
+    cur.deleted += list.length - 1;
+    perTargetAgg.set(k, cur);
   }
-  // (b) 每个身份至少删 1 票
+  const perTarget = [...perTargetAgg.values()];
+
+  // ── (b) 本轮封禁簇里的**每一个**身份 ─────────────────────────────────────────
+  //
+  // 目的是「参与刷票的身份本轮都别再投了」。以前的做法是：某身份在 (a) 里一票没被删，
+  // 就再删掉它最新的一票 —— 因为封禁是靠「你有票被删」推导出来的。
+  //
+  // 那个做法有个 BUG：一个身份在 (a) 里没被删，恰恰说明它的每一票都是所属票单里
+  // **仅存的那一张**。再删一张，那个票单就归零了，直接违背 (a) 的「每个角色留一张」。
+  // 上面例子里 E 只有 1 票，投它的那个身份就正好是这种情况，E 会被清成 0 票。
+  //
+  // 改法是把「封禁」和「删票」解耦：封禁名单单独返回，(a) 保留下来的票一张都不再动。
+  // 两个目标于是同时成立 —— 每个角色留一张，且每个身份本轮都被封。
   const byIdent = new Map<string, typeof rows>();
   for (const r of rows) { if (!byIdent.has(r.voterId)) byIdent.set(r.voterId, []); byIdent.get(r.voterId)!.push(r); }
-  const perIdentity: { voterId: string; had: number; deleted: number }[] = [];
+
+  const perIdentity: { voterId: string; had: number; deleted: number; banned: boolean }[] = [];
+  /** 没有任何票被删、但仍要本轮封禁的身份（连同其设备标识，便于换 voter_id 也拦得住）。 */
+  const banOnly: { voterId: string; bucket: string | null }[] = [];
   for (const [voterId, list] of byIdent) {
-    let deleted = list.filter((r) => kill.has(r.id)).length;
-    if (deleted === 0) {
-      const latest = [...list].sort((a, b) => (b.at ?? 0) - (a.at ?? 0))[0];
-      if (latest) { kill.add(latest.id); deleted = 1; }
-    }
-    perIdentity.push({ voterId, had: list.length, deleted });
+    const deleted = list.filter((r) => kill.has(r.id)).length;
+    if (deleted === 0) banOnly.push({ voterId, bucket: list.find((r) => r.bucket)?.bucket ?? null });
+    perIdentity.push({ voterId, had: list.length, deleted, banned: true });
   }
-  // 影响预估：删完之后总票数归零的角色
+
+  // ── 影响预估 ────────────────────────────────────────────────────────────────
+  // 按 candidate_id 统计，不按名字（同名角色会被合并，数字就错了）。
+  const totalById = new Map<number, number>();
+  for (const v of db.nominationVotes) if (v.competition_id === cid)
+    totalById.set(v.candidate_id, (totalById.get(v.candidate_id) || 0) + 1);
+  for (const v of db.approvalVotes) if (v.competition_id === cid)
+    totalById.set(v.candidate_id, (totalById.get(v.candidate_id) || 0) + 1);
+
+  const killedById = new Map<number, number>();
+  for (const r of rows) if (kill.has(r.id)) killedById.set(r.candidateId, (killedById.get(r.candidateId) || 0) + 1);
+
   const nameOf = (id: number) => { const c = db.candidates.find((x) => x.id === id); return c ? (c.name_cn || c.name) : `#${id}`; };
-  const totalByName = new Map<string, number>();
-  for (const v of db.nominationVotes) if (v.competition_id === cid) {
-    const n = nameOf(v.candidate_id); totalByName.set(n, (totalByName.get(n) || 0) + 1);
-  }
-  for (const v of db.approvalVotes) if (v.competition_id === cid) {
-    const n = nameOf(v.candidate_id); totalByName.set(n, (totalByName.get(n) || 0) + 1);
-  }
-  const killedByName = new Map<string, number>();
-  for (const r of rows) if (kill.has(r.id)) killedByName.set(r.target, (killedByName.get(r.target) || 0) + 1);
+  const comp = db.competitions.find((c) => c.id === cid);
+  const minVotes = comp?.nom_min_votes ?? 0;
+
   const zeroed: { target: string; totalBefore: number }[] = [];
-  for (const [name, k] of killedByName) {
-    const before = totalByName.get(name) || 0;
-    if (before > 0 && before - k <= 0) zeroed.push({ target: name, totalBefore: before });
+  const belowMin: { target: string; totalBefore: number; totalAfter: number }[] = [];
+  for (const [candId, k] of killedById) {
+    const before = totalById.get(candId) || 0;
+    if (before <= 0) continue;
+    const after = before - k;
+    if (after <= 0) zeroed.push({ target: nameOf(candId), totalBefore: before });
+    // 归零现在几乎不会发生了（每个票单都留了一张），真正的风险是掉到最低提名票以下 →
+    // 角色会直接失去参赛资格，这个后果必须在执行前让运营看见。
+    else if (minVotes > 0 && before >= minVotes && after < minVotes)
+      belowMin.push({ target: nameOf(candId), totalBefore: before, totalAfter: after });
   }
+
   perTarget.sort((a, b) => b.deleted - a.deleted || b.had - a.had);
   perIdentity.sort((a, b) => b.deleted - a.deleted);
-  return { ids: [...kill], perTarget, perIdentity, zeroed };
+  return { ids: [...kill], perTarget, perIdentity, zeroed, belowMin, banOnly, keptPerBallot: survivors.size };
 }

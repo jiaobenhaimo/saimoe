@@ -25,3 +25,6 @@ jobs:
       # Guards upgrades against an in-flight tournament's existing data file.
       - name: Legacy data compatibility test
         run: npm run test:compat
+      # Encodes the operator's two voiding rules, which used to conflict.
+      - name: Smart-void planner test
+        run: npm run test:fraud-plan

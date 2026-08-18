@@ -920,7 +920,8 @@ export default function Admin() {
                 {smart && (
                   <div className="smart-plan">
                     <div className="probe-sub" style={{ borderTop: "none" }}>
-                      智能删票方案：将删除 <b>{smart.ids.length}</b> 票（每个角色只留最早 1 票，且每个身份至少删 1 票）
+                      智能删票方案：删除 <b>{smart.ids.length}</b> 票，保留 <b>{smart.keptPerBallot}</b> 票
+                      （每个角色留最早的 1 张），本轮封禁 <b>{smart.perIdentity.length}</b> 个身份
                     </div>
                     <p className="hint">
                       按角色：{smart.perTarget.filter((t: any) => t.deleted > 0).map((t: any) => `${t.target} ${t.had}→1`).join("、") || "无重复票"}
@@ -928,19 +929,32 @@ export default function Admin() {
                     <p className="hint">
                       按身份：{smart.perIdentity.map((i: any) => `${i.voterId.replace(/^sid_/, "").slice(0, 6)}… 删 ${i.deleted}/${i.had}`).join("、")}
                     </p>
+                    {/* 这些身份手上那张票正好是某个角色仅存的一张，按「每个角色留一张」的规则保留了，
+                        但人仍然要本轮封禁 —— 否则保住票的那个人反而成了唯一没被处理的。 */}
+                    {smart.banOnly?.length > 0 && (
+                      <p className="hint">
+                        其中 <b>{smart.banOnly.length}</b> 个身份不删票、仅本轮封禁：它们投的那张是对应角色仅存的一票，按规则保留。
+                      </p>
+                    )}
                     {smart.zeroed.length > 0 && (
                       <p className="hint" style={{ color: "var(--danger)" }}>
                         ⚠ 执行后这些角色总票数会归零{smart.zeroed.map((z: any) => `：${z.target}（现 ${z.totalBefore} 票）`).join("")}。
-                        若设了「进入小组赛需 ≥N 提名票」，它们会失去资格。
+                      </p>
+                    )}
+                    {smart.belowMin?.length > 0 && (
+                      <p className="hint" style={{ color: "var(--danger)" }}>
+                        ⚠ 执行后这些角色会掉到「最低提名票」以下、失去参赛资格
+                        {smart.belowMin.map((z: any) => `：${z.target}（${z.totalBefore}→${z.totalAfter}）`).join("")}。
                       </p>
                     )}
                     <div style={{ display: "flex", gap: 8, padding: "0 12px 12px" }}>
-                      <button className="btn danger solid" disabled={busy || smart.ids.length === 0} onClick={async () => {
-                        if (!confirm(`按方案作废 ${smart.ids.length} 票？不可撤销。`)) return;
-                        await act("invalidate_vote_ids", { ids: smart.ids });
+                      <button className="btn danger solid" disabled={busy || (smart.ids.length === 0 && !smart.banOnly?.length)} onClick={async () => {
+                        if (!confirm(`按方案作废 ${smart.ids.length} 票、封禁 ${smart.perIdentity.length} 个身份（本轮）？删票不可撤销。`)) return;
+                        // banOnly 必须一起传：封禁不再由「有票被删」推导，没被删票的身份要显式带上。
+                        await act("invalidate_vote_ids", { ids: smart.ids, banOnly: smart.banOnly || [] });
                         setSmart(null); setPicked(new Set());
                         if (probe) await openProbe(probe); await loadObs();
-                      }}>执行方案（{smart.ids.length} 票）</button>
+                      }}>执行方案（删 {smart.ids.length} 票 · 封 {smart.perIdentity.length} 身份）</button>
                       <button className="btn" onClick={() => { setSmart(null); setPicked(new Set()); }}>放弃方案</button>
                     </div>
                   </div>

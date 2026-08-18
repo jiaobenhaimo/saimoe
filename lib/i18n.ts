@@ -83,6 +83,9 @@ const D: Record<string, Entry> = {
   "nom.mergedInto": { zh: "已并入「{name}」，票数计入该角色", en: "merged into “{name}” — votes count there", ja: "「{name}」に統合：票はそちらに集計" },
   "jp.filtered": { zh: "已隐藏 {n} 个非日本作品角色", en: "{n} non-Japanese-work characters hidden", ja: "日本作品でないキャラ {n} 件を非表示" },
   "warn.blocked": { zh: "你在本轮有 {n} 张票因异常投票被作废，本轮已不能再投票或提名。下一轮可以正常参与。", en: "{n} of your votes this round were voided for irregular voting, so you cannot vote or nominate for the rest of this round. You can take part again next round.", ja: "今ラウンドで不正投票として {n} 票が無効化されたため、このラウンドでは投票・推薦できません。次のラウンドから再び参加できます。" },
+  // count 为 0 的封禁：智能删票为了「每个角色留一张票」保留了它那张票，但身份仍要本轮封禁。
+  // 单独一句话，绝不能复用 warn.blocked —— 那句会说「你有 0 张票被作废」，既费解又像 bug。
+  "warn.blocked0": { zh: "你的投票被判定为异常投票（同一设备/网络重复投票），本轮已不能再投票或提名。下一轮可以正常参与。", en: "Your voting was flagged as irregular (repeat voting from one device/network), so you cannot vote or nominate for the rest of this round. You can take part again next round.", ja: "同一端末・同一ネットワークからの重複投票と判定されたため、このラウンドでは投票・推薦できません。次のラウンドから再び参加できます。" },
   "warn.sanction": { zh: "提示：你此前有 {n} 张票因异常投票被作废。请只用一个身份正常投票；重复清除缓存、换设备或多开账号刷票，可能导致后续投票全部无效。", en: "Notice: {n} of your earlier votes were voided for irregular voting. Please vote once, from one identity — repeatedly clearing storage, switching devices or running multiple accounts may invalidate all your future votes.", ja: "お知らせ：不正な投票として、以前の {n} 票が無効化されました。投票は一つの識別情報から一度だけ行ってください。キャッシュ削除や端末の使い分け、複数アカウントでの重複投票は、以後の投票がすべて無効になる場合があります。" },
   "net.slow": { zh: "网络较慢或连接失败，请稍后重试。", en: "Network is slow or unavailable — please retry.", ja: "通信が遅いか失敗しました。しばらくして再試行してください。" },
   "search.trysubject": { zh: "没搜到角色（或跨域受限）。试试下面的「搜作品名」导入。", en: "No character results (or blocked). Try \u201Csearch anime\u201D below.", ja: "キャラが見つかりません。下の「作品名で検索」をお試しください。" },

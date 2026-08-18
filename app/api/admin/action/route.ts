@@ -117,9 +117,17 @@ export async function POST(req: NextRequest) {
     }
     if (action === "invalidate_vote_ids") {
       const ids = Array.isArray(body.ids) ? body.ids.map(Number) : [];
-      const n = invalidateVoteIds(comp.id, ids);
-      rec(`作废 ${n} 张指定的票`);
-      return NextResponse.json({ ok: true, message: `已作废 ${n} 张票。结算类阶段请再执行「按当前票数重算本轮」。`, removed: n });
+      // banOnly：智能删票为了「每个角色留一张票」而保留了其票的刷票身份。它们没有票被删，
+      // 但必须本轮封禁 —— 否则「保住那张票的那个人」正好是唯一逃过封禁的人。
+      const banOnly: { voterId: string; bucket: string | null }[] = Array.isArray(body.banOnly)
+        ? body.banOnly
+            .map((b: any) => ({ voterId: String(b?.voterId || ""), bucket: b?.bucket ? String(b.bucket) : null }))
+            .filter((b: { voterId: string }) => b.voterId)
+        : [];
+      const n = invalidateVoteIds(comp.id, ids, banOnly);
+      const banNote = banOnly.length ? `，另有 ${banOnly.length} 个身份本轮封禁（其票为各角色仅存的一张，按规则保留）` : "";
+      rec(`作废 ${n} 张指定的票${banNote}`);
+      return NextResponse.json({ ok: true, message: `已作废 ${n} 张票${banNote}。结算类阶段请再执行「按当前票数重算本轮」。`, removed: n, banned: banOnly.length });
     }
     if (action === "clear_freeze_plan") {
       clearFreezePlan(comp.id);

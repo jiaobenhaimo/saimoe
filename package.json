@@ -7,9 +7,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "tsx scripts/smoke.mts && tsx scripts/compat.mts",
+    "test": "tsx scripts/smoke.mts && tsx scripts/compat.mts && tsx scripts/fraud-plan.mts",
     "test:smoke": "tsx scripts/smoke.mts",
-    "test:compat": "tsx scripts/compat.mts"
+    "test:compat": "tsx scripts/compat.mts",
+    "test:fraud-plan": "tsx scripts/fraud-plan.mts"
   },
   "dependencies": {
     "next": "^15.1.0",

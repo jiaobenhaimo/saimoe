@@ -51,7 +51,11 @@ export async function POST(req: NextRequest) {
     // 本轮被作废过票的身份，本轮连提名也一并停掉——否则禁投形同虚设（还能继续加角色）
     const sanc = voterSanction({ voterId: vid, bucket: await getDeviceBucket() }, roundKeyOf(comp), snap);
     if (sanc?.blockedThisRound)
-      return NextResponse.json({ error: `你在本轮有 ${sanc.count} 张票因异常投票被作废，本轮已不能再提名或投票。`, sanctioned: true }, { status: 403 });
+      // count 可以是 0：智能删票为了「每个角色留一张票」保留了它那张，但身份仍本轮封禁。
+      // 此时绝不能说「0 张票被作废」。
+      return NextResponse.json({ error: sanc.count > 0
+        ? `你在本轮有 ${sanc.count} 张票因异常投票被作废，本轮已不能再提名或投票。`
+        : `你的投票被判定为异常投票（同一设备/网络重复投票），本轮已不能再提名或投票。`, sanctioned: true }, { status: 403 });
 
     // WeChat gate: when on, only users arriving via a per-user 公众号 link may modify the pool.
     if (gateOn() && !verifyToken(req.cookies.get(VOTER_COOKIE)?.value))

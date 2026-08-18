@@ -55,7 +55,11 @@ export async function POST(req: NextRequest) {
     const round = roundKeyOf(comp);
     const sanc = voterSanction({ voterId, bucket: meta.bucket }, round, snap);
     if (sanc?.blockedThisRound)
-      return NextResponse.json({ error: `你在本轮有 ${sanc.count} 张票因异常投票被作废，本轮已不能再投票。下一轮可正常参与。`, sanctioned: true }, { status: 403 });
+      // count 可以是 0：智能删票为了「每个角色留一张票」保留了它那张，但身份仍本轮封禁。
+      // 此时绝不能说「0 张票被作废」。
+      return NextResponse.json({ error: sanc.count > 0
+        ? `你在本轮有 ${sanc.count} 张票因异常投票被作废，本轮已不能再投票。下一轮可正常参与。`
+        : `你的投票被判定为异常投票（同一设备/网络重复投票），本轮已不能再投票。下一轮可正常参与。`, sanctioned: true }, { status: 403 });
 
     const body = await req.json();
 
