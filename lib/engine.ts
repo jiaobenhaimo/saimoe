@@ -1092,6 +1092,7 @@ export function clearSchedule(cid: number) {
   const comp = db.competitions.find((c) => c.id === cid);
   if (!comp) return;
   comp.nom_ends_at = null; comp.group_ends_at = null; comp.ko_round_ends_at = null; comp.group_round_ends_at = null;
+  comp.break_anchor = null; // 没有截止时间就没有网格可锚
   writeDb(db);
 }
 
@@ -1141,11 +1142,28 @@ function dropMatchups(db: DB, cid: number, pred: (m: Matchup) => boolean): void 
 }
 
 /** 撤回上一步阶段推进（仅一步）：finished→knockout、knockout→上一轮/小组赛、小组赛→提名。 */
+/**
+ * Wipe the intermission bookkeeping. Call whenever a round is un-done or re-planned.
+ *
+ * Why it matters: break_after records "this round already had its break", which is what stops the
+ * scheduler re-arming a break forever. After an undo the round is going to be run AGAIN, so that
+ * marker is stale — leaving it makes the retry skip its review window entirely, which is exactly
+ * the run where the operator most wants one (they just undid something). A stale break_until would
+ * also keep voting shut after the phase moved, and a stale break_anchor could anchor the next
+ * deadline to a round that no longer exists.
+ */
+function clearBreakState(comp: Competition): void {
+  comp.break_until = null;
+  comp.break_after = null;
+  comp.break_anchor = null;
+}
+
 export function undoLastTransition(cid: number): string {
   const db = readDb();
   const comp = db.competitions.find((c) => c.id === cid);
   if (!comp) throw new Error("比赛不存在。");
   if (comp.phase === "nomination") throw new Error("提名阶段没有可撤销的步骤。");
+  clearBreakState(comp); // 这一轮要重新跑，休赛期记录一律作废（见 clearBreakState）
 
   if (comp.phase === "group") {
     dropMatchups(db, cid, (m) => m.stage === "group");
@@ -1265,6 +1283,8 @@ export function setPhaseDeadline(cid: number, hours: number) {
   if (comp.phase === "nomination") comp.nom_ends_at = at;
   else if (comp.phase === "group") comp.group_round_ends_at = at;
   else if (comp.phase === "knockout") comp.ko_round_ends_at = at;
+  // 管理员手动改本阶段截止 = 重新定义时间网格，旧的休赛期锚点不再适用
+  comp.break_anchor = null;
   writeDb(db);
 }
 

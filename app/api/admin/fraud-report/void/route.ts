@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { adminOk } from "@/lib/adminauth";
-import { ensureSchema, dataFilePath, invalidateVotes, logAudit, readDb } from "@/lib/db";
+import { ensureSchema, dataFilePath, invalidateVotes, logAudit, readDb, readDbRO } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { short } from "@/lib/fraud";
 
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     const reason = String(body.reason || "异常投票簇处置");
     const clusters = Array.isArray(body.clusters) ? body.clusters : [];
 
-    const comp = readDb().competitions.find((c) => c.id === cid);
+    const comp = readDbRO().competitions.find((c) => c.id === cid);
     const phase = comp?.phase ?? "nomination";
     const needsResettle = phase !== "nomination";
 
@@ -81,13 +81,43 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** 把当前整库快照写进 $DATA_DIR/snapshots/pre-void-{ts}.json，返回文件路径。 */
+/** 保留多少份作废前快照。作废是不可撤销操作，留几份才有回滚余地；但也不能无限留。 */
+const VOID_SNAPSHOT_KEEP = Math.max(1, Number(process.env.VOID_SNAPSHOT_KEEP) || 20);
+
+/**
+ * 把当前整库快照写进 $DATA_DIR/snapshots/pre-void-{ts}.json，返回文件路径。
+ *
+ * 两处必须注意：
+ *  ① **要淘汰旧快照**。这些文件和实时数据文件在同一个卷上，每次作废写一份整库副本；
+ *     一届几万票的比赛快照本身就不小，运营连点十几次作废就可能把卷写满 —— 而卷一满，
+ *     实时数据的写入也会失败，等于把比赛写挂。原先这里没有任何淘汰逻辑。
+ *  ② **临时文件 + rename**。快照是回滚的唯一依据，写一半崩掉留下的截断 JSON 比没有快照更糟：
+ *     真要回滚时才发现它不可用。
+ */
 function snapshotDb(): string {
   const db = readDb();
   const dir = path.join(path.dirname(dataFilePath()), "snapshots");
   fs.mkdirSync(dir, { recursive: true });
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const file = path.join(dir, `pre-void-${ts}.json`);
-  fs.writeFileSync(file, JSON.stringify(db));
+  const tmp = file + "." + process.pid + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(db));
+  fs.renameSync(tmp, file);
+  pruneSnapshots(dir);
   return file;
+}
+
+/** 只保留最近 VOID_SNAPSHOT_KEEP 份 pre-void 快照，其余删掉。 */
+function pruneSnapshots(dir: string): void {
+  try {
+    const files = fs.readdirSync(dir)
+      .filter((f) => f.startsWith("pre-void-") && f.endsWith(".json"))
+      .sort(); // ISO 时间戳，字典序即时间序
+    while (files.length > VOID_SNAPSHOT_KEEP) {
+      const old = files.shift();
+      if (old) { try { fs.unlinkSync(path.join(dir, old)); } catch {} }
+    }
+    // 顺手清掉上次崩溃留下的临时文件
+    for (const f of fs.readdirSync(dir)) if (f.endsWith(".tmp")) { try { fs.unlinkSync(path.join(dir, f)); } catch {} }
+  } catch { /* 清理失败不该让作废操作失败 */ }
 }

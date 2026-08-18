@@ -1,4 +1,4 @@
-import { readDb, writeDb, mergeGroups, topLevel, type DB } from "./db";
+import { readDb, readDbRO, writeDb, mergeGroups, topLevel, type DB } from "./db";
 import { normalizeIp } from "./ip";
 
 /**
@@ -43,9 +43,15 @@ export interface FraudImpactRow {
 }
 
 export interface FraudImpact {
-  cutLine: number;       // 第 auto_size 名的票数
+  cutLine: number;       // 第 auto_size 名的票数（仅提名阶段有意义）
   tiedAtCutLine: number; // 与切线同票数的人数（提示需要 tiebreak）
   affected: FraudImpactRow[];
+  /** 这份预估算的是哪个阶段的影响。UI 据此换措辞（晋级线 / 出线名额 / 胜负）。 */
+  scope?: "nomination" | "approval" | "match";
+  /** 小组赛：作废后出线名次发生变化的组。 */
+  groupFlips?: { groupNo: number; inOut: string[]; outIn: string[] }[];
+  /** 淘汰赛：作废后胜者会改变的对局。 */
+  matchFlips?: { matchupId: number; before: string; after: string; decided: boolean }[];
 }
 
 export interface FraudCluster {
@@ -233,7 +239,7 @@ export function generateFraudReport(opts: FraudOptions = {}): FraudReport {
 
   const reviewedSet = new Set(db.fraudReviewed || []);
   const clusters: FraudCluster[] = buildClusters(identities, ctx)
-    .map((c) => ({ ...c, impact: impactOfVoters(db, cid, c.identities.map((i) => i.voterId), autoSize, nameOf), reviewed: reviewedSet.has(c.id) }))
+    .map((c) => ({ ...c, impact: impactOfVoters(db, cid, c.identities.map((i) => i.voterId), autoSize, nameOf, phase), reviewed: reviewedSet.has(c.id) }))
     .filter((c) => c.score >= minScore)
     .sort((a, b) => b.score - a.score);
 
@@ -245,7 +251,7 @@ export function generateFraudReport(opts: FraudOptions = {}): FraudReport {
     natSuspects: detectNat(identities),
   };
   if (opts.voterIds && opts.voterIds.length)
-    report.combinedImpact = impactOfVoters(db, cid, opts.voterIds, autoSize, nameOf);
+    report.combinedImpact = impactOfVoters(db, cid, opts.voterIds, autoSize, nameOf, phase);
   return report;
 }
 
@@ -750,7 +756,98 @@ function detectNat(identities: Map<string, Identity>): { ipNorm: string; identit
  * 把指定 voter 的全部票剔除后，按提名规则（合并组去重 + 取前 auto_size）重新排名，
  * 给出切线、平票人数与受影响角色（票数变化 / 跨越晋级线）。
  */
-function impactOfVoters(db: DB, cid: number, voterIds: string[], autoSize: number, nameOf: (id: number) => string): FraudImpact {
+/**
+ * What voiding these identities would change.
+ *
+ * BUG FIX: this used to recompute the NOMINATION ranking regardless of phase. Once the group stage
+ * was under way, voiding approval or matchup votes left the nomination tallies untouched, so the
+ * preview cheerfully reported "no candidate crosses the cut" — telling the operator the void was
+ * harmless when it could in fact flip who advances out of a group or who wins a knockout tie. In
+ * this competition's format (6-choose-2 groups, then 1-of-2 matchups) a handful of votes decides a
+ * whole matchup, so a blind preview is worse than none. Each phase now reports its own stakes.
+ */
+function impactOfVoters(db: DB, cid: number, voterIds: string[], autoSize: number, nameOf: (id: number) => string, phase = "nomination"): FraudImpact {
+  if (phase === "approval") return approvalImpact(db, cid, voterIds, nameOf);
+  if (phase === "match") return matchImpact(db, cid, voterIds, nameOf);
+  return nominationImpact(db, cid, voterIds, autoSize, nameOf);
+}
+
+/** 小组赛（每组取前 2）：作废后哪几组的出线名额会换人。 */
+function approvalImpact(db: DB, cid: number, voterIds: string[], nameOf: (id: number) => string): FraudImpact {
+  const voidSet = new Set(voterIds);
+  const grouped = db.candidates.filter((c) => c.competition_id === cid && c.group_no != null);
+  const byGroup = new Map<number, number[]>();
+  for (const c of grouped) {
+    const g = c.group_no!;
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g)!.push(c.id);
+  }
+  const tally = (keep: (v: { voter_id: string }) => boolean) => {
+    const m = new Map<number, number>();
+    for (const v of db.approvalVotes) if (v.competition_id === cid && keep(v)) m.set(v.candidate_id, (m.get(v.candidate_id) || 0) + 1);
+    return m;
+  };
+  const before = tally(() => true);
+  const after = tally((v) => !voidSet.has(v.voter_id));
+  const seedOf = new Map(grouped.map((c) => [c.id, c.seed ?? Number.MAX_SAFE_INTEGER]));
+  const top2 = (ids: number[], t: Map<number, number>) =>
+    [...ids].sort((a, b) => (t.get(b) || 0) - (t.get(a) || 0) || (seedOf.get(a)! - seedOf.get(b)!)).slice(0, 2);
+
+  const groupFlips: NonNullable<FraudImpact["groupFlips"]> = [];
+  const affected: FraudImpactRow[] = [];
+  for (const [g, ids] of [...byGroup.entries()].sort((a, b) => a[0] - b[0])) {
+    const bTop = new Set(top2(ids, before)), aTop = new Set(top2(ids, after));
+    const inOut = [...bTop].filter((id) => !aTop.has(id)).map(nameOf);
+    const outIn = [...aTop].filter((id) => !bTop.has(id)).map(nameOf);
+    if (inOut.length || outIn.length) groupFlips.push({ groupNo: g, inOut, outIn });
+    for (const id of ids) {
+      const b = before.get(id) || 0, a = after.get(id) || 0;
+      if (b === a) continue;
+      affected.push({
+        candidateId: id, nameCn: nameOf(id), votesBefore: b, votesAfter: a,
+        rankBefore: top2(ids, before).indexOf(id) + 1 || -1,
+        rankAfter: top2(ids, after).indexOf(id) + 1 || -1,
+        crossesCut: bTop.has(id) && !aTop.has(id) ? "in→out" : !bTop.has(id) && aTop.has(id) ? "out→in" : "none",
+      });
+    }
+  }
+  affected.sort((a, b) => (b.crossesCut === "in→out" ? 1 : 0) - (a.crossesCut === "in→out" ? 1 : 0) || b.votesBefore - a.votesBefore);
+  return { cutLine: 0, tiedAtCutLine: 0, affected, scope: "approval", groupFlips };
+}
+
+/** 淘汰赛（二选一）：作废后哪几场的胜者会改变。 */
+function matchImpact(db: DB, cid: number, voterIds: string[], nameOf: (id: number) => string): FraudImpact {
+  const voidSet = new Set(voterIds);
+  const ms = db.matchups.filter((m) => m.competition_id === cid && m.stage !== "group");
+  const seedOf = new Map(db.candidates.filter((c) => c.competition_id === cid).map((c) => [c.id, c.seed ?? Number.MAX_SAFE_INTEGER]));
+  const matchFlips: NonNullable<FraudImpact["matchFlips"]> = [];
+  const affected: FraudImpactRow[] = [];
+  for (const m of ms) {
+    let aB = 0, bB = 0, aA = 0, bA = 0;
+    for (const v of db.matchVotes) {
+      if (v.matchup_id !== m.id) continue;
+      const kept = !voidSet.has(v.voter_id);
+      if (v.choice_id === m.a_id) { aB++; if (kept) aA++; }
+      else if (v.choice_id === m.b_id) { bB++; if (kept) bA++; }
+    }
+    if (aB === aA && bB === bA) continue; // 这场没有票被作废
+    // 与 decide() 同一套判定：平票判种子更高者
+    const win = (x: number, y: number) => (x !== y ? (x > y ? m.a_id : m.b_id) : (seedOf.get(m.a_id)! <= seedOf.get(m.b_id)! ? m.a_id : m.b_id));
+    const wB = win(aB, bB), wA = win(aA, bA);
+    if (wB !== wA) matchFlips.push({ matchupId: m.id, before: nameOf(wB), after: nameOf(wA), decided: m.decided });
+    for (const [id, b, a] of [[m.a_id, aB, aA], [m.b_id, bB, bA]] as [number, number, number][]) {
+      if (b === a) continue;
+      affected.push({
+        candidateId: id, nameCn: nameOf(id), votesBefore: b, votesAfter: a, rankBefore: -1, rankAfter: -1,
+        crossesCut: wB === id && wA !== id ? "in→out" : wB !== id && wA === id ? "out→in" : "none",
+      });
+    }
+  }
+  affected.sort((a, b) => (b.crossesCut === "in→out" ? 1 : 0) - (a.crossesCut === "in→out" ? 1 : 0) || b.votesBefore - a.votesBefore);
+  return { cutLine: 0, tiedAtCutLine: 0, affected, scope: "match", matchFlips };
+}
+
+function nominationImpact(db: DB, cid: number, voterIds: string[], autoSize: number, nameOf: (id: number) => string): FraudImpact {
   const voidSet = new Set(voterIds);
   const before = rankVotes(db, cid, db.nominationVotes);
   const after = rankVotes(
@@ -780,7 +877,7 @@ function impactOfVoters(db: DB, cid: number, voterIds: string[], autoSize: numbe
     });
   });
   affected.sort((a, b) => (b.crossesCut === "in→out" ? 1 : 0) - (a.crossesCut === "in→out" ? 1 : 0) || b.votesBefore - a.votesBefore);
-  return { cutLine, tiedAtCutLine, affected };
+  return { cutLine, tiedAtCutLine, affected, scope: "nomination" };
 }
 
 /** 按合并组去重后的提名票数给「顶层」角色排名（与 startGroups 的晋级口径一致）。 */
@@ -798,15 +895,15 @@ function rankVotes(db: DB, cid: number, votes: { competition_id: number; candida
 }
 
 /** 公开入口：计算「这些身份全部作废」对晋级结果的影响（不修改任何数据）。 */
-export function computeImpact(cid: number, voterIds: string[]): FraudImpact {
-  const db = readDb();
+export function computeImpact(cid: number, voterIds: string[], phase = "nomination"): FraudImpact {
+  const db = readDbRO();
   const comp = db.competitions.find((c) => c.id === cid);
   const autoSize = comp?.auto_size ?? 0;
   const nameOf = (id: number) => {
     const c = db.candidates.find((x) => x.id === id);
     return c ? (c.name_cn || c.name) : `#${id}`;
   };
-  return impactOfVoters(db, cid, voterIds, autoSize, nameOf);
+  return impactOfVoters(db, cid, voterIds, autoSize, nameOf, phase);
 }
 
 // ── 白名单 ──────────────────────────────────────────────────────────────────

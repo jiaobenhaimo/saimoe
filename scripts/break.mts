@@ -115,6 +115,38 @@ setField(cid3, { break_until: Date.now() - 1000 });
 sch.runTick(true);
 check("after unfreezing, the expired intermission resolves", db.breakState(cid3).active === false);
 
+// ── undo must not let a re-run round skip its review window ──
+// break_after records "this round already had its break", which is what stops the scheduler
+// re-arming one forever. After an undo the round runs AGAIN, so that marker is stale: leaving it
+// made the retry skip its break entirely — the one run where the operator most wants to look at
+// the votes, since they just undid something.
+{
+  const cidU = db.createCompetition("undo-break");
+  db.addCandidates(cidU, Array.from({ length: 16 }, (_, i) => ({ bgmId: "u" + i, name: "U" + i })));
+  const pu = db.readDb().candidates.filter((c) => c.competition_id === cidU);
+  pu.forEach((c, i) => { for (let v = 0; v <= pu.length - i; v++) db.toggleNomination(cidU, c.id, `uv_${c.id}_${v}`); });
+  const nomEnd3 = Date.now() - 3600_000;
+  setField(cidU, { auto_size: 16, group_size: 4, groups_per_day: 2, group_round_days: 1,
+    nom_ends_at: nomEnd3, break_hours: 4 });
+
+  sch.runTick(true);                                    // -> break after nomination
+  check("first run takes its break", db.breakState(cidU).active === true);
+  setField(cidU, { break_until: Date.now() - 1000 });
+  sch.runTick(true);                                    // -> group stage
+  check("group stage opened", db.readDb().competitions.find((c) => c.id === cidU)!.phase === "group");
+
+  eng.undoLastTransition(cidU);                         // back to nomination
+  const cu = db.readDb().competitions.find((c) => c.id === cidU)!;
+  check("undo returns to nomination", cu.phase === "nomination");
+  check("undo clears break_after", cu.break_after == null, `after=${cu.break_after}`);
+  check("undo clears break_until and break_anchor", cu.break_until == null && cu.break_anchor == null);
+
+  // re-run: the deadline is due again, so the break must be granted a second time
+  setField(cidU, { nom_ends_at: Date.now() - 3600_000 });
+  sch.runTick(true);
+  check("the re-run round gets its break again", db.breakState(cidU).active === true);
+}
+
 // ── admin controls ──
 db.setBreakHours(cid3, 12);
 check("setBreakHours stores the value", db.breakState(cid3).hours === 12);

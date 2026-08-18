@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminOk } from "@/lib/adminauth";
-import { ensureSchema, logAudit, readDb } from "@/lib/db";
+import { ensureSchema, logAudit, readDbRO } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { computeImpact, generateFraudReport, setReviewed } from "@/lib/fraud";
 
@@ -32,9 +32,11 @@ export async function GET(req: NextRequest) {
   const voterIds = (sp.get("voterIds") || "").split(",").map((s) => s.trim()).filter(Boolean);
   // 轻量模式：只要「当前勾选组合」的合并影响预览，不重新跑整份报告
   if (sp.get("impactOnly") === "1" && voterIds.length) {
-    const comps = readDb().competitions;
+    const comps = readDbRO().competitions;
     const resolvedCid = cid || (comps.length ? Math.max(...comps.map((c) => c.id)) : 0);
-    if (resolvedCid) return NextResponse.json({ combinedImpact: computeImpact(resolvedCid, voterIds) });
+    // phase 必须一起传：不同阶段作废影响的是不同东西（提名排名 / 小组出线 / 单场胜负），
+    // 少传就会回到「只算提名排名」的旧行为，在小组赛期间给出一份看起来无害的假预览。
+    if (resolvedCid) return NextResponse.json({ combinedImpact: computeImpact(resolvedCid, voterIds, phase) });
   }
   const report = generateFraudReport({
     competitionId: cid || undefined,

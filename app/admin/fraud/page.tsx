@@ -29,7 +29,13 @@ interface Cluster {
   signals: { code: string; strength: number; weight: number; evidence: string }[];
   reverse: { code: string; evidence: string }[];
   timeline: { at: number; voterId: string; candidate: string; ip: string }[];
-  impact: { cutLine: number; tiedAtCutLine: number; affected: { candidateId: number; nameCn: string; votesBefore: number; rankBefore: number; votesAfter: number; rankAfter: number; crossesCut: string }[] };
+  impact: {
+    cutLine: number; tiedAtCutLine: number;
+    affected: { candidateId: number; nameCn: string; votesBefore: number; rankBefore: number; votesAfter: number; rankAfter: number; crossesCut: string }[];
+    scope?: "nomination" | "approval" | "match";
+    groupFlips?: { groupNo: number; inOut: string[]; outIn: string[] }[];
+    matchFlips?: { matchupId: number; before: string; after: string; decided: boolean }[];
+  };
   reviewed: boolean;
 }
 interface Report {
@@ -39,6 +45,13 @@ interface Report {
   clusters: Cluster[];
   natSuspects: { ipNorm: string; identities: number; buckets: number }[];
   combinedImpact?: Cluster["impact"];
+}
+
+/** 组号 → A/B/C…（与主站 groupLabel 一致）。 */
+function groupLetter(n: number): string {
+  let out = ""; let x = Math.max(0, Math.floor(n));
+  do { out = String.fromCharCode(65 + (x % 26)) + out; x = Math.floor(x / 26) - 1; } while (x >= 0);
+  return out;
 }
 
 export default function AdminFraud() {
@@ -232,8 +245,48 @@ export default function AdminFraud() {
           {selectedClusters.length > 0 && combined && (
             <div className="card" style={{ borderColor: "var(--rose)" }}>
               <h3>当前勾选组合的影响（{selectedClusters.length} 个簇 · {[...new Set(selectedClusters.flatMap((c) => c.identities.map((i) => i.voterId)))].length} 个身份）</h3>
-              <p className="hint">切线（第 {report.params.phase === "nomination" ? "48" : "?"} 名）在 <b>{combined.cutLine}</b> 票；与切线同票 <b>{combined.tiedAtCutLine}</b> 人（大面积平票会牵连 tiebreak）。作废后将跨越晋级线（in→out）的角色：</p>
-              {combined.affected.some((a) => a.crossesCut === "in→out") ? (
+              {/* 影响的口径随阶段变：提名看晋级线，小组赛看出线名额，淘汰赛看单场胜负。
+                  以前不论哪个阶段都只算提名排名，小组赛期间会给出一份"看起来无害"的假预览。 */}
+              {combined.scope === "approval" ? (
+                <>
+                  <p className="hint">小组赛口径：每组取前 2 名出线。作废后<b>出线名额会换人</b>的组：</p>
+                  {combined.groupFlips?.length ? (
+                    <div className="pool-admin">
+                      {combined.groupFlips.map((g) => (
+                        <div className="prow" key={g.groupNo}>
+                          <div className="meta">
+                            <div className="nm">{groupLetter(g.groupNo)} 组</div>
+                            <div className="sub">
+                              {g.inOut.length ? `掉出：${g.inOut.join("、")}` : ""}
+                              {g.inOut.length && g.outIn.length ? " · " : ""}
+                              {g.outIn.length ? `顶上：${g.outIn.join("、")}` : ""}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : <p className="hint">没有小组的出线名额发生变化。</p>}
+                </>
+              ) : combined.scope === "match" ? (
+                <>
+                  <p className="hint">淘汰赛口径：每场二选一。作废后<b>胜者会改变</b>的对局：</p>
+                  {combined.matchFlips?.length ? (
+                    <div className="pool-admin">
+                      {combined.matchFlips.map((m) => (
+                        <div className="prow" key={m.matchupId}>
+                          <div className="meta">
+                            <div className="nm">{m.before} → {m.after}</div>
+                            <div className="sub">对局 #{m.matchupId}{m.decided ? " · 已结算，作废后需「按当前票数重算本轮」" : " · 进行中"}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : <p className="hint">没有对局的胜者发生变化。</p>}
+                </>
+              ) : (
+                <p className="hint">提名口径：切线在 <b>{combined.cutLine}</b> 票；与切线同票 <b>{combined.tiedAtCutLine}</b> 人（大面积平票会牵连 tiebreak）。作废后将跨越晋级线（in→out）的角色：</p>
+              )}
+              {combined.scope !== "nomination" && combined.scope !== undefined ? null : combined.affected.some((a) => a.crossesCut === "in→out") ? (
                 <div className="pool-admin">
                   {combined.affected.filter((a) => a.crossesCut === "in→out").map((a) => (
                     <div className="prow" key={a.candidateId}>

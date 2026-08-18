@@ -139,5 +139,55 @@ check("one shared round alone cannot fire S9",
   !oneC?.signals.some((s) => s.code === "S9" && s.strength > 0),
   `${oneC?.signals.map((s) => s.code + ":" + s.strength.toFixed(2)).join(",")}`);
 
+// ── the void-impact preview must reflect the CURRENT phase ──
+// It used to recompute the nomination ranking no matter what phase the tournament was in, so during
+// the group stage it reported "no candidate crosses the cut" even when voiding would change who
+// advances. With 6-choose-2 groups a handful of votes decides a slot, so a blind preview is worse
+// than none — it actively reassures the operator that a damaging void is harmless.
+{
+  const cidI = db.createCompetition("impact-phase");
+  db.addCandidates(cidI, Array.from({ length: 6 }, (_, i) => ({ bgmId: "i" + i, name: "I" + i })));
+  const ci = db.readDb().candidates.filter((c) => c.competition_id === cidI);
+  // put all six in group 0 with seeds, and move to the group phase
+  {
+    const d = db.readDb();
+    for (const [i, c] of ci.entries()) {
+      const row = d.candidates.find((x) => x.id === c.id)!;
+      row.group_no = 0; row.seed = i;
+    }
+    const comp = d.competitions.find((x) => x.id === cidI)!;
+    comp.phase = "group"; comp.group_mode = "approval"; comp.group_matchday = 1;
+    comp.group_matchday_count = 1; comp.groups_per_day = 2; comp.groups_count = 1;
+    db.writeDb(d);
+  }
+  const [A2, B2, C2] = [ci[0].id, ci[1].id, ci[2].id];
+  const DEVI = "f".repeat(64);
+  // honest voters put A2 and B2 on top
+  for (let i = 0; i < 6; i++) {
+    db.castApprovalVote(cidI, A2, `ih${i}`, { bucket: `ih${i}`.padEnd(64, "0"), ip: "203.0.113.20" });
+    db.castApprovalVote(cidI, B2, `ih${i}`, { bucket: `ih${i}`.padEnd(64, "0"), ip: "203.0.113.20" });
+  }
+  // a stuffing cluster pushes C2 past B2
+  for (let i = 0; i < 7; i++) {
+    db.castApprovalVote(cidI, C2, `ib${i}`, { bucket: DEVI, ip: "203.0.113.21" });
+    db.castApprovalVote(cidI, A2, `ib${i}`, { bucket: DEVI, ip: "203.0.113.21" });
+  }
+  const stuffers = Array.from({ length: 7 }, (_, i) => `ib${i}`);
+
+  const nomView = fraud.computeImpact(cidI, stuffers);                 // no phase → old behaviour
+  check("without a phase the preview is blind (nomination scope)",
+    nomView.scope === "nomination" && nomView.affected.length === 0);
+
+  const grpView = fraud.computeImpact(cidI, stuffers, "approval");
+  check("with the group phase the preview uses group scope", grpView.scope === "approval");
+  check("it reports the group whose advancing pair changes",
+    (grpView.groupFlips?.length ?? 0) === 1, JSON.stringify(grpView.groupFlips));
+  const flip = grpView.groupFlips?.[0];
+  check("it names who drops out and who takes the slot",
+    !!flip && flip.inOut.length > 0 && flip.outIn.length > 0, JSON.stringify(flip));
+  check("the stuffed candidate is the one that drops out",
+    !!flip && flip.inOut.includes("I3") === false && flip.inOut.length === 1, JSON.stringify(flip?.inOut));
+}
+
 console.log(failures ? `\n${failures} failure(s)` : "\nall format-aware detection checks passed");
 process.exit(failures ? 1 : 0);
