@@ -31,3 +31,6 @@ jobs:
       # Ordering matters: stop voting -> check -> settle, never settle-then-check.
       - name: Intermission scheduling test
         run: npm run test:break
+      # 6-choose-2 groups and 1-of-2 knockout ballots: agreement must be scored by rarity.
+      - name: Format-aware detection test
+        run: npm run test:fraud-format

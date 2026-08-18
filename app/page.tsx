@@ -230,6 +230,21 @@ export default function Page() {
   const [justDone, setJustDone] = useState<Set<string>>(new Set()); // 刚提交成功的项：短暂高亮一下，给一个「成功了」的确认
   const [liveMsg, setLiveMsg] = useState(""); // 读屏播报（aria-live）
   /** 成功后的收尾：闪一下 + 轻微触感 + 播报，让点击有明确回应。 */
+  // 提名后要高亮的池内角色 id（配合 jumpToCandidate 用）
+  const [flashCand, setFlashCand] = useState<number | null>(null);
+
+  /** 点了「提名」之后把用户送到提名池里那一行：滚过去 + 短暂高亮。
+   *  角色已经在池里时尤其重要 —— 只说「已经在池里了」等于让用户自己去几百行里翻。 */
+  const jumpToCandidate = useCallback((candidateId: number) => {
+    setFlashCand(candidateId);
+    // 等一帧再滚：这一行可能是 load() 刚刷出来的，DOM 还没渲染
+    requestAnimationFrame(() => {
+      const el = document.getElementById("cand-" + candidateId);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    setTimeout(() => setFlashCand((v) => (v === candidateId ? null : v)), 2600);
+  }, []);
+
   const settle = useCallback((key: string, msg: string) => {
     setJustDone((s2) => new Set(s2).add(key));
     setTimeout(() => setJustDone((s2) => { const n = new Set(s2); n.delete(key); return n; }), 700);
@@ -382,13 +397,18 @@ export default function Page() {
     setNomPending((s2) => new Set(s2).add(key));
     try {
       const j = await post({ addChar: h.bgmId });
-      if (j?.error) setImportMsg(j.error);
-      else if (j?.duplicate) setImportMsg(T("nom.dup", { name: j.name || h.name }));
+      if (j?.error) { setImportMsg(j.error); return; }
+      if (j?.duplicate) setImportMsg(T("nom.dupJump", { name: j.name || h.name }));
       else {
         settle(key, T("nom.plus"));
         // 明确非日本作品时才提示；提示语本身就说明「已提交，管理员会复核」
         setImportMsg(T("nom.added", { name: j?.name || h.name }) + jpNote(j?.jp, false));
       }
+      // 先等池子刷新到位，再滚过去 —— 新加的角色在旧的 state 里还不存在，
+      // 立刻滚只会找不到那个 DOM 节点（这正是「点了没反应」的来源）。
+      await load();
+      if (j?.candidateId) jumpToCandidate(j.candidateId);
+      return;
     } catch { setImportMsg(T("net.slow")); }
     finally { setNomPending((s2) => { const n = new Set(s2); n.delete(key); return n; }); }
     void load(); // 后台刷新提名池
@@ -716,7 +736,14 @@ export default function Page() {
               {hits.map((h) => (
                 <div className="rrow" key={h.bgmId}>
                   <Avatar c={{ id: 0, name: h.name, nameCn: null, image: h.image }} />
-                  <div className="meta"><div className="nm">{h.name}</div><div className="sub">{T("nom.charTag")} · #{h.bgmId}</div></div>
+                  {/* 副行放「所属作品」：一次搜索经常返回几个同名角色，只看角色名分不出哪个是要的那个。 */}
+                  <div className="meta">
+                    <div className="nm">{h.nameCn || h.name}</div>
+                    <div className="sub">
+                      {h.nameCn && h.nameCn !== h.name ? h.name : ""}
+                      {(h.nameCn && h.nameCn !== h.name ? " · " : "") + (h.subjectName || h.subjectNameJa || T("nom.unknownSubject"))}
+                    </div>
+                  </div>
                   <button className={"btn" + (nomPending.has("a" + h.bgmId) ? " pending" : "") + (justDone.has("a" + h.bgmId) ? " flash" : "")}
                     aria-busy={nomPending.has("a" + h.bgmId)} onClick={() => nominate(h)}>{T("nom.plus")}</button>
                 </div>
@@ -735,7 +762,7 @@ export default function Page() {
           ) : (
             <div className="results pool">
               {state.nomination.pool.map((p: PoolItem, i: number) => (
-                <div className="prow" key={p.id}>
+                <div className={"prow" + (flashCand === p.id ? " jumped" : "")} id={"cand-" + p.id} key={p.id}>
                   <div className="rankn num">{i + 1}</div>
                   <Avatar c={p} />
                   <div className="meta"><div className="nm" lang={srcLang(p, lang)}>{label(p, lang)}

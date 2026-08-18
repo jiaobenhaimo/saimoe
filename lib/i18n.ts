@@ -64,6 +64,8 @@ const D: Record<string, Entry> = {
   "nom.noChar": { zh: "没搜到角色，换个词试试。", en: "No character found — try another word.", ja: "キャラが見つかりません。別の語でお試しを。" },
   "nom.importAll": { zh: "导入全体角色", en: "Import all", ja: "全キャラ取込" },
   "nom.subjectTag": { zh: "作品", en: "Anime", ja: "作品" },
+  "nom.dupJump": { zh: "「{name}」已经在提名池里了，已带你到它那一行 —— 点「提名」即可投票。", en: "“{name}” is already in the pool — jumped you to its row; press 提名 to vote for it.", ja: "「{name}」はすでにプールにあります。その行へ移動しました —— 「推薦」で投票できます。" },
+  "nom.unknownSubject": { zh: "作品未知", en: "work unknown", ja: "作品不明" },
   "nom.charTag": { zh: "角色", en: "Character", ja: "キャラ" },
   "nom.plus": { zh: "＋ 提名", en: "＋ Nominate", ja: "＋ 推薦" },
   "nom.poolTitle": { zh: "提名池 · 人气预选", en: "Nominee pool · popularity", ja: "推薦プール · 人気予選" },

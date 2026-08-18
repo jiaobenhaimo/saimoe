@@ -54,6 +54,9 @@ export default function AdminFraud() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [combined, setCombined] = useState<Cluster["impact"] | null>(null);
   const [showLow, setShowLow] = useState(false);
+  // 已复核（判定为误报）的簇默认**隐藏**，不再只是折叠：复核过一次就说明运营已经看过并下了结论，
+  // 让它继续占着列表只会让每次刷新都要重新跳过同一批。需要回头改判时勾这个开关。
+  const [showReviewed, setShowReviewed] = useState(false);
   const initialized = useRef(false);
 
   const tk = useCallback(() => token || localStorage.getItem("adminToken") || "", [token]);
@@ -95,10 +98,19 @@ export default function AdminFraud() {
   }, []);
   useEffect(() => { if (authed) load(); }, [authed, load]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 勾选组合变化 → 轻量拉取合并影响预览
+  /** 当前实际显示出来的簇。筛选（关注级 / 已复核）和「作废选中」必须用同一个集合，
+   *  否则会出现「勾选后被筛掉、但一按作废还是把它删了」这种看不见的删票。 */
+  const visibleClusters = useMemo(() => {
+    const list = report?.clusters ?? [];
+    const byLevel = showLow ? list : list.filter((c) => c.level !== "low");
+    return showReviewed ? byLevel : byLevel.filter((c) => !c.reviewed);
+  }, [report, showLow, showReviewed]);
+
+  // 勾选组合变化 → 轻量拉取合并影响预览。
+  // 只认**可见**的勾选：隐藏一个簇就等于把它从本次操作里排除，符合「看到什么就是要动什么」。
   const selectedClusters = useMemo(
-    () => report?.clusters.filter((c) => selected.has(c.id)) ?? [],
-    [report, selected],
+    () => visibleClusters.filter((c) => selected.has(c.id)),
+    [visibleClusters, selected],
   );
   useEffect(() => {
     let alive = true;
@@ -241,16 +253,21 @@ export default function AdminFraud() {
               <div className="card" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
                 <b>已选 {selectedClusters.length} 个簇</b>
                 <label className="chk"><input type="checkbox" checked={showLow} onChange={(e) => setShowLow(e.target.checked)} /> 显示「关注」级</label>
+                <label className="chk"><input type="checkbox" checked={showReviewed} onChange={(e) => setShowReviewed(e.target.checked)} /> 显示已复核</label>
                 <button className="btn danger solid" disabled={busy || !selectedClusters.length} onClick={voidSelected}>作废选中（{selectedClusters.length}）</button>
                 <button className="btn" disabled={busy || !selectedClusters.length} onClick={() => markReviewed(true)}>标记已复核（误报）</button>
                 <button className="btn" disabled={busy || !selectedClusters.length} onClick={() => markReviewed(false)}>取消已复核</button>
               </div>
               {(() => {
-                const visible = showLow ? report.clusters : report.clusters.filter((c) => c.level !== "low");
-                const hiddenLows = report.clusters.length - visible.length;
+                const byLevel = showLow ? report.clusters : report.clusters.filter((c) => c.level !== "low");
+                const hiddenLows = report.clusters.length - byLevel.length;
+                const visible = visibleClusters; // 与 selectedClusters 同源，见上面的注释
+                const hiddenReviewed = byLevel.length - visible.length;
                 return (
                   <>
               {hiddenLows > 0 && <p className="hint" style={{ margin: "0 0 4px" }}>另有 {hiddenLows} 个「关注」级簇（20–39 分）已折叠 —— 勾选上方「显示关注级」可查看。</p>}
+              {hiddenReviewed > 0 && <p className="hint" style={{ margin: "0 0 4px" }}>已隐藏 {hiddenReviewed} 个标记为「已复核（误报）」的簇 —— 勾选上方「显示已复核」可查看或改判。</p>}
+              {visible.length === 0 && byLevel.length > 0 && <div className="card"><p className="hint">当前筛选下没有待处理的簇 —— 其余都已复核 👍</p></div>}
               {visible.map((c) => (
                 <div className="card" key={c.id} style={{ borderColor: c.level === "high" ? "var(--rose)" : c.level === "medium" ? "var(--gold)" : undefined }}>
                   <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>

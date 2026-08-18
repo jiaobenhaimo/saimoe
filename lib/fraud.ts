@@ -17,7 +17,7 @@ export type FraudLevel = "high" | "medium" | "low";
 export type ClusterKind = "identity_churn" | "duplicate_ballot" | "same_ip_cross_device" | "max_ballot_stacking";
 
 export interface FraudSignal {
-  code: string;        // S1..S7（以及反向信号 R1/R2）
+  code: string;        // S1..S9（以及反向信号 R1/R2）
   strength: number;    // 0..1
   weight: number;      // 该信号占的分值
   evidence: string;    // 中文说明，直接展示
@@ -90,6 +90,10 @@ interface Vote {
   created_at: number;
   device_bucket: string | null;
   ip: string | null;
+  /** 这张票属于哪个「票单」：小组赛 = 组号，淘汰赛 = 对局 id，提名 = 全局只有一个票单。
+   *  之所以必须区分：小组赛是每组 6 选 2、淘汰赛是二选一，「票单内选了什么」才是可比的单位，
+   *  跨票单把候选人堆成一个集合去算重叠，在这两种赛制下会得出完全错误的结论（见 S8/S9）。 */
+  ballot: string;
 }
 
 interface Identity {
@@ -102,6 +106,8 @@ interface Identity {
   ipsFull: Set<string>;
   ipsNorm: Set<string>;
   medianGapMs: number | null;
+  /** 票单 → 这个身份在该票单上选了哪些角色（升序）。小组赛每组最多 2 个，淘汰赛恰好 1 个。 */
+  byBallot: Map<string, number[]>;
 }
 
 interface Ctx {
@@ -112,6 +118,70 @@ interface Ctx {
   nomMax: number;         // 每人提名上限（0 = 不限）
   autoSize: number;       // 晋级人数（0 = 未设定）
   nameOf: (id: number) => string;
+  /** 全站投票分布基线（见 buildBaseline）。 */
+  base: Baseline;
+}
+
+/**
+ * 全站投票分布基线 —— 判断「这批人选得一致」到底算不算证据的关键。
+ *
+ * 赛制决定了票单很小且形状固定：小组赛是每组 6 选 2（15 种组合），淘汰赛是二选一（2 种）。
+ * 在这种票单上，「两个人选了一样的」根本不稀奇 —— 二选一时随机撞对的概率就有 50%，而且人气
+ * 本来就集中，大家都投热门角色是**正常现象**，不是刷票。原来那套按「候选人集合重叠度」打分的
+ * 逻辑是为提名期（票单大、组合空间大）设计的，直接套到这两个阶段会把「多数派」整片标成可疑。
+ *
+ * 所以改成用**相对意外程度**来衡量：先统计全站在每个票单上各选项/各组合的真实占比，再看某个簇
+ * 的一致性放在这个分布里有多罕见。
+ *   - 五个身份都投了 88% 的人都投的那个角色 → 毫无信息量，不加分。
+ *   - 五个身份都投了只有 4% 的人投的那个组合 → 强证据。
+ * 这样既抓得住真正的协同刷票，又不会因为「热门角色票多」而误伤。
+ */
+interface Baseline {
+  /** 票单 → 该票单的总投票人数。 */
+  voters: Map<string, number>;
+  /** 票单 → 角色 → 投给它的人数占比（0..1）。 */
+  optionShare: Map<string, Map<number, number>>;
+  /** 票单 → 组合键（升序 id 以 "," 连接）→ 提交该组合的人数占比（0..1）。 */
+  comboShare: Map<string, Map<string, number>>;
+  /** 票单 → 每个票单允许选几个（小组赛 2、淘汰赛 1；由实际数据推断，不写死）。 */
+  pickCap: Map<string, number>;
+}
+
+function buildBaseline(identities: Map<string, Identity>): Baseline {
+  const voters = new Map<string, number>();
+  const optCount = new Map<string, Map<number, number>>();
+  const comboCount = new Map<string, Map<string, number>>();
+  const pickCap = new Map<string, number>();
+
+  for (const id of identities.values()) {
+    for (const [ballot, picks] of id.byBallot) {
+      voters.set(ballot, (voters.get(ballot) || 0) + 1);
+      pickCap.set(ballot, Math.max(pickCap.get(ballot) || 0, picks.length));
+      let om = optCount.get(ballot);
+      if (!om) { om = new Map(); optCount.set(ballot, om); }
+      for (const c of picks) om.set(c, (om.get(c) || 0) + 1);
+      const key = [...picks].sort((a, b) => a - b).join(",");
+      let cm = comboCount.get(ballot);
+      if (!cm) { cm = new Map(); comboCount.set(ballot, cm); }
+      cm.set(key, (cm.get(key) || 0) + 1);
+    }
+  }
+
+  const optionShare = new Map<string, Map<number, number>>();
+  for (const [ballot, om] of optCount) {
+    const n = Math.max(1, voters.get(ballot) || 1);
+    const m = new Map<number, number>();
+    for (const [c, k] of om) m.set(c, k / n);
+    optionShare.set(ballot, m);
+  }
+  const comboShare = new Map<string, Map<string, number>>();
+  for (const [ballot, cm] of comboCount) {
+    const n = Math.max(1, voters.get(ballot) || 1);
+    const m = new Map<string, number>();
+    for (const [k, v] of cm) m.set(k, v / n);
+    comboShare.set(ballot, m);
+  }
+  return { voters, optionShare, comboShare, pickCap };
 }
 
 // ── 阈值（来自真实数据复盘，可用环境变量覆盖）──────────────────────────────
@@ -145,10 +215,10 @@ export function generateFraudReport(opts: FraudOptions = {}): FraudReport {
     const c = db.candidates.find((x) => x.id === id);
     return c ? (c.name_cn || c.name) : `#${id}`;
   };
-  const ctx: Ctx = { db, cid, phase, windowMs, nomMax, autoSize, nameOf };
-
   const votes = loadVotes(db, cid, phase);
   const identities = buildIdentities(votes);
+  // 基线必须在装载完所有票之后建：它是「全站怎么投」的统计，簇内的一致性要放到它里面才有意义。
+  const ctx: Ctx = { db, cid, phase, windowMs, nomMax, autoSize, nameOf, base: buildBaseline(identities) };
 
   // 基线：指纹数、身份数分布、总票数
   const byBucket = new Map<string, Set<string>>();
@@ -189,14 +259,20 @@ function loadVotes(db: DB, cid: number, phase: string): Vote[] {
   if (phase === "match") {
     for (const v of db.matchVotes) {
       if (!compMatchIds?.has(v.matchup_id)) continue;
-      push({ id: v.id ?? 0, voter_id: v.voter_id, candidate_id: v.choice_id, created_at: v.created_at ?? 0, device_bucket: v.device_bucket ?? null, ip: v.ip ?? null });
+      push({ id: v.id ?? 0, voter_id: v.voter_id, candidate_id: v.choice_id, created_at: v.created_at ?? 0, device_bucket: v.device_bucket ?? null, ip: v.ip ?? null, ballot: "m" + v.matchup_id });
     }
     return out;
   }
-  const list = phase === "approval" ? db.approvalVotes : db.nominationVotes;
-  for (const v of list) {
+  if (phase === "approval") {
+    for (const v of db.approvalVotes) {
+      if (v.competition_id !== cid) continue;
+      push({ id: v.id ?? 0, voter_id: v.voter_id, candidate_id: v.candidate_id, created_at: v.created_at ?? 0, device_bucket: v.device_bucket ?? null, ip: v.ip ?? null, ballot: "g" + v.group_no });
+    }
+    return out;
+  }
+  for (const v of db.nominationVotes) {
     if (v.competition_id !== cid) continue;
-    push({ id: v.id ?? 0, voter_id: v.voter_id, candidate_id: v.candidate_id, created_at: v.created_at ?? 0, device_bucket: v.device_bucket ?? null, ip: v.ip ?? null });
+    push({ id: v.id ?? 0, voter_id: v.voter_id, candidate_id: v.candidate_id, created_at: v.created_at ?? 0, device_bucket: v.device_bucket ?? null, ip: v.ip ?? null, ballot: "nom" });
   }
   return out;
 }
@@ -209,11 +285,13 @@ function buildIdentities(votes: Vote[]): Map<string, Identity> {
       id = {
         voterId: v.voter_id, deviceBucket: v.device_bucket, votes: [], candidates: new Set(),
         firstAt: Infinity, lastAt: -Infinity, ipsFull: new Set(), ipsNorm: new Set(), medianGapMs: null,
+        byBallot: new Map(),
       };
       byVoter.set(v.voter_id, id);
     }
     id.votes.push(v);
     id.candidates.add(v.candidate_id);
+    { const arr = id.byBallot.get(v.ballot); if (arr) arr.push(v.candidate_id); else id.byBallot.set(v.ballot, [v.candidate_id]); }
     id.firstAt = Math.min(id.firstAt, v.created_at);
     id.lastAt = Math.max(id.lastAt, v.created_at);
     if (v.ip) {
@@ -319,7 +397,15 @@ function sharedCandidateMinGap(a: Identity, b: Identity): number {
 }
 
 // ── 打分 ────────────────────────────────────────────────────────────────────
-const WEIGHTS: Record<string, number> = { S1: 30, S2: 25, S3: 25, S4: 10, S5: 15, S6: 20, S7: 20 };
+const WEIGHTS: Record<string, number> = { S1: 30, S2: 25, S3: 25, S4: 10, S5: 15, S6: 20, S7: 20, S8: 30, S9: 30 };
+
+/** 小组赛（6 选 2）/ 淘汰赛（二选一）阶段：把为提名期设计的「集合重叠」类信号压权。
+ *
+ *  为什么必须压：这些信号衡量的是「票单有多像」，而这两个阶段的票单只有 1～2 个选项，
+ *  且人气天然集中 —— 二选一时两个陌生人撞同一边的概率就有 50%，热门角色更高。照原样计分
+ *  会把大批正常的多数派投票者标成可疑，而运营一旦见到几十个假阳性，就会开始整体不信这个看板。
+ *  取而代之的是 S8/S9：同样是看一致性，但换成「相对全站分布有多罕见」。 */
+const SMALL_BALLOT_DAMP: Record<string, number> = { S3: 0.25, S5: 0.3, S7: 0 };
 
 function scoreCluster(list: Identity[], memberIdx: number[], identities: Map<string, Identity>, ctx: Ctx): Omit<FraudCluster, "impact" | "reviewed"> | null {
   const members = memberIdx.map((i) => list[i]);
@@ -436,6 +522,88 @@ function scoreCluster(list: Identity[], memberIdx: number[], identities: Map<str
     const maxed = members.filter((m) => m.votes.length === ctx.nomMax);
     if (maxed.length >= 2) {
       sig("S7", Math.min(1, (maxed.length - 1) / 2), `本簇有 ${maxed.length} 个身份各投满上限 ${ctx.nomMax} 票（合计 ${maxed.length * ctx.nomMax} 票）——顶满堆叠`);
+    }
+  }
+
+  // ── S8 小组赛：同一罕见组合被反复提交（6 选 2）──────────────────────────────
+  //
+  // 每组 6 个人里选 2 个，一共 15 种组合。刷票的形态是「同一个组合被一个设备下的多个身份
+  // 重复提交」；但如果那个组合恰好是全站 70% 的人都选的两个人气角色，重复本身没有任何信息量。
+  // 所以强度取决于该组合在**全站**的占比：越冷门、被同一簇重复得越多，分越高。
+  if (ctx.phase === "approval") {
+    let best = { strength: 0, ballot: "", key: "", k: 0, share: 0 };
+    const byBallotCombo = new Map<string, Map<string, number>>();
+    for (const m of members)
+      for (const [ballot, picks] of m.byBallot) {
+        if (picks.length < 2) continue; // 只投 1 个的没有「组合」可言
+        const key = [...picks].sort((a, b) => a - b).join(",");
+        let cm = byBallotCombo.get(ballot);
+        if (!cm) { cm = new Map(); byBallotCombo.set(ballot, cm); }
+        cm.set(key, (cm.get(key) || 0) + 1);
+      }
+    for (const [ballot, cm] of byBallotCombo)
+      for (const [key, k] of cm) {
+        if (k < 2) continue;
+        const share = ctx.base.comboShare.get(ballot)?.get(key) ?? 1;
+        // rarity：全站占比越低越可疑。占比 ≥40% 视为大众选择，直接不计分。
+        const rarity = share >= 0.4 ? 0 : 1 - share / 0.4;
+        const repeat = Math.min(1, (k - 1) / 3); // 2 次起算，5 次满分
+        const strength = rarity * repeat;
+        if (strength > best.strength) best = { strength, ballot, key, k, share };
+      }
+    if (best.strength > 0) {
+      const names = best.key.split(",").map((x) => ctx.nameOf(Number(x))).join(" + ");
+      sig("S8", best.strength,
+        `${best.ballot.replace(/^g/, "第 ")} 组：本簇有 ${best.k} 个身份提交了完全相同的组合「${names}」，而全站只有 ${(best.share * 100).toFixed(1)}% 的人这么选 —— 冷门组合被反复提交，像同一个人换身份重复投`);
+    }
+  }
+
+  // ── S9 淘汰赛：跨轮一致投少数派（二选一）────────────────────────────────────
+  //
+  // 单场二选一里「几个身份选了同一边」毫无意义（随机就有 50%，投热门更高）。有意义的是
+  // **跨多场都一致，而且一致地站在少数派那边**：真人各有偏好，连续几轮都精确同步、且都逆着
+  // 大盘走，基本只有「同一个人操作多个身份」能解释。
+  if (ctx.phase === "match") {
+    let bestPair = { strength: 0, a: "", b: "", rounds: 0, minority: 0, detail: "" };
+    for (let i = 0; i < members.length; i++)
+      for (let j = i + 1; j < members.length; j++) {
+        const A = members[i], B = members[j];
+        const shared = [...A.byBallot.keys()].filter((b) => B.byBallot.has(b));
+        if (shared.length < 2) continue; // 至少两轮才谈得上「跨轮一致」
+        let agree = 0, minority = 0;
+        for (const b of shared) {
+          const pa = A.byBallot.get(b)![0], pb = B.byBallot.get(b)![0];
+          if (pa !== pb) continue;
+          agree++;
+          const share = ctx.base.optionShare.get(b)?.get(pa) ?? 1;
+          if (share < 0.5) minority++; // 站在少数派一边
+        }
+        if (agree < shared.length) continue; // 必须**每一轮**都一致
+        // 强度：一致轮数越多、其中少数派选择占比越高，越可疑。
+        // 全程都投多数派 → minorityRatio 为 0 → 不计分（那就是普通的顺大流观众）。
+        const minorityRatio = minority / agree;
+        const depth = Math.min(1, (agree - 1) / 3); // 2 轮起算，5 轮满分
+        const strength = depth * minorityRatio;
+        if (strength > bestPair.strength)
+          bestPair = { strength, a: A.voterId, b: B.voterId, rounds: agree, minority,
+            detail: `${agree} 场全部同选，其中 ${minority} 场站在少数派一边` };
+      }
+    if (bestPair.strength > 0) {
+      sig("S9", bestPair.strength,
+        `身份 ${short(bestPair.a)} 与 ${short(bestPair.b)} 在 ${bestPair.detail} —— 二选一里单场一致很正常，但连续多轮精确同步且逆着大盘，更像同一人操作多个身份`);
+    }
+  }
+
+  // ── 小票单阶段：压掉为提名期设计的重叠类信号（理由见 SMALL_BALLOT_DAMP）──
+  if (ctx.phase === "approval" || ctx.phase === "match") {
+    for (const sg of signals) {
+      const d = SMALL_BALLOT_DAMP[sg.code];
+      if (d !== undefined) {
+        sg.strength *= d;
+        sg.evidence += d === 0
+          ? "（本阶段票单只有 1～2 个选项，该信号已停用：多数派一致是正常现象）"
+          : `（本阶段票单只有 1～2 个选项，权重已压到 ${Math.round(d * 100)}%：改由 ${ctx.phase === "approval" ? "S8" : "S9"} 用「相对全站分布的罕见度」判断）`;
+      }
     }
   }
 

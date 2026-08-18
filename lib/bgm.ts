@@ -153,8 +153,10 @@ const isRealCharacter = (c: any): boolean => c && str(c.name) !== "" && (c.type 
 
 // ── public API ───────────────────────────────────────────────────────────────
 
-/** Search characters by keyword. Returns display-ready rows (no origin check — see jpOfCharacter). */
-export async function searchCharacters(keyword: string, limit = 20): Promise<{ bgmId: string; name: string; nameCn: string; nameEn: string; image: string }[]> {
+/** Search characters by keyword. Returns display-ready rows (no origin check — see jpOfCharacter).
+ *  `subjectName`/`subjectNameJa` are filled in by resolving each hit's primary work, because a bare
+ *  character name is often not enough to tell two candidates apart in the picker. */
+export async function searchCharacters(keyword: string, limit = 20): Promise<{ bgmId: string; name: string; nameCn: string; nameEn: string; image: string; subjectName: string; subjectNameJa: string }[]> {
   const j = await upstream(`/v0/search/characters?limit=${Math.min(50, Math.max(1, limit))}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -162,15 +164,34 @@ export async function searchCharacters(keyword: string, limit = 20): Promise<{ b
   }, TTL_SEARCH);
   const arr = Array.isArray(j?.data) ? j.data : Array.isArray(j?.list) ? j.list : [];
   const seen = new Set<string>();
-  const out: { bgmId: string; name: string; nameCn: string; nameEn: string; image: string }[] = [];
+  const base: { bgmId: string; name: string; nameCn: string; nameEn: string; image: string }[] = [];
   for (const c of arr) {
     if (!isRealCharacter(c)) continue;
     const bgmId = "c" + num(c.id);
     if (bgmId === "c" || seen.has(bgmId)) continue;
     seen.add(bgmId);
-    out.push({ bgmId, name: str(c.name), nameCn: "", nameEn: "", image: normalizeImage(c.images?.grid || c.images?.medium) });
+    base.push({ bgmId, name: str(c.name), nameCn: "", nameEn: "", image: normalizeImage(c.images?.grid || c.images?.medium) });
   }
-  return out;
+
+  // Resolve each hit's primary work and Chinese name. This is N extra upstream calls, but they are
+  // cached for 24h and bounded by the semaphore, and it is the difference between a picker showing
+  // three rows all called 「アリス」 and one that tells you which show each is from.
+  return mapLimit(base, 6, async (b) => {
+    const id = b.bgmId.slice(1);
+    let nameCn = b.nameCn, nameEn = b.nameEn, subjectName = "", subjectNameJa = "";
+    try {
+      const d = await upstream(`/v0/characters/${id}`);
+      nameCn = infobox(d, ["简体中文名", "中文名"]) || nameCn;
+      nameEn = infobox(d, ["英文名"]) || nameEn;
+    } catch { /* names are a bonus; never drop the hit over it */ }
+    try {
+      const subs = await upstream(`/v0/characters/${id}/subjects`);
+      const list = Array.isArray(subs) ? subs : [];
+      const main = list.find((x: any) => str(x?.staff).includes("主角")) || list[0];
+      if (main) { subjectName = str(main.name_cn); subjectNameJa = str(main.name); }
+    } catch { /* ditto */ }
+    return { ...b, nameCn, nameEn, subjectName, subjectNameJa };
+  });
 }
 
 /** Search subjects (anime). Sorted by how well the name matches, like the old client-side ranking. */

@@ -104,6 +104,13 @@ export function preflight(cid: number): Preflight {
         detail: `计划 ${targetSize} 人，因第 ${targetSize} 名有并列，实际会有 ${actualSize} 人参赛。`,
         fix: "这是既定规则（并列全取），确认过就行；若不希望如此，可微调「参赛人数」避开并列点。" });
     }
+    // 每组固定取前 2 名晋级，与每组人数无关。6 人组意味着淘汰率 4/6，人数越多淘汰越狠 ——
+    // 这不是错误，但运营多半想确认一下自己知道。
+    if (shape.groupSize >= 6) {
+      add({ id: "cut", level: "warn", title: "每组淘汰比例偏高",
+        detail: `每组 ${shape.groupSize} 人、只取前 2 名，意味着每组淘汰 ${shape.groupSize - 2} 人（${Math.round((1 - 2 / shape.groupSize) * 100)}%）。`,
+        fix: "这是既定规则（组内 2 票取前二），确认过即可；想放宽淘汰率就把每组人数调小。" });
+    }
     if (actualSize % shape.groupSize !== 0) {
       add({ id: "remainder", level: "warn", title: "人数不能整除每组人数",
         detail: `${actualSize} 人 ÷ 每组 ${shape.groupSize} 人有余数，余下 ${actualSize % shape.groupSize} 人会补进最弱的几个组，那些组变成 ${shape.groupSize + 1} 人。`,

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureSchema, readDbRO, addCandidates, removeOwnCandidate, sweepOwnOrphans, getBlocklist, isBlockedBy, freezeState, breakState, voterSanction, roundKeyOf, type NewCandidate } from "@/lib/db";
+import { ensureSchema, readDbRO, addCandidates, removeOwnCandidate, sweepOwnOrphans, getBlocklist, isBlockedBy, freezeState, breakState, voterSanction, roundKeyOf, resolveCandidate, type NewCandidate } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition } from "@/lib/engine";
 import { getVoterId, getDeviceBucket } from "@/lib/voter";
@@ -101,9 +101,14 @@ export async function POST(req: NextRequest) {
 
       const jp = await jpOfCharacter(rawId);
       const { added } = addCandidates(comp.id, [{ ...info, ...jpFields(jp) }], vid);
+      // Tell the client WHICH pool entry this is, whether we just created it or it was already
+      // there. The picker uses it to scroll the voter straight to that row -- when a character is
+      // already nominated, "已经在池里了" is a dead end unless we also show them where.
+      const entry = resolveCandidate(comp.id, info.bgmId);
       return NextResponse.json({
         ok: true, added,
         duplicate: added === 0,
+        candidateId: entry?.id ?? null,
         name: info.nameCn || info.name,
         // jp: true = passed, false = flagged for review, null = couldn't tell (say nothing)
         jp: jp.ok, jpReason: jp.reason,
