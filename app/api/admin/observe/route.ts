@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminOk } from "@/lib/adminauth";
-import { ensureSchema, readAudit, listJpFlagged } from "@/lib/db";
+import { ensureSchema, readAudit, listJpFlagged, readDbRO } from "@/lib/db";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition } from "@/lib/engine";
 import { detectAnomalies, projectTimeline, liveTallies, dataGaps } from "@/lib/observe";
 import { preflight } from "@/lib/preflight";
+import { listRoundArchives, backupEnabled } from "@/lib/backup";
 import { listVotesBy, planSmartInvalidate } from "@/lib/db";
 import { normalizeIp } from "@/lib/ip";
 
@@ -44,5 +45,14 @@ export async function GET(req: NextRequest) {
   const jpFlagged = listJpFlagged(comp.id);
   // 开赛前检查：把「现在开小组赛会不会翻车」的所有条件集中给运营看（见 lib/preflight.ts）
   const pre = preflight(comp.id);
-  return NextResponse.json({ competition: { id: comp.id, phase: comp.phase }, flags, thresholds, totals, timeline, tallies, gaps, audit, jpFlagged, preflight: pre });
+  // 角色名册：管理台在任何阶段都需要它 —— 「管理提名池」只在提名阶段出现，但资料填错
+  // 往往是开赛后才发现的，那时替换角色是唯一安全的改法（删掉重加会连票和分组一起丢）。
+  // 已淘汰的角色默认不给（前端可以选择显示），理由同 dataGaps。
+  const roster = readDbRO().candidates
+    .filter((c) => c.competition_id === comp.id)
+    .map((c) => ({ id: c.id, bgmId: c.bgm_id, name: c.name, nameCn: c.name_cn, image: c.image,
+      subjectName: c.subject_name ?? null, groupNo: c.group_no, seed: c.seed, eliminated: !!c.eliminated }))
+    .sort((a, b) => (a.groupNo ?? 999) - (b.groupNo ?? 999) || (a.seed ?? 0) - (b.seed ?? 0) || a.id - b.id);
+  const archives = listRoundArchives().slice(0, 40);
+  return NextResponse.json({ competition: { id: comp.id, phase: comp.phase }, flags, thresholds, totals, timeline, tallies, gaps, audit, jpFlagged, preflight: pre, roster, archives, backupOn: backupEnabled() });
 }

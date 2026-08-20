@@ -1,5 +1,6 @@
 import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, resolvePlayoff, postponeNomination, qualifyingCount, canStartKnockout } from "./engine";
 import { sweepOrphanNominations, freezeOf, breakOf, beginBreak, consumeBreak, roundKeyOf } from "./db";
+import { archiveRound } from "./backup";
 
 /** Grace period before an un-voted self-nomination is swept (minutes). Env-tunable. */
 const ORPHAN_GRACE_MIN = Number(process.env.SAIMOE_ORPHAN_GRACE_MIN) || 30;
@@ -58,13 +59,17 @@ export function runTick(force = false): void {
      * 否则休赛期结束、推进失败（例如淘汰赛凑不齐）时会原地循环，永远进不了下一轮。
      */
     const holdForBreak = (dueAt: number | null): boolean => {
-      if (brk.hours <= 0) return false;          // 未启用休赛期
+      if (brk.hours <= 0) { archiveRound(round); return false; } // 未启用休赛期：仍然归档这一轮
       if (comp.break_after === round) {          // 这一轮的休赛期已经用掉了
         consumeBreak(comp.id);                   // 清掉残留的 until（正常情况已是 null）
         return false;
       }
       // dueAt = 触发这次休赛期的**原定截止时刻**（不是 now）。下一轮的截止以它为基准，
       // 休赛期因此从本轮投票时间里扣掉，而不会让每一轮都比上一轮晚 N 小时（见 break_anchor）。
+      // 一轮投票到此为止 → 先留一份永久归档（不参与快照轮转），再进休赛期。
+      // 时机选在这里而不是结算之后：归档的正是"运营即将开始核对"的那份原始数据，
+      // 事后有争议时对得上；结算后再存就已经混入了作废/重算的结果。
+      archiveRound(round);
       const until = beginBreak(comp.id, brk.hours, round, dueAt);
       console.log(`saimoe: entering ${brk.hours}h break after ${round} (due ${dueAt ? new Date(dueAt).toISOString() : "?"}), resumes at ${until ? new Date(until).toISOString() : "?"}`);
       return true;

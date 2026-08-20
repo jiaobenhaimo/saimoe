@@ -1,4 +1,4 @@
-import { readDb, approvalTally, nominationTally } from "./db";
+import { readDb, readDbRO, approvalTally, nominationTally } from "./db";
 import { groupLabel } from "./i18n";
 
 // ── tunable detection thresholds (env-overridable) ────────────────────────────
@@ -289,9 +289,15 @@ export function dataGaps(cid: number): {
     name: string; nameCn: string; nameEn: string; image: string;
     subjectName: string; subjectNameJa: string; subjectNameEn: string;
   }[];
+  /** 因为已被淘汰而没有列出的角色数。 */
+  hiddenEliminated: number;
 } {
-  const db = readDb();
-  const list = db.candidates.filter((c) => c.competition_id === cid);
+  const db = readDbRO();
+  const all = db.candidates.filter((c) => c.competition_id === cid);
+  // 每一轮结束后就把淘汰掉的角色从盘点里去掉：它们不会再出现在任何页面上，
+  // 花时间给它们补中文名/头像是纯浪费，留在列表里只会淹掉真正还需要补的那几个。
+  const list = all.filter((c) => !c.eliminated);
+  const hiddenEliminated = all.length - list.length;
   const counts = { nameZh: 0, nameJa: 0, nameEn: 0, subjectZh: 0, subjectJa: 0, subjectEn: 0, image: 0 };
   const has = (v?: string | null) => !!(v && String(v).trim());
   const nameById = new Map(list.map((c) => [c.id, c.name_cn || c.name || c.bgm_id]));
@@ -321,5 +327,5 @@ export function dataGaps(cid: number): {
   // 缺得最多的排前面，方便优先补
   // 票数高的排前面：人气角色的资料最该先补齐（缺失项数只作次级排序）
   rows.sort((a, b) => b.votes - a.votes || b.missing.length - a.missing.length || a.label.localeCompare(b.label));
-  return { total: list.length, counts, rows: rows.slice(0, 300) };
+  return { total: list.length, counts, rows: rows.slice(0, 300), hiddenEliminated };
 }

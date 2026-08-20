@@ -7,12 +7,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "tsx scripts/smoke.mts && tsx scripts/compat.mts && tsx scripts/fraud-plan.mts && tsx scripts/break.mts && tsx scripts/fraud-format.mts",
+    "test": "tsx scripts/smoke.mts && tsx scripts/compat.mts && tsx scripts/fraud-plan.mts && tsx scripts/break.mts && tsx scripts/fraud-format.mts && tsx scripts/tiebreak.mts",
     "test:smoke": "tsx scripts/smoke.mts",
     "test:compat": "tsx scripts/compat.mts",
     "test:fraud-plan": "tsx scripts/fraud-plan.mts",
     "test:break": "tsx scripts/break.mts",
-    "test:fraud-format": "tsx scripts/fraud-format.mts"
+    "test:fraud-format": "tsx scripts/fraud-format.mts",
+    "test:tiebreak": "tsx scripts/tiebreak.mts"
   },
   "dependencies": {
     "next": "^15.1.0",

@@ -120,8 +120,10 @@ export function getState(voterId: string, snap?: DB) {
         votes: c.parent_id == null ? (nomTotal.get(c.id) || 0) : (nomOwn.get(c.id) || 0),
         mergedInto: c.parent_id != null ? (nameById.get(c.parent_id) || null) : null,
         voted: myNomSet.has(c.id), mine: (c.added_by || "") === voterId,
+        tally_at: c.tally_at ?? null,
       }))
-      .sort((x, y) => y.votes - x.votes || x.name.localeCompare(y.name));
+      // 平票 → 先达到这个票数的在前（加票、撤票、作废都算「达到」的时刻）
+      .sort((x, y) => y.votes - x.votes || tieByReachedFirst(x, y) || x.name.localeCompare(y.name));
     return { ...base, nomination: { pool, userLimit: comp.nom_user_limit ?? 0, minVotes: comp.nom_min_votes ?? 0, myCount: myNomSet.size } };
   }
 
@@ -165,8 +167,9 @@ export function getState(voterId: string, snap?: DB) {
     const topIds = new Set(topLevel(db, comp.id).map((c) => c.id));
     result.nominationRanking = cands
       .filter((c) => topIds.has(c.id)) // 子角色票已汇总到上级，不重复出现
-      .map((c) => ({ ...slim(c)!, votes: nomTotal2.get(c.id) || 0 }))
-      .sort((x, y) => y.votes - x.votes || x.name.localeCompare(y.name));
+      .map((c) => ({ ...slim(c)!, votes: nomTotal2.get(c.id) || 0, tally_at: c.tally_at ?? null }))
+      // 平票 → 先达到这个票数的在前；都是老数据时才退回按名字排（保持原有的稳定顺序）
+      .sort((x, y) => y.votes - x.votes || tieByReachedFirst(x, y) || x.name.localeCompare(y.name));
   }
 
   // ── approval-mode group block (no matchups): group ballots, ≤2 picks per group ──
@@ -199,8 +202,8 @@ export function getState(voterId: string, snap?: DB) {
       const closed = !isGroupPhase || batch < curMd;             // finished voting (past batch) or stage over
       const upcoming = isGroupPhase && batch > curMd;            // not started yet
       const revealed = closed;                                   // reveal counts + top-2 ONLY once closed (never for open/upcoming)
-      const rows = members.map((c) => ({ ...slim(c)!, votes: tally.get(c.id) || 0, mine: myPicks.has(c.id), seed: c.seed ?? 0 }));
-      rows.sort((x, y) => (revealed ? (y.votes - x.votes) : 0) || (x.seed - y.seed));
+      const rows = members.map((c) => ({ ...slim(c)!, votes: tally.get(c.id) || 0, mine: myPicks.has(c.id), seed: c.seed ?? 0, tally_at: c.tally_at ?? null }));
+      rows.sort((x, y) => (revealed ? (y.votes - x.votes) : 0) || (revealed ? tieByReachedFirst(x, y) : 0) || (x.seed - y.seed));
       const shaped = rows.map((r, i) => ({ ...r, rank: i, advancing: revealed && i < 2, votes: revealed ? r.votes : null }));
       return { group: g, day: batch, open, closed, upcoming, date: dayDate(batch), members: shaped };
     });
@@ -479,7 +482,7 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
       const groups = gNos.map((g) => {
         const mem = grouped.filter((c) => c.group_no === g).sort((a, b) => (a.seed ?? 0) - (b.seed ?? 0));
         const advancers = aTally
-          ? [...mem].sort((a, b) => (aTally.get(b.id) || 0) - (aTally.get(a.id) || 0) || (a.seed ?? 0) - (b.seed ?? 0)).slice(0, 2).map((c) => nameCn(c.id))
+          ? [...mem].sort((a, b) => (aTally.get(b.id) || 0) - (aTally.get(a.id) || 0) || tieByReachedFirst(a, b) || (a.seed ?? 0) - (b.seed ?? 0)).slice(0, 2).map((c) => nameCn(c.id))
           : [];
         return { groupNo: g, members: mem.map((c) => nameCn(c.id)), advancers };
       });
@@ -550,6 +553,23 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
 // ── helpers ───────────────────────────────────────────────────
 function isPow2(n: number) { return n >= 2 && (n & (n - 1)) === 0; }
 function nextPow2(n: number): number { let p = 1; while (p < n) p <<= 1; return Math.max(2, p); }
+
+/**
+ * 平票排序：先达到当前票数的排在前面。
+ *
+ * tally_at 是「这个角色票数最近一次变化的时刻」，加票和撤票/作废都会刷新它，所以「先达到」
+ * 对两种方向都成立：A 3 点到 10 票，B 5 点从 11 票被撤成 10 票 → A 在前。
+ *
+ * 老数据没有 tally_at（升级前入池的角色），一律排在有时间戳的之后、彼此按原来的规则
+ * （种子 / id）比 —— 这样进行中的比赛不会因为升级就把已有排名重排一遍。
+ */
+function tieByReachedFirst(a: { tally_at?: number | null }, b: { tally_at?: number | null }): number {
+  const ta = a.tally_at ?? null, tb = b.tally_at ?? null;
+  if (ta != null && tb != null) return ta - tb;   // 都有：早的在前
+  if (ta != null) return -1;                       // 有时间戳的优先于老数据
+  if (tb != null) return 1;
+  return 0;                                        // 都是老数据 → 交给下一级规则
+}
 
 /**
  * Base timestamp for the NEXT round's deadline.
@@ -694,9 +714,10 @@ export function startGroups(cid: number, size: number, perRound = 0, roundDays =
   const compCands = topLevel(db, cid); // 子角色不单独参赛（上级已不存在的会被视为独立）
   const minVotes = comp.nom_min_votes ?? 0;
   const ranked = compCands
-    .map((c) => ({ id: c.id, votes: nomCount.get(c.id) || 0 }))
+    .map((c) => ({ id: c.id, votes: nomCount.get(c.id) || 0, tally_at: c.tally_at ?? null }))
     .filter((r) => r.votes >= minVotes)
-    .sort((a, b) => b.votes - a.votes || a.id - b.id);
+    // 平票 → 先达到这个票数的在前（见 tieByReachedFirst），都是老数据时退回 id
+    .sort((a, b) => b.votes - a.votes || tieByReachedFirst(a, b) || a.id - b.id);
   if (ranked.length < size) {
     // 提名池里可能还有「已并入他人」的子角色：它们仍在池中显示、仍可投票，但不单独参赛。
     // 若不说明，运营会看到「池里明明有 N 个」却被告知不足，从而怀疑数据出错。
@@ -847,7 +868,7 @@ export function startKnockout(cid: number) {
   const nomCount = new Map<number, number>();
   for (const v of db.nominationVotes) if (v.competition_id === cid) nomCount.set(v.candidate_id, (nomCount.get(v.candidate_id) || 0) + 1);
 
-  type Row = { id: number; wins: number; vf: number; votes: number; groupRank: number };
+  type Row = { id: number; wins: number; vf: number; votes: number; groupRank: number; tally_at: number | null };
   const autoAdv: Row[] = [];
   const fillPool: Row[] = [];
   for (let g = 0; g < numGroups; g++) {
@@ -857,7 +878,7 @@ export function startKnockout(cid: number) {
       if (approval) {
         // 投票晋级制：以组内得票数作为排名依据（等价地塞进 wins/vf，复用下方同一套排序/补位）
         const a2 = appr!.get(mem.id) || 0;
-        return { id: mem.id, wins: a2, vf: a2, votes: nomCount.get(mem.id) || 0, groupRank: 0 };
+        return { id: mem.id, wins: a2, vf: a2, votes: nomCount.get(mem.id) || 0, groupRank: 0, tally_at: mem.tally_at ?? null };
       }
       let wins = 0, vf = 0;
       for (const mm of gms) {
@@ -866,15 +887,19 @@ export function startKnockout(cid: number) {
         if (mm.b_id === mem.id) vf += vb;
         if (mm.winner_id === mem.id) wins++;
       }
-      return { id: mem.id, wins, vf, votes: nomCount.get(mem.id) || 0, groupRank: 0 };
+      return { id: mem.id, wins, vf, votes: nomCount.get(mem.id) || 0, groupRank: 0, tally_at: mem.tally_at ?? null };
     });
-    stats.sort((x, y) => y.wins - x.wins || y.vf - x.vf || seedOf(x.id) - seedOf(y.id));
+    // 出线排序：票数/胜场 → 平了就看谁先达到这个票数 → 再退回种子
+    stats.sort((x, y) => y.wins - x.wins || y.vf - x.vf || tieByReachedFirst(x, y) || seedOf(x.id) - seedOf(y.id));
     stats.forEach((s2, i) => (s2.groupRank = i));
     autoAdv.push(...stats.slice(0, 2));
     fillPool.push(...stats.slice(2));
   }
 
-  const seedCmp = (x: Row, y: Row) => x.groupRank - y.groupRank || y.wins - x.wins || y.votes - x.votes || seedOf(x.id) - seedOf(y.id);
+  const seedCmp = (x: Row, y: Row) => x.groupRank - y.groupRank || y.wins - x.wins || y.votes - x.votes || tieByReachedFirst(x, y) || seedOf(x.id) - seedOf(y.id);
+  // sameTier 判定「是否真的并列到需要加赛」。刻意**不**把 tally_at 算进去：先达到只是排序用的
+  // 决胜手段，两人票数确实相同就仍然算并列，该不该加赛由运营看着办 —— 否则时间戳会悄悄
+  // 消掉所有并列，加赛机制形同废除。
   const sameTier = (x: Row, y: Row) => x.groupRank === y.groupRank && x.wins === y.wins && x.votes === y.votes;
   const fillNeeded = koTarget - autoAdv.length;
   fillPool.sort(seedCmp);

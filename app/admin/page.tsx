@@ -10,6 +10,13 @@ function toLocalInput(ms: number): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/** 组号 → A/B/C…（与主站 groupLabel 一致）。 */
+function groupLtr(n: number): string {
+  let out = ""; let x = Math.max(0, Math.floor(n));
+  do { out = String.fromCharCode(65 + (x % 26)) + out; x = Math.floor(x / 26) - 1; } while (x >= 0);
+  return out;
+}
+
 function fmtAbs(ms?: number | null): string {
   if (!ms) return "";
   try { return new Date(ms).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }); }
@@ -32,6 +39,25 @@ export default function Admin() {
   // schedule inputs
   const [nomLocal, setNomLocal] = useState("");
   const [brkH, setBrkH] = useState("");
+  // 角色替换：选中要替换的角色 + Bangumi 搜索结果
+  const [repTarget, setRepTarget] = useState<{ id: number; name: string } | null>(null);
+  const [repQ, setRepQ] = useState("");
+  const [repHits, setRepHits] = useState<any[] | null>(null);
+  const [repBusy, setRepBusy] = useState(false);
+  const [showElim, setShowElim] = useState(false);
+
+  /** 搜 Bangumi 角色（用于替换）。走服务端已解析的接口，直接拿到中文名 + 所属作品。 */
+  const searchRep = async () => {
+    const q = repQ.trim();
+    if (!q) return;
+    setRepBusy(true); setRepHits(null);
+    try {
+      const r = await fetch("/api/bgm?kind=searchChars&q=" + encodeURIComponent(q), { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      setRepHits(Array.isArray(j?.hits) ? j.hits : []);
+    } catch { setRepHits([]); }
+    finally { setRepBusy(false); }
+  };
   const [rHours, setRHours] = useState(24);
   const [pDays, setPDays] = useState(2);
   const [nUserLimit, setNUserLimit] = useState(0);
@@ -779,6 +805,100 @@ export default function Admin() {
                 全部放行（{obs.jpFlagged.length}）
               </button>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* ── 替换角色（资料填错 / 认错人）────────────────────────────────────────
+          为什么要单独做这个而不是「删掉重加」：开赛之后删角色会把它的票、分组、种子一起删掉，
+          还会打乱分组表。替换保留数据库 id，只换掉"这一栏代表谁"，票和分组原样留着。
+          这个面板在任何阶段都可用 —— 资料错误往往是开赛后才被观众指出来的。 */}
+      {comp && obs?.roster && (
+        <div className="card wide">
+          <h3>替换角色 <span className="gstatus" style={{ color: "var(--muted)" }}>资料填错 / 认错人</span></h3>
+          <p className="hint">
+            把池中某一栏整体换成另一个 Bangumi 角色：<b>票数、分组、种子、评论全部保留</b>，只有名字/头像/所属作品会变。
+            旧的 bgm id 会记为别名，避免同一角色被再次提名成新条目。替换后会重新做一次产地校验。
+            {" "}<a onClick={loadObs}>刷新名册</a>
+          </p>
+          <div className="row">
+            <label className="chk"><input type="checkbox" checked={showElim} onChange={(e) => setShowElim(e.target.checked)} /> 显示已淘汰角色</label>
+          </div>
+          {(() => {
+            const roster = obs.roster.filter((r: any) => showElim || !r.eliminated);
+            const hidden = obs.roster.length - roster.length;
+            return (
+              <>
+                {hidden > 0 && <p className="hint">已隐藏 {hidden} 个被淘汰的角色（每轮结束后自动淘汰的不再列出）。</p>}
+                {repTarget ? (
+                  <div className="gate-banner" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <span>正在替换「<b>{repTarget.name}</b>」（#{repTarget.id}）—— 搜索并点选新角色</span>
+                    <button className="btn" onClick={() => { setRepTarget(null); setRepHits(null); setRepQ(""); }}>取消</button>
+                  </div>
+                ) : null}
+                {repTarget ? (
+                  <>
+                    <div className="row">
+                      <div className="field" style={{ flex: "1 1 240px" }}>
+                        <label>Bangumi 角色关键词</label>
+                        <input value={repQ} onChange={(e) => setRepQ(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") void searchRep(); }} placeholder="角色名（中/日/英）" />
+                      </div>
+                      <button className="btn solid" disabled={repBusy || !repQ.trim()} onClick={() => void searchRep()}>{repBusy ? "搜索中…" : "搜索"}</button>
+                    </div>
+                    {repHits && (repHits.length === 0 ? <p className="hint">没有结果，换个关键词试试。</p> : (
+                      <div className="pool-admin">
+                        {repHits.map((h: any) => (
+                          <div className="prow" key={h.bgmId}>
+                            <div className="meta">
+                              <div className="nm">{h.nameCn || h.name}</div>
+                              <div className="sub">{h.nameCn && h.nameCn !== h.name ? h.name + " · " : ""}{h.subjectName || h.subjectNameJa || "作品未知"}</div>
+                            </div>
+                            <button className="btn danger solid" disabled={busy} onClick={() => {
+                              if (!confirm(`把 #${repTarget.id}「${repTarget.name}」替换为「${h.nameCn || h.name}」？\n\n票数、分组、种子会保留；名字/头像/所属作品会被覆盖。`)) return;
+                              act("replace_candidate", { candidateId: repTarget.id, bgmId: h.bgmId });
+                              setRepTarget(null); setRepHits(null); setRepQ("");
+                            }}>替换为此</button>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  <div className="pool-admin">
+                    {roster.slice(0, 200).map((r: any) => (
+                      <div className="prow" key={r.id}>
+                        <div className="meta">
+                          <div className="nm">{r.nameCn || r.name}{r.eliminated ? <span className="tag warn">已淘汰</span> : null}</div>
+                          <div className="sub">#{r.id} · {r.bgmId}{r.groupNo != null ? ` · ${groupLtr(r.groupNo)} 组` : ""}{r.subjectName ? " · " + r.subjectName : ""}</div>
+                        </div>
+                        <button className="btn" disabled={busy} onClick={() => { setRepTarget({ id: r.id, name: r.nameCn || r.name }); setRepHits(null); setRepQ(r.nameCn || r.name); }}>替换</button>
+                      </div>
+                    ))}
+                    {roster.length > 200 && <p className="hint">只列出前 200 个，用搜索定位其余角色。</p>}
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* ── 轮次归档 ── */}
+      {comp && obs?.archives && (
+        <div className="card">
+          <h3>轮次归档 <span className="gstatus" style={{ color: obs.backupOn ? "var(--ok)" : "var(--muted)" }}>{obs.backupOn ? `${obs.archives.length} 份` : "备份已关闭"}</span></h3>
+          <p className="hint">
+            每一轮结束（提名截止 / 每个小组赛比赛日 / 每轮淘汰赛）时，会在 <code>$BACKUP_DIR/rounds/</code> 留一份
+            <b>不参与轮转、不会被覆盖</b>的存档。定期快照只留最近 {"" + (obs.thresholds?.backupKeep ?? 48)} 份（约一天），
+            而赛果争议常常是几天后才提出来的，那时快照早被覆盖了。
+          </p>
+          {obs.archives.length === 0 ? <p className="hint">还没有轮次归档（第一轮结束后生成）。</p> : (
+            <ul className="sched">
+              {obs.archives.slice(0, 12).map((a: any) => (
+                <li key={a.name}><div className="sched-when">{a.name}<span className="sched-time">{(a.bytes / 1024).toFixed(0)} KB · {fmtAbs(a.at)}</span></div></li>
+              ))}
+            </ul>
           )}
         </div>
       )}

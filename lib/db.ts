@@ -93,6 +93,17 @@ export interface Candidate {
   jp_checked_at?: number | null;
   /** 复核处理时间（cleared 时写入）。 */
   jp_reviewed_at?: number | null;
+  /**
+   * 这个角色**最近一次票数发生变化**的时刻（epoch ms）。
+   *
+   * 平票时的排序依据：先达到当前票数的排在前面。「先达到」不只算加票 —— 撤票、管理员作废
+   * 同样会改变票数，也同样刷新这个时间。举例：A 和 B 都是 10 票，但 A 是 3 点到 10 票、
+   * B 是 5 点从 11 票被撤掉一票变成 10 票，那 A 在前。
+   *
+   * 字段可缺失：升级前的老数据没有这个时间戳，排序时退回原来的规则（种子 / id），
+   * 所以进行中的比赛不会因为升级而重排。
+   */
+  tally_at?: number | null;
 }
 export interface Matchup {
   id: number; competition_id: number; stage: "group" | "knockout" | "playoff"; round_no: number;
@@ -277,6 +288,14 @@ export function readDb(): DB {
  * use readDb() instead. Audited callers: getState / getActiveCompetition / commentCounts /
  * listComments / voterSanction / freezeState / getWxGate / listAudit / the observe+fraud reports.
  */
+/** 记下某几个角色的票数刚刚变了（平票排序要用，见 Candidate.tally_at）。
+ *  在已取出的 db 对象上就地打时间戳，由调用方负责 writeDb。 */
+export function stampTally(db: DB, cid: number, candidateIds: Iterable<number>, at = Date.now()): void {
+  const want = new Set(candidateIds);
+  if (!want.size) return;
+  for (const c of db.candidates) if (c.competition_id === cid && want.has(c.id)) c.tally_at = at;
+}
+
 export function readDbRO(): DB {
   try {
     const st = fs.statSync(FILE);
@@ -552,6 +571,48 @@ export function editCandidate(cid: number, id: number, f: { name?: string; nameC
   if (f.subjectNameEn != null) c.subject_name_en = f.subjectNameEn.trim() || null;
   writeDb(db);
   return true;
+}
+
+/**
+ * 把一个已在池中的角色**整体替换**成另一个 Bangumi 角色（资料填错了、认错人了）。
+ *
+ * 和「编辑资料」的区别：编辑只改文字，替换连 bgm_id 一起换掉 —— 也就是承认「这一栏本来
+ * 就该是另一个角色」。和「删掉重加」的区别：这里**保留数据库主键 id**，因此该角色已有的
+ * 提名票 / 小组赛票 / 淘汰赛票、分组、种子、评论全部原样留着。赛程已经开打之后，删掉重加
+ * 会让票和分组一起消失（还可能把分组表打乱），替换是唯一安全的改法。
+ *
+ * 旧的 bgm_id 会记进 aliases，这样同一个人再提名一次时会被当成重复而不是新角色。
+ */
+export function replaceCandidate(
+  cid: number, id: number,
+  next: { bgmId: string; name: string; nameCn?: string; nameEn?: string; image?: string; subjectName?: string; subjectNameJa?: string; subjectNameEn?: string },
+): { ok: true; from: string; to: string } | { error: string } {
+  const bgmId = String(next.bgmId || "").trim();
+  const name = String(next.name || "").trim();
+  if (!bgmId || !name) return { error: "缺少目标角色信息。" };
+  const db = readDb();
+  const c = db.candidates.find((x) => x.id === id && x.competition_id === cid);
+  if (!c) return { error: "角色不存在。" };
+  // 目标角色已经在池里 → 会变成两个同一角色的条目，票分散在两边，必须先合并而不是替换
+  const clash = db.candidates.find((x) => x.competition_id === cid && x.id !== id
+    && (x.bgm_id === bgmId || (x.aliases || []).includes(bgmId)));
+  if (clash) return { error: `目标角色「${clash.name_cn || clash.name}」已经在池中（#${clash.id}），请改用「合并」。` };
+
+  const fromLabel = c.name_cn || c.name;
+  const oldId = c.bgm_id;
+  c.aliases = [...new Set([...(c.aliases || []), oldId].filter((x) => x && x !== bgmId))];
+  c.bgm_id = bgmId;
+  c.name = name;
+  c.name_cn = (next.nameCn || "").trim() || null;
+  c.name_en = (next.nameEn || "").trim() || null;
+  c.image = (next.image || "").trim() || null;
+  c.subject_name = (next.subjectName || "").trim() || null;
+  c.subject_name_ja = (next.subjectNameJa || "").trim() || null;
+  c.subject_name_en = (next.subjectNameEn || "").trim() || null;
+  // 换的是"这一栏代表谁"，产地判定要重新做 → 清掉旧结论，避免拿前一个角色的判定顶替
+  c.jp_status = null; c.jp_reason = null; c.jp_checked_at = null; c.jp_reviewed_at = null;
+  writeDb(db);
+  return { ok: true, from: fromLabel, to: c.name_cn || c.name };
 }
 
 /** Merge candidate A(from) into B(to): move A's nomination votes to B (dedup by voter),
@@ -830,7 +891,7 @@ function toggleNominationOnce(cid: number, candidateId: number, voterId: string,
   const cand = db.candidates.find((c) => c.id === candidateId && c.competition_id === cid);
   if (!cand) return null;
   const i = db.nominationVotes.findIndex((v) => v.competition_id === cid && v.voter_id === voterId && v.candidate_id === candidateId);
-  if (i >= 0) { db.nominationVotes.splice(i, 1); writeDb(db); return { voted: false }; } // 撤回总是允许
+  if (i >= 0) { db.nominationVotes.splice(i, 1); stampTally(db, cid, [candidateId]); writeDb(db); return { voted: false }; } // 撤回总是允许
   const comp = db.competitions.find((c) => c.id === cid);
   const limit = comp?.nom_user_limit ?? 0;
   if (limit > 0) {
@@ -838,6 +899,7 @@ function toggleNominationOnce(cid: number, candidateId: number, voterId: string,
     if (cnt >= limit) return { error: `每人最多提名 ${limit} 个角色，请先撤回一个再提名其他角色。` };
   }
   db.nominationVotes.push({ id: ++db.seq.vote, competition_id: cid, candidate_id: candidateId, voter_id: voterId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
+  stampTally(db, cid, [candidateId]);
   writeDb(db);
   return { voted: true };
 }
@@ -882,11 +944,13 @@ function castApprovalVoteOnce(cid: number, candidateId: number, voterId: string,
   const existing = mine.find((v) => v.candidate_id === candidateId);
   if (existing) {
     db.approvalVotes = db.approvalVotes.filter((v) => !(v.competition_id === cid && v.group_no === g && v.voter_id === voterId && v.candidate_id === candidateId));
+    stampTally(db, cid, [candidateId]); // 撤票也改变票数 → 刷新平票排序用的时间戳
     writeDb(db);
     return { picked: false, count: mine.length - 1 };
   }
   if (mine.length >= 2) return { error: "每组最多投 2 票，请先取消一个再选。", status: 400 };
   db.approvalVotes.push({ id: ++db.seq.vote, competition_id: cid, group_no: g, candidate_id: candidateId, voter_id: voterId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
+  stampTally(db, cid, [candidateId]);
   writeDb(db);
   return { picked: true, count: mine.length + 1 };
 }
@@ -915,6 +979,8 @@ function castMatchVoteOnce(cid: number, matchupId: number, voterId: string, choi
     return { choice: null };
   }
   if (cur) {
+    const prev = cur.choice_id;
+    if (prev !== choiceId) stampTally(db, cid, [prev, choiceId]); // 改票：两边票数都变了
     cur.choice_id = choiceId;
     // Refresh the device/IP metadata to describe the vote that now COUNTS. Previously a changed
     // vote kept the metadata of its first version, so someone who voted from device A and then
@@ -923,7 +989,10 @@ function castMatchVoteOnce(cid: number, matchupId: number, voterId: string, choi
     // since the burst detector measures when the voter first acted.
     cur.device_bucket = meta?.bucket ?? cur.device_bucket ?? null;
     cur.ip = meta?.ip ?? cur.ip ?? null;
-  } else db.matchVotes.push({ id: ++db.seq.vote, matchup_id: matchupId, voter_id: voterId, choice_id: choiceId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
+  } else {
+    db.matchVotes.push({ id: ++db.seq.vote, matchup_id: matchupId, voter_id: voterId, choice_id: choiceId, created_at: Date.now(), device_bucket: meta?.bucket ?? null, ip: meta?.ip ?? null });
+    stampTally(db, cid, [choiceId]);
+  }
   writeDb(db);
   return { choice: choiceId };
 }
@@ -1021,7 +1090,12 @@ export function invalidateVotes(cid: number, by: "bucket" | "ip" | "voter" | "ip
   const avBefore = db.approvalVotes.length;
   db.approvalVotes = db.approvalVotes.filter((v) => !(v.competition_id === cid && match(v)));
   removed += avBefore - db.approvalVotes.length;
-  if (removed) { recordSanctions(db, cid, victims as any); writeDb(db); }
+  if (removed) {
+    // 作废改变票数 → 刷新平票排序时间戳（见 Candidate.tally_at）
+    stampTally(db, cid, victims.map((v: any) => v.candidate_id ?? v.choice_id).filter((x: any) => x != null));
+    recordSanctions(db, cid, victims as any);
+    writeDb(db);
+  }
   return removed;
 }
 
@@ -1103,24 +1177,29 @@ export function invalidateVoteIds(cid: number, ids: number[], alsoBan: { voterId
   const compMatchIds = new Set(db.matchups.filter((m) => m.competition_id === cid).map((m) => m.id));
   let removed = 0;
   const victims: { voter_id: string; device_bucket?: string | null }[] = [];
+  const touched = new Set<number>(); // 票数被改动的角色 → 需要刷新 tally_at
   const keepNom = db.nominationVotes.filter((v) => {
     const hit = v.competition_id === cid && v.id != null && want.has(v.id);
-    if (hit) { removed++; victims.push(v); }
+    if (hit) { removed++; victims.push(v); touched.add(v.candidate_id); }
     return !hit;
   });
   const keepApp = db.approvalVotes.filter((v) => {
     const hit = v.competition_id === cid && v.id != null && want.has(v.id);
-    if (hit) { removed++; victims.push(v); }
+    if (hit) { removed++; victims.push(v); touched.add(v.candidate_id); }
     return !hit;
   });
   const keepMatch = db.matchVotes.filter((v) => {
     const hit = compMatchIds.has(v.matchup_id) && v.id != null && want.has(v.id);
-    if (hit) { removed++; victims.push(v); }
+    if (hit) { removed++; victims.push(v); touched.add(v.choice_id); }
     return !hit;
   });
   // 删票为 0 但有封禁名单时也要落盘 —— 否则「保留了它那张票的刷票身份」就漏封了。
   if (removed || alsoBan.length) {
-    if (removed) { db.nominationVotes = keepNom; db.approvalVotes = keepApp; db.matchVotes = keepMatch; }
+    if (removed) {
+      // 作废同样改变票数 → 刷新平票排序用的时间戳（见 Candidate.tally_at）
+      stampTally(db, cid, touched);
+      db.nominationVotes = keepNom; db.approvalVotes = keepApp; db.matchVotes = keepMatch;
+    }
     // 封禁名单以 count:0 记入：本人看到的是「本轮不得再投」，而不是「你有 N 张票被删」——
     // 它确实没有票被删，谎报数字只会让人以为自己的票没了。
     recordSanctions(db, cid, victims, alsoBan);

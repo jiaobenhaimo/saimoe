@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminOk } from "@/lib/adminauth";
-import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, editCandidate, mergeCandidates, setBlocklist, setFreeze, clearFreezePlan, invalidateVoteIds, clearJpFlag, listJpFlagged, setBreakHours, endBreakNow, extendBreak, breakState } from "@/lib/db";
+import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, editCandidate, mergeCandidates, setBlocklist, setFreeze, clearFreezePlan, invalidateVoteIds, clearJpFlag, listJpFlagged, setBreakHours, endBreakNow, extendBreak, breakState, replaceCandidate, setJpStatus } from "@/lib/db";
+import { characterDetail, jpOfCharacter } from "@/lib/bgm";
 import { apiEnabled } from "@/lib/flags";
 import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline, setPace, setGroupDayCap, resolvePlayoff, canStartKnockout } from "@/lib/engine";
 
@@ -140,6 +141,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, message: "停投设置已保存。" });
     }
     // ── 休赛期：每轮之间自动停投、留出查票时间（见 lib/schedule.ts）──
+    // ── 角色替换：资料填错/认错人时，把这一栏换成另一个 Bangumi 角色 ──
+    // 保留数据库 id，所以票数、分组、种子、评论全都留着（详见 lib/db.replaceCandidate）。
+    if (action === "replace_candidate") {
+      const id = Number(body.candidateId);
+      const raw = String(body.bgmId || "").replace(/^c/, "").replace(/\D/g, "");
+      if (!id || !raw) return NextResponse.json({ error: "缺少角色或目标 Bangumi 角色 id。" }, { status: 400 });
+      const info = await characterDetail(raw);
+      if (!info) return NextResponse.json({ error: "查不到目标角色，请稍后再试。" }, { status: 502 });
+      const r = replaceCandidate(comp.id, id, info);
+      if ("error" in r) return NextResponse.json({ error: r.error }, { status: 400 });
+      // 换人之后产地判定要重做（replaceCandidate 已清掉旧结论）
+      const jp = await jpOfCharacter(raw);
+      if (jp.ok === true) setJpStatus(comp.id, id, "ok", jp.reason);
+      else if (jp.ok === false) setJpStatus(comp.id, id, "flagged", jp.reason);
+      else setJpStatus(comp.id, id, "unknown", jp.reason);
+      rec(`替换角色 #${id}：${r.from} → ${r.to}（票数/分组/种子保留）`);
+      return NextResponse.json({
+        ok: true,
+        message: `已把 #${id} 替换为「${r.to}」。票数、分组、种子与评论都保留了。${jp.ok === false ? "注意：新角色未检测到「日本」标签，已进入产地复核队列。" : ""}`,
+      });
+    }
+
     if (action === "set_break") {
       const h = Math.max(0, Math.floor(Number(body.hours) || 0));
       setBreakHours(comp.id, h);

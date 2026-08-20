@@ -34,3 +34,6 @@ jobs:
       # 6-choose-2 groups and 1-of-2 knockout ballots: agreement must be scored by rarity.
       - name: Format-aware detection test
         run: npm run test:fraud-format
+      # Tie-break by who reached the count first, character replacement, round archives.
+      - name: Tie-break / replace / archive test
+        run: npm run test:tiebreak
