@@ -395,6 +395,8 @@ body { font-size: 15px; line-height: 1.6; }
 .sched-list li { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--surface-2); }
 .sched-list li.cur { border-color: var(--rose); box-shadow: 0 0 0 3px var(--rose-soft); }
 .sched-when { font-weight: 800; font-size: 14px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+/* 分组核对面板里每组的成员列表 */
+.sched-teams { font-size: 13px; line-height: 1.7; color: var(--ink); padding: 2px 0 6px; }
 .sched-when .sched-time { margin-left: auto; font-weight: 600; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .sched-pairs { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; }
 .sched-pairs .pair { font-size: 13px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; }

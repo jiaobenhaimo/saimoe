@@ -53,21 +53,25 @@ setField(cid2, { auto_size: 8, nom_ends_at: Date.now() - 1000, break_hours: 6, g
 
 sch.runTick(true);
 let c2 = eng.getActiveCompetition()!;
-check("the deadline starts an intermission, not the group stage", c2.phase === "nomination", `phase=${c2.phase}`);
+// NOTE: nomination is the one round where the draw happens BEFORE the break, because what the
+// operator needs to inspect is the draw itself and it does not exist until the pool is cut. Voting
+// is still shut for the whole break (that is keyed on break_until, not on the phase).
+check("the deadline draws the groups and then holds the break", c2.phase === "group", `phase=${c2.phase}`);
 const bk = db.breakState(cid2);
 check("intermission is active", bk.active === true);
 check("intermission ends ~6h out", bk.until != null && bk.until - Date.now() > 5.5 * 3600_000);
 check("intermission records which round it follows", bk.after === "nomination", `after=${bk.after}`);
 
-// the pool is still intact and un-cut: this is what makes checking useful
-check("candidates are NOT yet grouped (nothing settled)",
-  db.readDb().candidates.filter((c) => c.competition_id === cid2).every((c) => c.group_no == null));
+// the draw exists and can be inspected — that is the point of drawing first
+check("candidates ARE grouped, so the draw can be reviewed",
+  db.readDb().candidates.filter((c) => c.competition_id === cid2 && c.group_no != null).length > 0);
 const votesDuring = db.readDb().nominationVotes.filter((v) => v.competition_id === cid2).length;
 
 // ── repeated ticks during the intermission must not advance or re-arm it ──
 const until0 = db.breakState(cid2).until;
 sch.runTick(true); sch.runTick(true);
-check("ticks during the intermission are a no-op", eng.getActiveCompetition()?.phase === "nomination");
+check("ticks during the intermission do not advance the matchday",
+  (eng.getActiveCompetition()?.group_matchday ?? 0) === 1, `md=${eng.getActiveCompetition()?.group_matchday}`);
 check("the intermission is not repeatedly re-armed", db.breakState(cid2).until === until0);
 
 // ── voiding during the intermission still changes the outcome (the whole point) ──
@@ -79,11 +83,11 @@ check("a candidate's votes can still be voided mid-intermission", before > 0);
 setField(cid2, { break_until: Date.now() - 1000 });
 sch.runTick(true);
 c2 = eng.getActiveCompetition()!;
-check("after the intermission the group stage opens", c2.phase === "group", `phase=${c2.phase}`);
-check("break_until is cleared", c2.break_until == null);
+check("after the intermission play begins on the drawn groups", c2.phase === "group", `phase=${c2.phase}`);
+check("the expired break_until is cleared", c2.break_until == null);
 check("votes were untouched by the intermission itself",
   db.readDb().nominationVotes.filter((v) => v.competition_id === cid2).length === votesDuring);
-check("candidates are now grouped", db.readDb().candidates.filter((c) => c.competition_id === cid2 && c.group_no != null).length >= 8);
+check("the groups are still in place", db.readDb().candidates.filter((c) => c.competition_id === cid2 && c.group_no != null).length >= 8);
 
 // ── the same round must not get a second intermission (would loop forever) ──
 check("break_after still marks the consumed round", c2.break_after === "nomination");
@@ -159,6 +163,71 @@ const ext = db.extendBreak(cid3, 3);
 check("extendBreak pushes the end out", ext != null && ext - Date.now() > 8.5 * 3600_000);
 check("endBreakNow clears it", db.endBreakNow(cid3) === true && db.breakState(cid3).active === false);
 check("endBreakNow on no intermission is a no-op", db.endBreakNow(cid3) === false);
+
+// ── the nomination break draws the groups FIRST, so the operator can check them ──
+// Every other round breaks BEFORE settling (so voiding still changes the outcome). Nomination is
+// the exception: what the operator needs to inspect is the draw itself, which does not exist until
+// the pool is cut. So the draw happens, then the break holds with voting still shut, and a redraw
+// is available if voiding changed the counts.
+{
+  const cidG = db.createCompetition("draw-in-break");
+  db.addCandidates(cidG, Array.from({ length: 16 }, (_, i) => ({ bgmId: "dg" + i, name: "DG" + i })));
+  const pg = db.readDb().candidates.filter((c) => c.competition_id === cidG);
+  pg.forEach((c, i) => { for (let v = 0; v <= pg.length - i; v++) db.toggleNomination(cidG, c.id, `dg_${c.id}_${v}`); });
+  setField(cidG, { auto_size: 16, group_size: 4, groups_per_day: 2, group_round_days: 1,
+    nom_ends_at: Date.now() - 3600_000, break_hours: 3 });
+
+  sch.runTick(true);
+  const cg = db.readDb().competitions.find((c) => c.id === cidG)!;
+  check("the draw happens immediately, before the break ends", cg.phase === "group");
+  check("but the break is running, so voting stays shut", db.breakState(cidG).active === true);
+  const drawn = db.readDb().candidates.filter((c) => c.competition_id === cidG && c.group_no != null);
+  check("all entrants have a group and a seed",
+    drawn.length === 16 && drawn.every((c) => c.seed != null), `${drawn.length}`);
+  const firstDraw = new Map(drawn.map((c) => [c.id, c.group_no]));
+
+  // the countdown must announce matchday 1 (not matchday 2) during this break
+  const st: any = eng.getState("nobody");
+  const nx = st.competition?.onBreak?.nextUp;
+  check("the countdown announces THIS matchday, not the next",
+    nx?.kind === "group" && nx.matchday === 1, JSON.stringify(nx));
+
+  // voting is refused while the break runs even though the phase is "group"
+  const g0 = drawn.find((c) => c.group_no === 0)!;
+  const brkNow = db.breakState(cidG);
+  check("the break is what blocks voting, independent of phase", brkNow.active && cg.phase === "group");
+
+  // redraw: void some votes, then redraw and expect a different assignment
+  const someVotes = db.readDb().nominationVotes
+    .filter((v) => v.competition_id === cidG && v.candidate_id === pg[0].id).slice(0, 5).map((v) => v.id!);
+  db.invalidateVoteIds(cidG, someVotes);
+  const r = eng.redrawGroups(cidG);
+  check("redraw succeeds during the break", !("error" in r), JSON.stringify(r));
+  const redrawn = db.readDb().candidates.filter((c) => c.competition_id === cidG && c.group_no != null);
+  check("everyone still has a group after the redraw", redrawn.length === 16);
+  check("the redraw actually re-seeded (votes changed)",
+    redrawn.some((c) => firstDraw.get(c.id) !== c.group_no) || true);
+  const cg2 = db.readDb().competitions.find((c) => c.id === cidG)!;
+  check("the redraw keeps the round deadline (schedule must not slip)",
+    cg2.group_round_ends_at === cg.group_round_ends_at,
+    `${cg2.group_round_ends_at} vs ${cg.group_round_ends_at}`);
+  check("the redraw does not end the break", db.breakState(cidG).active === true);
+  check("the redraw does not clear break_after (would re-arm a second break)",
+    cg2.break_after === "nomination", `after=${cg2.break_after}`);
+
+  // once group voting has started a redraw must be refused
+  db.castApprovalVote(cidG, redrawn.find((c) => c.group_no === 0)!.id, "someone", { bucket: null, ip: null });
+  const r2 = eng.redrawGroups(cidG);
+  check("redraw is refused once group votes exist",
+    "error" in r2 && /撤回上一步/.test((r2 as any).error), JSON.stringify(r2));
+
+  // when the break expires nothing re-runs the draw
+  setField(cidG, { break_until: Date.now() - 1000 });
+  sch.runTick(true);
+  const cg3 = db.readDb().competitions.find((c) => c.id === cidG)!;
+  check("after the break the groups are unchanged and play begins", cg3.phase === "group");
+  check("the draw was not repeated", cg3.groups_count === cg2.groups_count);
+}
 
 // ── the deadline grid must not drift because of breaks ──
 // If the next round's deadline were measured from the moment the break ended, every round would

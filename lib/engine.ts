@@ -46,6 +46,10 @@ function nextUpAfterBreak(db: DB, comp: Competition): { kind: "group"; matchday:
     const cur = comp.group_matchday ?? 1;
     const count = comp.group_matchday_count ?? 1;
     const total = comp.groups_count ?? 0;
+    // 提名截止后的休赛期：抽签已经做完（phase 已是 group），但第 1 比赛日还没开投，
+    // 所以接下来是**本**比赛日而不是下一个。break_after 记着这个休赛期跟在哪一轮之后。
+    if (comp.break_after === "nomination" && total > 0)
+      return { kind: "group", matchday: cur, groups: groupsOn(cur, total) };
     if (cur < count && total > 0) return { kind: "group", matchday: cur + 1, groups: groupsOn(cur + 1, total) };
     // 最后一个比赛日之后 → 淘汰赛首轮
     const koT = comp.ko_target ?? 0;
@@ -1119,6 +1123,64 @@ export function clearSchedule(cid: number) {
   comp.nom_ends_at = null; comp.group_ends_at = null; comp.ko_round_ends_at = null; comp.group_round_ends_at = null;
   comp.break_anchor = null; // 没有截止时间就没有网格可锚
   writeDb(db);
+}
+
+/**
+ * 重新分组：按**当前**票数重抽一次。
+ *
+ * 用途：提名截止后的休赛期里，运营查票、作废了刷票，票数变了 —— 原来那份分组是按脏数据抽的，
+ * 得按干净数据重来。
+ *
+ * 关键约束：**一旦小组赛开始投票就不许重抽**。重抽会改变每个人的组号，已经投出的组内票就
+ * 全部指向了错误的组，既没法迁移也没法解释；那种情况只能用「撤回」退回提名阶段。所以这里
+ * 只要发现本届已有任何小组赛票就直接拒绝，并说清该用什么办法。
+ *
+ * 另外刻意保留 group_round_ends_at：截止时间属于赛程网格（见 deadlineBase），重抽只是换分组，
+ * 不该把这一轮的截止时间顺延。
+ */
+export function redrawGroups(cid: number): { ok: true; groups: number; size: number } | { error: string } {
+  const db = readDb();
+  const comp = db.competitions.find((c) => c.id === cid);
+  if (!comp) return { error: "比赛不存在。" };
+  if (comp.phase !== "group") return { error: "只有在小组赛阶段（含提名后的休赛期）才能重新分组。" };
+
+  const votes = db.approvalVotes.filter((v) => v.competition_id === cid).length
+    + db.matchVotes.filter((v) => db.matchups.some((m) => m.id === v.matchup_id && m.competition_id === cid && m.stage === "group")).length;
+  if (votes > 0)
+    return { error: `本届小组赛已有 ${votes} 张票，重新分组会让这些票指向错误的组。如确实要重抽，请先用「撤回上一步」回到提名阶段（会清空小组赛票）。` };
+
+  const size = comp.auto_size || comp.target_size || 0;
+  if (size < 4) return { error: "参赛人数未设定，无法重新分组。" };
+
+  // 记下要保留的赛程字段，再退回提名阶段让 startGroups 重跑一遍
+  const keepEndsAt = comp.group_round_ends_at;
+  const keepStarts = comp.group_matchday_starts;
+  const perRound = comp.group_per_round ?? 0;
+  const roundDays = comp.group_round_days ?? 0;
+  const groupSize = comp.group_size ?? 0;
+  const mode = (comp.group_mode as "approval" | "rr" | null) ?? "";
+  const groupsPerDay = comp.groups_per_day ?? 0;
+  const thirdPlace = comp.third_place ?? null;
+
+  dropMatchups(db, cid, (m) => m.stage === "group");
+  for (const c of db.candidates) if (c.competition_id === cid) { c.group_no = null; c.seed = null; c.eliminated = false; }
+  comp.phase = "nomination";
+  comp.target_size = null; comp.groups_count = null;
+  comp.group_matchday = null; comp.group_matchday_count = null; comp.group_started_at = null; comp.group_matchday_starts = null;
+  writeDb(db);
+
+  startGroups(cid, size, perRound, roundDays, groupSize, mode, groupsPerDay, thirdPlace);
+
+  // 恢复截止时间与比赛日起点：重抽不改赛程
+  const db2 = readDb();
+  const c2 = db2.competitions.find((c) => c.id === cid);
+  if (c2) {
+    if (keepEndsAt != null) c2.group_round_ends_at = keepEndsAt;
+    if (keepStarts != null) c2.group_matchday_starts = keepStarts;
+    writeDb(db2);
+  }
+  const after = readDbRO().competitions.find((c) => c.id === cid);
+  return { ok: true, groups: after?.groups_count ?? 0, size: after?.target_size ?? size };
 }
 
 /** Push the nomination deadline back by `postpone_days` (pool was too small). */

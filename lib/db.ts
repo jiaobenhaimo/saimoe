@@ -740,6 +740,16 @@ export function beginBreak(cid: number, hours: number, afterRound: string, ancho
   return until;
 }
 
+/** 先只放锚点，不开休赛期。提名截止时要「先抽签、再进休赛期」，而抽签算出的截止时间必须
+ *  以原定截止为基准（否则整条赛程会顺延），所以锚点得比 beginBreak 更早写入。 */
+export function setBreakAnchor(cid: number, at: number | null): void {
+  const db = readDb();
+  const c = db.competitions.find((x) => x.id === cid);
+  if (!c) return;
+  c.break_anchor = at;
+  writeDb(db);
+}
+
 /** 取出并清掉 break_anchor。下一轮的截止时间要以它为基准计算，用完即弃。 */
 export function takeBreakAnchor(cid: number, snap?: DB): number | null {
   const c = (snap ?? readDbRO()).competitions.find((x) => x.id === cid);

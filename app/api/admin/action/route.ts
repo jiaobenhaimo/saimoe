@@ -3,7 +3,7 @@ import { adminOk } from "@/lib/adminauth";
 import { ensureSchema, createCompetition, deleteCompetition, removeCandidate, deleteComment, logAudit, invalidateVotes, editCandidate, mergeCandidates, setBlocklist, setFreeze, clearFreezePlan, invalidateVoteIds, clearJpFlag, listJpFlagged, setBreakHours, endBreakNow, extendBreak, breakState, replaceCandidate, setJpStatus } from "@/lib/db";
 import { characterDetail, jpOfCharacter } from "@/lib/bgm";
 import { apiEnabled } from "@/lib/flags";
-import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline, setPace, setGroupDayCap, resolvePlayoff, canStartKnockout } from "@/lib/engine";
+import { getActiveCompetition, redrawGroups, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, updateCompetition, scheduleCompetition, clearSchedule, undoLastTransition, resettleCurrentRound, setNominationRules, setPhaseDeadline, setPace, setGroupDayCap, resolvePlayoff, canStartKnockout } from "@/lib/engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -161,6 +161,14 @@ export async function POST(req: NextRequest) {
         ok: true,
         message: `已把 #${id} 替换为「${r.to}」。票数、分组、种子与评论都保留了。${jp.ok === false ? "注意：新角色未检测到「日本」标签，已进入产地复核队列。" : ""}`,
       });
+    }
+
+    // 重新分组：休赛期里查完票、作废了刷票之后，按干净的票数重抽一次分组。
+    if (action === "redraw_groups") {
+      const r = redrawGroups(comp.id);
+      if ("error" in r) return NextResponse.json({ error: r.error }, { status: 400 });
+      rec(`重新分组：${r.size} 人 → ${r.groups} 组（按当前票数重抽）`);
+      return NextResponse.json({ ok: true, message: `已按当前票数重新分组：${r.size} 人分 ${r.groups} 组。截止时间与比赛日安排不变。` });
     }
 
     if (action === "set_break") {

@@ -1,5 +1,5 @@
 import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, resolvePlayoff, postponeNomination, qualifyingCount, canStartKnockout } from "./engine";
-import { sweepOrphanNominations, freezeOf, breakOf, beginBreak, consumeBreak, roundKeyOf } from "./db";
+import { sweepOrphanNominations, freezeOf, breakOf, beginBreak, consumeBreak, setBreakAnchor, roundKeyOf } from "./db";
 import { archiveRound } from "./backup";
 
 /** Grace period before an un-voted self-nomination is swept (minutes). Env-tunable. */
@@ -47,6 +47,9 @@ export function runTick(force = false): void {
     // 前提——池子静止、运营可以放心核对：名单会在他们眼下变化，而休赛期结束后取前 N 名算的
     // 又是变化之后的池子。而且此时提名已被拦下，被清理者连"补一票救回来"的机会都没有。
     if (brk.active) return;
+    // 休赛期已过但 break_until 还留着 → 清掉，避免陈旧值留在数据里（break_after 保留，
+    // 它记着"这一轮已经处理过"，是防止重复插入休赛期的依据）。
+    if (comp.break_until != null) consumeBreak(comp.id);
 
     // garbage-collect abandoned 0-vote self-nominations while nomination is open
     if (comp.phase === "nomination") sweepOrphanNominations(comp.id, ORPHAN_GRACE_MIN * 60_000);
@@ -85,15 +88,41 @@ export function runTick(force = false): void {
         postponeNomination(comp.id); // pool too small → push the deadline back and try again later
         return;
       }
-      // 提名截止 → 休赛期（查提名票）→ 按清理后的票数取前 N 名开小组赛
-      if (holdForBreak(comp.nom_ends_at)) return;
-      try {
-        startGroups(comp.id, size);
-      } catch (e) {
-        // impossible/degenerate config shouldn't wedge the scheduler — push the deadline back
-        console.error("saimoe: auto startGroups failed, postponing", e);
-        postponeNomination(comp.id);
+      // 提名截止的处理顺序与其他轮次**相反**：先抽签，再进休赛期。
+      //
+      // 其他轮次休赛期在结算之前（票还能改，作废后重算才有意义）。但提名之后运营要看的不只是
+      // 票，还有「按这个票数分出来的组长什么样」—— 那就必须先真的分一次。所以这里先跑
+      // startGroups（取前 N、分组、定种子），再进休赛期；休赛期内投票依然关闭（/api/vote 按
+      // break_until 拦，与阶段无关），运营可以查票、可以按新票数点「重新分组」重抽，
+      // 直到满意为止。休赛期一结束，小组赛第 1 比赛日就按既有分组开投。
+      const already = breakOf(comp, now);
+      if (already.after !== round) {
+        // 归档要在抽签**之前**：留下的是运营即将核对的原始提名数据
+        archiveRound(round);
+        // 锚点必须比抽签更早写入：startGroups 算第 1 比赛日的截止时间时要以**原定提名截止**
+        // 为基准，否则休赛期那几小时会被算进赛程，整条时间线往后顺延（见 deadlineBase）。
+        setBreakAnchor(comp.id, comp.nom_ends_at ?? null);
+        try {
+          startGroups(comp.id, size);
+        } catch (e) {
+          console.error("saimoe: auto startGroups failed, postponing", e);
+          setBreakAnchor(comp.id, null); // 抽签没成功，锚点不能留着套用到别的轮次
+          postponeNomination(comp.id);
+          return;
+        }
+        if (brk.hours > 0) {
+          // 锚点已经被 startGroups 用掉了（第 1 比赛日的截止就是按它算的），这里传 null ——
+          // 再放一次会让它留到下一轮，把 matchday 1→2 的截止错误地锚到提名截止上。
+          const until = beginBreak(comp.id, brk.hours, round, null);
+          console.log(`saimoe: drew groups, entering ${brk.hours}h break after ${round}, resumes at ${until ? new Date(until).toISOString() : "?"}`);
+        } else {
+          // 没配休赛期：抽完直接开投（旧行为）。仍要标记这一轮已处理，避免重复进入。
+          beginBreak(comp.id, 0, round, null);
+        }
+        return;
       }
+      // break_after === round：这一轮已经抽过签并走完休赛期了，不该再来一次
+      return;
     } else if (comp.phase === "group" && comp.group_round_ends_at && now >= comp.group_round_ends_at) {
       // per-matchday advance; when the last matchday settles, roll into knockout.
       // #5: if this is the final matchday but the bracket can't be built, don't advance-then-fail.

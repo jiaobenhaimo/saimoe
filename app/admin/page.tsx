@@ -809,6 +809,47 @@ export default function Admin() {
         </div>
       )}
 
+      {/* ── 休赛期分组核对 ────────────────────────────────────────────────────────
+          提名截止后的休赛期里，抽签已经做完（所以能看），但小组赛还没开投（所以能改）。
+          查票、作废刷票之后票数变了，点「重新分组」按新票数重抽一次即可。
+          一旦小组赛开投就不能再重抽 —— 已投的组内票会指向错误的组，后端会拒绝并提示改用撤回。 */}
+      {comp && brk?.active && phase === "group" && obs?.roster && (
+        <div className="card wide">
+          <h3>分组核对 <span className="gstatus" style={{ color: "var(--rose-deep)" }}>休赛期 · 可重抽</span></h3>
+          <p className="hint">
+            分组已按提名票抽好，但<b>还没开投</b>。若你在休赛期里作废了刷票、票数有变化，点「重新分组」会按当前票数重抽一次
+            （截止时间与比赛日安排不变）。休赛期结束后小组赛就按这份分组开投，届时不能再重抽。
+          </p>
+          <div className="row">
+            <button className="btn danger solid" disabled={busy} onClick={() => {
+              if (confirm("按当前票数重新分组？\n\n所有角色的组号与种子都会重抽，赛程时间不变。")) act("redraw_groups");
+            }}>重新分组（按当前票数）</button>
+            <button className="btn" disabled={busy} onClick={loadObs}>刷新</button>
+          </div>
+          {(() => {
+            const inGroups = obs.roster.filter((r: any) => r.groupNo != null);
+            const byG = new Map<number, any[]>();
+            for (const r of inGroups) { const g = r.groupNo; if (!byG.has(g)) byG.set(g, []); byG.get(g)!.push(r); }
+            if (!byG.size) return <p className="hint">还没有分组数据。</p>;
+            return (
+              <ul className="sched">
+                {[...byG.entries()].sort((a, b) => a[0] - b[0]).map(([g, mem]) => (
+                  <li key={g}>
+                    <div className="sched-when">{groupLtr(g)} 组
+                      <span className="sched-time">{mem.length} 人</span>
+                    </div>
+                    <div className="sched-teams">
+                      {mem.sort((a: any, b: any) => (a.seed ?? 0) - (b.seed ?? 0))
+                        .map((m: any) => `${m.nameCn || m.name}${m.seed != null ? `(种子${m.seed})` : ""}`).join("、")}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            );
+          })()}
+        </div>
+      )}
+
       {/* ── 替换角色（资料填错 / 认错人）────────────────────────────────────────
           为什么要单独做这个而不是「删掉重加」：开赛之后删角色会把它的票、分组、种子一起删掉，
           还会打乱分组表。替换保留数据库 id，只换掉"这一栏代表谁"，票和分组原样留着。
