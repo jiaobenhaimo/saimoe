@@ -174,8 +174,9 @@ check("endBreakNow on no intermission is a no-op", db.endBreakNow(cid3) === fals
   db.addCandidates(cidG, Array.from({ length: 16 }, (_, i) => ({ bgmId: "dg" + i, name: "DG" + i })));
   const pg = db.readDb().candidates.filter((c) => c.competition_id === cidG);
   pg.forEach((c, i) => { for (let v = 0; v <= pg.length - i; v++) db.toggleNomination(cidG, c.id, `dg_${c.id}_${v}`); });
+  // 截止时间刚过（真实运行里调度器 60 秒内就会跑到），这样窗口计算是精确的
   setField(cidG, { auto_size: 16, group_size: 4, groups_per_day: 2, group_round_days: 1,
-    nom_ends_at: Date.now() - 3600_000, break_hours: 3 });
+    nom_ends_at: Date.now() - 30_000, break_hours: 3 });
 
   sch.runTick(true);
   const cg = db.readDb().competitions.find((c) => c.id === cidG)!;
@@ -214,6 +215,69 @@ check("endBreakNow on no intermission is a no-op", db.endBreakNow(cid3) === fals
   check("the redraw does not end the break", db.breakState(cidG).active === true);
   check("the redraw does not clear break_after (would re-arm a second break)",
     cg2.break_after === "nomination", `after=${cg2.break_after}`);
+
+  // a stale tab must not be told the group is votable during the break
+  {
+    const st2: any = eng.getState("bystander");
+    const g0 = st2.group?.groups?.[0];
+    check("groups report open:false during the break (stale tabs must not draw vote buttons)",
+      g0 && g0.open === false, `open=${g0?.open}`);
+    check("no vote counts are revealed before voting has opened",
+      (g0?.members || []).every((m: any) => m.votes === null));
+    check("no advancing pair is revealed before voting has opened",
+      (g0?.members || []).every((m: any) => !m.advancing));
+  }
+
+  // ── matchday 1's recorded start must be when voting OPENS, not when the draw happened ──
+  // startGroups stamps "actual start" at the moment it runs, which is now before the break. If
+  // that is left alone, every display of matchday 1 starts hours earlier than voting really does.
+  {
+    const cg1 = db.readDb().competitions.find((c) => c.id === cidG)!;
+    const bkNow = db.breakState(cidG);
+    const starts = (cg1.group_matchday_starts || {}) as Record<number, number>;
+    check("matchday 1's recorded start is the break end, not the draw time",
+      bkNow.until != null && Math.abs(starts[1] - bkNow.until) < 5_000,
+      `start=${starts[1]} breakEnd=${bkNow.until}`);
+    const sc = eng.projectSchedule(db.readDb(), cg1 as any);
+    const d1 = sc.group[0], d2 = sc.group[1];
+    check("the preview shows matchday 1 starting at the break end",
+      d1?.start != null && Math.abs(d1.start - bkNow.until!) < 5_000, `${d1?.start}`);
+    // md2 start should be exactly one round length on -- the break is already inside the basis,
+    // so adding it again (the old projection did) drifted every later matchday.
+    check("matchday 2 starts exactly one round length after matchday 1 (break not double-counted)",
+      d1?.start != null && d2?.start != null && Math.abs((d2.start - d1.start) - 86_400_000) < 5_000,
+      `${(((d2?.start ?? 0) - (d1?.start ?? 0)) / 3600_000).toFixed(2)}h`);
+    // 窗口 = 轮长 − 休赛时长 − 调度器迟到的那点时间（真实运行里迟到 ≤60 秒；这里放宽到 2 分钟）
+    check("matchday 1's window is one round minus the break",
+      d1?.start != null && d1?.end != null
+        && Math.abs((d1.end - d1.start) - (86_400_000 - 3 * 3600_000)) < 120_000,
+      `${(((d1?.end ?? 0) - (d1?.start ?? 0)) / 3600_000).toFixed(3)}h`);
+  }
+
+  // ── a long outage must not produce a round whose deadline precedes its own start ──
+  // The grid anchor keeps deadlines fixed, but the break still eats the front of the round. If the
+  // scheduler is very late, anchor + roundMs can land BEFORE voting would even open, giving a
+  // negative window: nobody can vote and the round advances instantly. Fall back to "now" instead.
+  {
+    const cidL = db.createCompetition("late-tick");
+    db.addCandidates(cidL, Array.from({ length: 16 }, (_, i) => ({ bgmId: "lt" + i, name: "LT" + i })));
+    const pl = db.readDb().candidates.filter((c) => c.competition_id === cidL);
+    pl.forEach((c, i) => { for (let v = 0; v <= pl.length - i; v++) db.toggleNomination(cidL, c.id, `lt_${c.id}_${v}`); });
+    // deadline was 23h ago, round is 1 day, break is 3h -> anchor+round is only 1h out, less than
+    // the 3h break, so the naive grid deadline would precede the start of voting
+    setField(cidL, { auto_size: 16, group_size: 4, groups_per_day: 2, group_round_days: 1,
+      nom_ends_at: Date.now() - 23 * 3600_000, break_hours: 3 });
+    sch.runTick(true);
+    const cl = db.readDb().competitions.find((c) => c.id === cidL)!;
+    const bl = db.breakState(cidL);
+    check("a very late tick still opens the group stage", cl.phase === "group");
+    check("the deadline is after voting opens, not before it",
+      (cl.group_round_ends_at ?? 0) > (bl.until ?? 0),
+      `deadline=${cl.group_round_ends_at} opens=${bl.until}`);
+    check("the round keeps a full-length window when the grid is abandoned",
+      Math.abs((cl.group_round_ends_at ?? 0) - Date.now() - 86_400_000) < 60_000,
+      `${(((cl.group_round_ends_at ?? 0) - Date.now()) / 3600_000).toFixed(2)}h`);
+  }
 
   // once group voting has started a redraw must be refused
   db.castApprovalVote(cidG, redrawn.find((c) => c.group_no === 0)!.id, "someone", { bucket: null, ip: null });

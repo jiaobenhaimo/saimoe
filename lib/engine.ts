@@ -202,7 +202,11 @@ export function getState(voterId: string, snap?: DB) {
     for (const c of groupedCands) { const g = c.group_no!; if (!byG.has(g)) byG.set(g, []); byG.get(g)!.push(c); }
     const groups = [...byG.entries()].sort((a, b) => a[0] - b[0]).map(([g, members]) => {
       const batch = groupBatch(g, perDay);
-      const open = isGroupPhase && batch === curMd;              // currently votable
+      // 休赛期里虽然已经是小组赛阶段、分组也抽好了，但投票是关着的（/api/vote 按 break_until 拦）。
+      // 这里必须一并报 false：否则旧版页面（部署前打开、还没刷新的标签页）会照常画出投票按钮，
+      // 用户点下去只会拿到 503，看起来像网站坏了。
+      const onBreakNow = breakOf(comp).active;
+      const open = isGroupPhase && batch === curMd && !onBreakNow;   // currently votable
       const closed = !isGroupPhase || batch < curMd;             // finished voting (past batch) or stage over
       const upcoming = isGroupPhase && batch > curMd;            // not started yet
       const revealed = closed;                                   // reveal counts + top-2 ONLY once closed (never for open/upcoming)
@@ -456,14 +460,17 @@ export function projectSchedule(db: DB, comp: Competition): SchedulePreview {
   const maxKnownDay = knownDays.length ? Math.max(...knownDays) : 0;
   const pace = comp.group_round_days || 0;
   const roundMs = pace * DAY;
-  // 已到达的比赛日读事实（真实开始时刻）；未到达的按「截止网格 + 休赛期」推算：
-  // 网格是 每轮截止 = 上一轮截止 + 轮长（不受休赛期影响），开始 = 网格起点 + 休赛时长。
+  // 已到达的比赛日读事实（真实开始时刻，已经包含了它前面那段休赛期）；未到达的按网格推算。
+  //
+  // 推算不再另加 breakMs：已知的开始时刻本身就是「网格点 + 休赛时长」，所以往后每隔一个
+  // roundMs 就是下一个比赛日的开始，休赛期已经含在基准里了。之前这里额外加了一次 breakMs，
+  // 在 group_matchday_starts 改成记录真实开投时刻之后就变成重复计算，越往后偏得越多。
   const dayStart = (d: number): number | null => {
     const k = gtStarts[d];
     if (k != null) return k;
     if (!pace) return null;
-    if (maxKnownDay > 0) return gtStarts[maxKnownDay] + (d - maxKnownDay) * roundMs + (d > maxKnownDay ? breakMs : 0);
-    if (comp.group_started_at != null) return comp.group_started_at + (d - 1) * roundMs + (d > 1 ? breakMs : 0);
+    if (maxKnownDay > 0) return gtStarts[maxKnownDay] + (d - maxKnownDay) * roundMs;
+    if (comp.group_started_at != null) return comp.group_started_at + (d - 1) * roundMs;
     return null;
   };
   const mdCount = comp.group_matchday_count ?? 1;
@@ -593,8 +600,14 @@ function deadlineBase(comp: Competition, roundMs: number): number {
   if (a == null) return now;
   comp.break_anchor = null;              // consumed (caller writes the db)
   if (!Number.isFinite(a)) return now;
-  // 锚点 + 轮长必须仍在未来，否则用 now（例如运营手动把休赛期拖了很久）
-  return a + roundMs > now ? a : now;
+  // 锚点算出的截止时间必须给这一轮留下**可投票的窗口**，否则退回 now 重新起算。
+  //
+  // 只判断「截止时间还没过」是不够的：这一轮开头还要扣掉休赛期，所以真正开投是
+  // now + 休赛时长。假如调度器晚了很久才跑（容器宕了一整天、手动把休赛期拖长），
+  // 锚点 + 轮长可能落在开投时刻**之前** —— 那样这一轮的截止早于开始，没人投得了票，
+  // 一到点就直接推进。留一点余量（至少 5 分钟），否则宁可放弃网格重新起算。
+  const breakMs = Math.max(0, Number(comp.break_hours) || 0) * 3_600_000;
+  return a + roundMs > now + breakMs + 300_000 ? a : now;
 }
 function shuffle<T>(a: T[]): T[] { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
 

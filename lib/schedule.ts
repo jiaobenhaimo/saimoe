@@ -1,5 +1,5 @@
 import { getActiveCompetition, startGroups, startKnockout, advanceKnockout, advanceGroupMatchday, resolvePlayoff, postponeNomination, qualifyingCount, canStartKnockout } from "./engine";
-import { sweepOrphanNominations, freezeOf, breakOf, beginBreak, consumeBreak, setBreakAnchor, roundKeyOf } from "./db";
+import { sweepOrphanNominations, freezeOf, breakOf, beginBreak, consumeBreak, setBreakAnchor, setMatchdayStart, roundKeyOf } from "./db";
 import { archiveRound } from "./backup";
 
 /** Grace period before an un-voted self-nomination is swept (minutes). Env-tunable. */
@@ -114,6 +114,9 @@ export function runTick(force = false): void {
           // 锚点已经被 startGroups 用掉了（第 1 比赛日的截止就是按它算的），这里传 null ——
           // 再放一次会让它留到下一轮，把 matchday 1→2 的截止错误地锚到提名截止上。
           const until = beginBreak(comp.id, brk.hours, round, null);
+          // startGroups 把第 1 比赛日的"真实开始"记成了抽签那一刻，但实际开投要等休赛期结束。
+          // 不改的话赛程上第 1 比赛日的开始时间会比实际早整个休赛期。
+          if (until) setMatchdayStart(comp.id, 1, until);
           console.log(`saimoe: drew groups, entering ${brk.hours}h break after ${round}, resumes at ${until ? new Date(until).toISOString() : "?"}`);
         } else {
           // 没配休赛期：抽完直接开投（旧行为）。仍要标记这一轮已处理，避免重复进入。

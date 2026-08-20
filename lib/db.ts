@@ -740,6 +740,23 @@ export function beginBreak(cid: number, hours: number, afterRound: string, ancho
   return until;
 }
 
+/**
+ * 改写某个比赛日「真实开始时刻」的记录。
+ *
+ * 为什么需要：提名截止后是先抽签、再进休赛期，而 startGroups 记的 group_matchday_starts[1]
+ * 是**抽签那一刻**。可是第 1 比赛日真正开投是在休赛期结束之后 —— 差了整个休赛期。这个记录
+ * 是赛程展示的事实来源（projectSchedule / getState 都读它），不改的话第 1 比赛日的开始时间
+ * 会一直比实际早几个小时。
+ */
+export function setMatchdayStart(cid: number, matchday: number, at: number): void {
+  const db = readDb();
+  const c = db.competitions.find((x) => x.id === cid);
+  if (!c) return;
+  c.group_matchday_starts = { ...((c.group_matchday_starts || {}) as Record<number, number>), [matchday]: at };
+  if (matchday === 1) c.group_started_at = at;
+  writeDb(db);
+}
+
 /** 先只放锚点，不开休赛期。提名截止时要「先抽签、再进休赛期」，而抽签算出的截止时间必须
  *  以原定截止为基准（否则整条赛程会顺延），所以锚点得比 beginBreak 更早写入。 */
 export function setBreakAnchor(cid: number, at: number | null): void {
